@@ -329,6 +329,7 @@ export async function evaluateJob(jobId, options = {}) {
   const captions = parseSrtEntries(await readTextOptional(join(jobDir, "captions.srt")));
   const sources = normalizeSources(script?.sources || job.sources);
   const captionTiming = await readJsonOptional(join(jobDir, "caption-timing.json"));
+  const voiceoverSync = await readJsonOptional(join(jobDir, "voiceover-sync.json"));
   const target = mediaTarget(job.format);
   const expectedSegments = Math.max(1, Number(script?.segments?.length || job.clipCount || 1));
   const actualClipTarget = Math.max(1, Number(job.clipCount || expectedSegments));
@@ -585,6 +586,7 @@ export async function evaluateJob(jobId, options = {}) {
     join(jobDir, "frame-audio-caption.json"),
     join(jobDir, "captions.vtt"),
     join(jobDir, "caption-timing.json"),
+    ...(voiceoverSync ? [join(jobDir, "voiceover-sync.json")] : []),
     ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
     join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
     ...clips,
@@ -599,7 +601,17 @@ export async function evaluateJob(jobId, options = {}) {
     && Object.entries(evidenceHashes).every(([path, hash]) => immutableByName.get(path)?.sha256 === hash)
   );
   const committeeEvidenceBound = Boolean(committee?.runId && committee.runId === (options.runId || job.runId) && immutableEvidenceBinding && Object.keys(evidenceHashes).every((path) => committee.evidenceHashes?.[path] === evidenceHashes[path]));
-  const captionCoveragePass = !job.captions || Boolean(frameAudioCaption?.captions?.coverageRatio >= 0.98 && frameAudioCaption.captions.overlaps === 0 && frameAudioCaption.captions.captionOverrunSec <= 0.05);
+  const captionSpeechDurationSec = voiceoverSync?.alignment === "segment-duration-calibrated" && Array.isArray(voiceoverSync.segments)
+    ? voiceoverSync.segments.reduce((sum, segment) => sum + Math.max(0, Number(segment.captionDurationSec) || 0), 0)
+    : null;
+  const captionSpeechCoverageRatio = Number.isFinite(captionSpeechDurationSec) && captionSpeechDurationSec > 0
+    ? Number((frameAudioCaption?.captions?.coverageSec / captionSpeechDurationSec).toFixed(4))
+    : null;
+  const captionCoveragePass = !job.captions || Boolean(
+    frameAudioCaption?.captions?.overlaps === 0
+    && frameAudioCaption.captions.captionOverrunSec <= 0.05
+    && (Number.isFinite(captionSpeechCoverageRatio) ? captionSpeechCoverageRatio >= 0.98 && captionSpeechCoverageRatio <= 1.02 : frameAudioCaption.captions.coverageRatio >= 0.98)
+  );
   const audioQcPass = Boolean(frameAudioCaption?.audio?.audioQc?.status === "measured");
   const cutReconciliationPass = Boolean(frameAudioCaption?.cutReconciliation && ["matched", "not-applicable"].includes(frameAudioCaption.cutReconciliation.status));
   const captionDensityPass = !job.captions || Boolean(Number.isFinite(generatedCaptionCuesPerMinute) && Number.isFinite(benchmarkCaptionDensity) && generatedCaptionCuesPerMinute / benchmarkCaptionDensity >= 0.5 && generatedCaptionCuesPerMinute / benchmarkCaptionDensity <= 1.5);
@@ -763,6 +775,15 @@ export async function evaluateJob(jobId, options = {}) {
       benchmarkCaptionDensity: Number.isFinite(benchmarkCaptionDensity) ? benchmarkCaptionDensity : null,
       captionDensityRatio: Number.isFinite(generatedCaptionCuesPerMinute) && Number.isFinite(benchmarkCaptionDensity) && benchmarkCaptionDensity > 0 ? round(generatedCaptionCuesPerMinute / benchmarkCaptionDensity, 2) : null,
       captionTiming: captionTiming ? { alignment: captionTiming.alignment, estimated: Boolean(captionTiming.estimated), wordTimingCount: captionTiming.wordTimingCount } : null,
+      voiceoverSync: voiceoverSync ? {
+        alignment: voiceoverSync.alignment || null,
+        estimated: Boolean(voiceoverSync.estimated),
+        targetDurationSec: voiceoverSync.targetDurationSec ?? null,
+        voiceoverDurationSec: voiceoverSync.voiceoverDurationSec ?? null,
+        segmentCount: Array.isArray(voiceoverSync.segments) ? voiceoverSync.segments.length : 0
+      } : null,
+      captionSpeechDurationSec,
+      captionSpeechCoverageRatio,
       benchmarkRlm: { path: evidenceRelative(jobDir, benchmarkRlmPath), sha256: benchmarkRlmHash },
       sourceCount: sources.length,
       sourceQuality,

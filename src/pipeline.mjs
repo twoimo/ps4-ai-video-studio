@@ -458,34 +458,49 @@ function splitCaptionText(text, maxChars = 8) {
   });
 }
 
-function captionEntriesForDuration(script, duration) {
+function segmentWindowsForDuration(script, duration) {
   const segments = script.segments || [];
   const weights = segments.map((segment) => Math.max(1, Number(segment.durationHint) || 5));
   const totalWeight = weights.reduce((sum, value) => sum + value, 0) || 1;
+  let cursor = 0;
+  return segments.map((segment, index) => {
+    const start = cursor;
+    const end = index === segments.length - 1 ? duration : start + duration * (weights[index] / totalWeight);
+    cursor = end;
+    return { segment, index, start, end, durationSec: Math.max(0, end - start) };
+  });
+}
+
+function captionEntriesForDuration(script, duration, voiceoverSync = null) {
   const entries = [];
-  let segmentCursor = 0;
-  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
-    const segment = segments[segmentIndex];
-    const segmentStart = segmentCursor;
-    const segmentEnd = segmentIndex === segments.length - 1 ? duration : segmentStart + duration * (weights[segmentIndex] / totalWeight);
+  for (const { segment, index, start: segmentStart, end: segmentEnd } of segmentWindowsForDuration(script, duration)) {
+    const syncSegment = voiceoverSync?.segments?.[index];
+    const speechDuration = Number(syncSegment?.captionDurationSec);
+    const captionEnd = Number.isFinite(speechDuration)
+      ? Math.min(segmentEnd, segmentStart + Math.max(0.4, speechDuration))
+      : segmentEnd;
     const chunks = splitCaptionText(segment.narration || segment.caption);
     const chunkWeights = chunks.map((chunk) => Math.max(1, [...chunk.replace(/\s/g, "")].length));
     const chunkTotal = chunkWeights.reduce((sum, value) => sum + value, 0) || 1;
     let chunkCursor = segmentStart;
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
       const start = chunkCursor;
-      chunkCursor += (segmentEnd - segmentStart) * (chunkWeights[chunkIndex] / chunkTotal);
-      const end = chunkIndex === chunks.length - 1 ? segmentEnd : chunkCursor;
+      chunkCursor += (captionEnd - segmentStart) * (chunkWeights[chunkIndex] / chunkTotal);
+      const end = chunkIndex === chunks.length - 1 ? captionEnd : chunkCursor;
       entries.push({ text: chunks[chunkIndex], start, end });
     }
-    segmentCursor = segmentEnd;
   }
   return entries;
 }
+function captionCueEnd(entry, nextEntry = null) {
+  const minimumEnd = Math.max(entry.start + 0.4, entry.end);
+  return Number(Math.min(nextEntry?.start ?? minimumEnd, minimumEnd).toFixed(3));
+}
 
-function captionsForDuration(script, duration) {
-  return captionEntriesForDuration(script, duration)
-    .map((entry, index) => `${index + 1}\n${toSrtTime(entry.start)} --> ${toSrtTime(Math.max(entry.start + 0.4, entry.end))}\n${entry.text}\n`)
+function captionsForDuration(script, duration, voiceoverSync = null) {
+  const entries = captionEntriesForDuration(script, duration, voiceoverSync);
+  return entries
+    .map((entry, index) => `${index + 1}\n${toSrtTime(entry.start)} --> ${toSrtTime(captionCueEnd(entry, entries[index + 1]))}\n${entry.text}\n`)
     .join("\n");
 }
 
@@ -516,26 +531,31 @@ function timedCaptionWords(entry) {
   });
 }
 
-function captionsVttForDuration(script, duration) {
-  const entries = captionEntriesForDuration(script, duration);
-  const cues = entries.map((entry) => {
-    const words = timedCaptionWords(entry);
-    const inline = words.map((word, index) => `<${toVttTime(word.start)}><c>${index ? " " : ""}${escapeVttText(word.text)}</c>`).join("");
-    return { ...entry, words, inline };
+function captionsVttForDuration(script, duration, voiceoverSync = null) {
+  const entries = captionEntriesForDuration(script, duration, voiceoverSync);
+  const cues = entries.map((entry, index) => {
+    const timedEntry = { ...entry, end: captionCueEnd(entry, entries[index + 1]) };
+    const words = timedCaptionWords(timedEntry);
+    const inline = words.map((word, wordIndex) => `<${toVttTime(word.start)}><c>${wordIndex ? " " : ""}${escapeVttText(word.text)}</c>`).join("");
+    return { ...timedEntry, words, inline };
   });
   return ["WEBVTT", "Kind: captions", "Language: ko", "", ...cues.flatMap((cue) => [
-    `${toVttTime(cue.start)} --> ${toVttTime(Math.max(cue.start + 0.4, cue.end))}`,
+    `${toVttTime(cue.start)} --> ${toVttTime(cue.end)}`,
     cue.inline,
     ""
   ])].join("\n");
 }
 
-function captionTimingForDuration(script, duration) {
-  const cues = captionEntriesForDuration(script, duration).map((entry) => ({ ...entry, words: timedCaptionWords(entry) }));
+function captionTimingForDuration(script, duration, voiceoverSync = null) {
+  const entries = captionEntriesForDuration(script, duration, voiceoverSync);
+  const cues = entries.map((entry, index) => {
+    const timedEntry = { ...entry, end: captionCueEnd(entry, entries[index + 1]) };
+    return { ...timedEntry, words: timedCaptionWords(timedEntry) };
+  });
   return {
     schemaVersion: 1,
     source: "same script text passed to macOS say",
-    alignment: "script-proportional-estimate",
+    alignment: "segment-duration-proportional-estimate",
     estimated: true,
     durationSec: Number(duration.toFixed(3)),
     cueCount: cues.length,
@@ -718,20 +738,93 @@ async function renderCaptions(input, output, captionsPath, format) {
   await runCommand("ffmpeg", ["-y", "-i", input, "-vf", `scale=${size}:force_original_aspect_ratio=decrease,pad=${size}:(ow-iw)/2:(oh-ih)/2:color=black,subtitles=filename='${escaped}':force_style='${style}'`, "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-c:a", "copy", output]);
 }
 
-async function addVoiceover(input, output, script, warnings) {
-  if (!hasCommand("say")) {
-    warnings.push("macOS say 명령이 없어 음성 합성을 건너뛰었습니다.");
-    return input;
-  }
+async function addVoiceover(input, output, script, warnings, targetDuration) {
+  if (!hasCommand("say")) throw new Error("macOS say 명령이 없어 음성 합성을 수행할 수 없습니다.");
+  const target = Number(targetDuration);
+  if (!Number.isFinite(target) || target <= 0) throw new Error("음성 합성 목표 영상 길이가 올바르지 않습니다.");
   const jobDir = dirname(output);
   const voicePath = join(jobDir, "voiceover.aiff");
+  const concatPath = join(jobDir, "voiceover-concat.txt");
+  const sourceSegments = Array.isArray(script?.segments) && script.segments.length
+    ? script.segments
+    : [{ narration: script?.narration || script?.hook || "" }];
+  const voiceScript = { ...script, segments: sourceSegments };
+  const windows = segmentWindowsForDuration(voiceScript, target);
+  if (!windows.length) throw new Error("음성 합성에 사용할 장면 내레이션이 없습니다.");
+  const audioPaths = [];
+  const segmentSync = [];
   try {
-    await runCommand("say", ["-o", voicePath, script.narration || script.hook || ""]);
-    await runCommand("ffmpeg", ["-y", "-i", input, "-i", voicePath, "-filter_complex", "[0:a]volume=0.30[base];[1:a]volume=1.00[voice];[base][voice]amix=inputs=2:duration=first:dropout_transition=2[mix]", "-map", "0:v:0", "-map", "[mix]", "-c:v", "copy", "-c:a", "aac", "-shortest", output]);
-    return output;
+    for (const { segment, index, start, end, durationSec } of windows) {
+      const text = String(segment.narration || segment.caption || "").replace(/\s+/g, " ").trim();
+      if (!text) throw new Error(`${index + 1}번 장면의 내레이션이 비어 있습니다.`);
+      const rawPath = join(jobDir, `voiceover-${String(index + 1).padStart(2, "0")}.aiff`);
+      const calibratedPath = join(jobDir, `voiceover-${String(index + 1).padStart(2, "0")}-calibrated.aiff`);
+      const paddedPath = join(jobDir, `voiceover-${String(index + 1).padStart(2, "0")}-padded.aiff`);
+      await runCommand("say", ["-o", rawPath, text]);
+      const sourceDurationSec = await probeDuration(rawPath);
+      if (!Number.isFinite(sourceDurationSec) || sourceDurationSec <= 0) throw new Error(`${index + 1}번 장면 음성 길이를 확인할 수 없습니다.`);
+      const atempoRate = sourceDurationSec > durationSec + 0.02 ? sourceDurationSec / Math.max(0.1, durationSec) : 1;
+      let audioPath = rawPath;
+      if (atempoRate > 1.001) {
+        await runCommand("ffmpeg", ["-y", "-i", rawPath, "-filter:a", atempoChain(atempoRate), "-c:a", "pcm_s16le", calibratedPath]);
+        audioPath = calibratedPath;
+      }
+      const calibratedDurationSec = await probeDuration(audioPath);
+      if (!Number.isFinite(calibratedDurationSec) || calibratedDurationSec > durationSec + 0.15) {
+        throw new Error(`${index + 1}번 장면 음성을 목표 구간에 맞추지 못했습니다.`);
+      }
+      const captionDurationSec = Math.min(durationSec, calibratedDurationSec);
+      const padDurationSec = Math.max(0, durationSec - calibratedDurationSec);
+      await runCommand("ffmpeg", [
+        "-y", "-i", audioPath,
+        "-af", `apad=pad_dur=${padDurationSec.toFixed(3)},atrim=duration=${durationSec.toFixed(3)},asetpts=N/SR/TB`,
+        "-c:a", "pcm_s16le", paddedPath
+      ]);
+      const paddedDurationSec = await probeDuration(paddedPath);
+      if (Math.abs(paddedDurationSec - durationSec) > 0.15) {
+        throw new Error(`${index + 1}번 장면 음성 패딩 길이가 영상 구간과 다릅니다.`);
+      }
+      if (atempoRate > 1.15) {
+        warnings.push(`${index + 1}번 장면 음성은 목표 길이에 맞추기 위해 ${atempoRate.toFixed(2)}배 빠르게 보정했습니다.`);
+      }
+      audioPaths.push(paddedPath);
+      segmentSync.push({
+        index: index + 1,
+        startSec: Number(start.toFixed(3)),
+        endSec: Number(end.toFixed(3)),
+        targetDurationSec: Number(durationSec.toFixed(3)),
+        sourceDurationSec: Number(sourceDurationSec.toFixed(3)),
+        calibratedDurationSec: Number(calibratedDurationSec.toFixed(3)),
+        captionDurationSec: Number(captionDurationSec.toFixed(3)),
+        silenceTailSec: Number(Math.max(0, durationSec - captionDurationSec).toFixed(3)),
+        atempoRate: Number(atempoRate.toFixed(6)),
+        text
+      });
+    }
+    await writeFile(concatPath, audioPaths.map((path) => `file '${path.replaceAll("'", "'\\\\''")}'`).join("\n"));
+    await runCommand("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatPath, "-c:a", "pcm_s16le", voicePath]);
+    const voiceoverDurationSec = await probeDuration(voicePath);
+    await runCommand("ffmpeg", [
+      "-y", "-i", input, "-i", voicePath,
+      "-filter_complex", "[0:a]aresample=48000,volume=0.24[base];[1:a]aresample=48000,volume=1.00[voice];[base][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix]",
+      "-map", "0:v:0", "-map", "[mix]", "-t", String(target),
+      "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", output
+    ]);
+    const sync = {
+      schemaVersion: 1,
+      source: "macOS say",
+      alignment: "segment-duration-calibrated",
+      estimated: true,
+      targetDurationSec: Number(target.toFixed(3)),
+      voiceoverDurationSec: Number(voiceoverDurationSec.toFixed(3)),
+      backgroundAudioGain: 0.24,
+      voiceAudioGain: 1,
+      segments: segmentSync
+    };
+    await writeJsonAtomic(join(jobDir, "voiceover-sync.json"), sync);
+    return { path: output, sync };
   } catch (error) {
-    warnings.push(`음성 합성 실패: ${error.message}`);
-    return input;
+    throw new Error(`음성 합성 실패: ${error.message}`);
   }
 }
 
@@ -780,18 +873,21 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
 
   const warnings = [...(job.warnings || [])];
   let audioVideo = assembled;
+  let voiceoverSync = null;
   if (job.voiceover) {
     await onProgress(73, "내레이션", "로컬 음성 합성을 추가하는 중입니다.");
     const voiced = join(jobDir, "voiced.mp4");
-    audioVideo = await addVoiceover(assembled, voiced, script, warnings);
+    const voiceoverResult = await addVoiceover(assembled, voiced, script, warnings, totalDuration);
+    audioVideo = voiceoverResult.path;
+    voiceoverSync = voiceoverResult.sync;
   }
 
   const captionsPath = join(jobDir, "captions.srt");
   const captionsVttPath = join(jobDir, "captions.vtt");
   const captionTimingPath = join(jobDir, "caption-timing.json");
-  await writeFile(captionsPath, job.captions ? captionsForDuration(script, totalDuration) : "");
-  await writeFile(captionsVttPath, job.captions ? captionsVttForDuration(script, totalDuration) : "");
-  await writeJsonAtomic(captionTimingPath, captionTimingForDuration(script, totalDuration));
+  await writeFile(captionsPath, job.captions ? captionsForDuration(script, totalDuration, voiceoverSync) : "");
+  await writeFile(captionsVttPath, job.captions ? captionsVttForDuration(script, totalDuration, voiceoverSync) : "");
+  await writeJsonAtomic(captionTimingPath, captionTimingForDuration(script, totalDuration, voiceoverSync));
   const finalPath = join(jobDir, "final.mp4");
   if (job.captions) {
     await onProgress(82, "자막", "내레이션 흐름에 맞춰 자막을 번인하는 중입니다.");
@@ -811,6 +907,7 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
       { name: "captions.srt", kind: "captions", url: mediaPath(job.id, "captions.srt") },
       { name: "captions.vtt", kind: "caption-timing-estimate", url: mediaPath(job.id, "captions.vtt") },
       { name: "caption-timing.json", kind: "caption-timing", url: mediaPath(job.id, "caption-timing.json") },
+      ...(job.voiceover ? [{ name: "voiceover-sync.json", kind: "voiceover-caption-sync", url: mediaPath(job.id, "voiceover-sync.json") }] : []),
       { name: "script.json", kind: "script", url: mediaPath(job.id, "script.json") },
       { name: "thumbnail.jpg", kind: "thumbnail", url: mediaPath(job.id, "thumbnail.jpg") }
     ],
@@ -818,14 +915,15 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
   };
 }
 const MUTABLE_OUTPUTS = [
-  "final.mp4", "assembled.mp4", "voiced.mp4", "voiceover.aiff", "concat.txt",
-  "captions.srt", "captions.vtt", "caption-timing.json", "script.json",
+  "final.mp4", "assembled.mp4", "voiced.mp4", "voiceover.aiff", "voiceover-concat.txt", "concat.txt",
+  "captions.srt", "captions.vtt", "caption-timing.json", "voiceover-sync.json", "script.json",
   "sources.json", "frame-audio-caption.json", "thumbnail.jpg", "quality.json",
   "committee-review.json"
 ];
 async function clearMutableOutputs(jobDir, preserveGemini = false) {
   const names = preserveGemini ? MUTABLE_OUTPUTS : [...MUTABLE_OUTPUTS, "gemini-generation.json"];
-  await Promise.all(names.map((name) => unlink(join(jobDir, name)).catch(() => {})));
+  const voiceoverParts = (await readdir(jobDir).catch(() => [])).filter((name) => /^voiceover-\d{2}(?:-calibrated|-padded)?\.aiff$/.test(name));
+  await Promise.all([...names, ...voiceoverParts].map((name) => unlink(join(jobDir, name)).catch(() => {})));
   await rm(join(jobDir, "quality"), { recursive: true, force: true });
   await rm(join(jobDir, "normalized"), { recursive: true, force: true });
   await mkdir(join(jobDir, "normalized"), { recursive: true });
