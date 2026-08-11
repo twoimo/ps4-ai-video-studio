@@ -15,6 +15,7 @@ const jobPollWindowMs = Math.max(jobPollMs * 3, 4 * 60 * 1000);
 const topic = process.env.GEMINI_MONITOR_TOPIC || "경복궁 마당이 평평해 보여도 울퉁불퉁한 이유";
 const clipCount = Math.max(6, Math.min(12, Number(process.env.GEMINI_MONITOR_CLIP_COUNT || 8)));
 const targetDurationSec = Math.max(54, Math.min(91, Number(process.env.GEMINI_MONITOR_TARGET_DURATION_SEC || 78)));
+const quotaWakeLeadMs = Math.max(0, Number(process.env.GEMINI_QUOTA_WAKE_LEAD_MS || 30_000));
 const sources = JSON.parse(process.env.GEMINI_MONITOR_SOURCES_JSON || JSON.stringify([
   {
     title: "국가유산채널 조선시대 최첨단 건축재료 박석",
@@ -76,6 +77,56 @@ async function api(path, options) {
 
 async function sleep(ms) {
   await new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+function quotaResetAt(text, now = new Date()) {
+  const korean = String(text || "").match(/(\d{1,2})월\s*(\d{1,2})일\s*(오전|오후)\s*(\d{1,2}):(\d{2})/);
+  const english = String(text || "").match(/available again on\s+([A-Za-z]{3,9})\s+(\d{1,2})\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!korean && !english) return null;
+  let month;
+  let day;
+  let hour;
+  let minute;
+  if (korean) {
+    month = Number(korean[1]);
+    day = Number(korean[2]);
+    hour = Number(korean[4]) % 12;
+    if (korean[3] === "오후") hour += 12;
+    minute = Number(korean[5]);
+  } else {
+    const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    month = monthNames.indexOf(english[1].slice(0, 3).toLowerCase()) + 1;
+    day = Number(english[2]);
+    hour = Number(english[3]) % 12;
+    if (english[5].toUpperCase() === "PM") hour += 12;
+    minute = Number(english[4]);
+  }
+  if (!month || !day || !Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  const candidate = new Date(now.getFullYear(), month - 1, day, hour, minute, 0, 0);
+  return candidate.getTime() > now.getTime() ? candidate : now;
+}
+
+function nextQuotaResetAt(observations, now = new Date()) {
+  const resets = observations
+    .map((profile) => quotaResetAt(profile.quotaResetText, now))
+    .filter(Boolean)
+    .sort((left, right) => left.getTime() - right.getTime());
+  return resets[0] || null;
+}
+
+async function waitForQuotaWindow(observations, reason) {
+  const resetAt = nextQuotaResetAt(observations);
+  const now = Date.now();
+  const waitMs = resetAt
+    ? Math.max(30_000, resetAt.getTime() - now - quotaWakeLeadMs)
+    : pollMs;
+  await persist("quota_wait_scheduled", {
+    status: "quota-blocked",
+    quotaResetAt: resetAt?.toISOString() || null,
+    nextQuotaCheckAt: new Date(now + waitMs).toISOString(),
+    quotaWaitMs: waitMs,
+    quotaWaitReason: reason
+  });
+  await sleep(waitMs);
 }
 
 function isQuotaError(value) {
@@ -187,7 +238,7 @@ async function main() {
     const previous = JSON.parse(await readFile(statePath, "utf8"));
     if (previous?.status !== "production-complete") state = { ...state, ...previous, schemaVersion: 2, status: "resuming" };
   } catch {}
-  await persist("monitor_started", { status: "monitoring", apiBase, pollMs, jobPollMs, retryLimit, profiles: profiles.map(({ id, email, cdpUrl, profileDir }) => ({ id, email, cdpUrl, profileDir })), clipCount, targetDurationSec });
+  await persist("monitor_started", { status: "monitoring", apiBase, pollMs, quotaWakeLeadMs, jobPollMs, retryLimit, profiles: profiles.map(({ id, email, cdpUrl, profileDir }) => ({ id, email, cdpUrl, profileDir })), clipCount, targetDurationSec });
   const deadline = Date.now() + maxRuntimeMs;
   while (Date.now() < deadline) {
     try {
@@ -195,7 +246,7 @@ async function main() {
       if (!state.jobId) {
         const available = observations.find((profile) => profile.available);
         if (!available) {
-          await sleep(pollMs);
+          await waitForQuotaWindow(observations, "no_available_profile");
           continue;
         }
         await createJob(profileFor(available.id));
@@ -210,7 +261,7 @@ async function main() {
           if (!currentObservation?.available) {
             if (await switchToAvailableProfile(observations)) continue;
             await persist("selected_profile_quota_blocked", { status: "quota-blocked", profileId: state.profileId, jobId: state.jobId });
-            await sleep(pollMs);
+            await waitForQuotaWindow(observations, "selected_profile_quota_blocked");
             continue;
           }
           await resumeJob();
@@ -231,11 +282,14 @@ async function main() {
         await sleep(pollMs);
         continue;
       }
+      let waitObservations = observations;
+      let waitReason = "monitor_cycle";
       if (result.kind === "quota-blocked") {
-        const refreshed = await observeProfiles();
-        if (await switchToAvailableProfile(refreshed)) continue;
+        waitObservations = await observeProfiles();
+        if (await switchToAvailableProfile(waitObservations)) continue;
+        waitReason = "all_profiles_quota_blocked";
       }
-      await sleep(pollMs);
+      await waitForQuotaWindow(waitObservations, waitReason);
       continue;
     } catch (error) {
       await persist("monitor_error", { status: "monitoring", lastError: error.message });
