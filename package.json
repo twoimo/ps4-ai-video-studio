@@ -1,0 +1,16 @@
+{
+  "name": "ps4-ai-video-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "analyze": "bun scripts/analyze-channel.mjs",
+    "benchmark:refresh": "bun scripts/refresh-benchmark.mjs",
+    "yt-dlp:update": "bun scripts/update-yt-dlp.mjs",
+    "quality:rlm": "bun scripts/run-rlm-analysis.mjs",
+    "benchmark:media": "bun scripts/benchmark-media.mjs",
+    "monitor:gemini": "bun scripts/monitor-gemini-production.mjs",
+    "dev": "bun --watch src/server.mjs",
+    "start": "bun src/server.mjs"
+  }
+}

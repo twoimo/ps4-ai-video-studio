@@ -1,0 +1,29 @@
+{
+  "channel": "신비한 건축사전",
+  "handle": "@신비한_건축사전_1",
+  "fetchedAt": "2026-08-10T10:35:14.263Z",
+  "videos": [
+    {
+      "position": 1,
+      "id": "rseVVRbzVxo",
+      "title": "조선이 궁궐 마당을 일부러 울퉁불퉁하게 깐 이유",
+      "views": "조회수 17만회",
+      "published": "2일 전",
+      "duration": "6:12",
+      "thumbnail": "https://i.ytimg.com/vi/rseVVRbzVxo/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuALzGA==&rs=AOn4CLDS9UOUt8WSFHFnUWA_7sqdP86p6A",
+      "url": "https://www.youtube.com/watch?v=rseVVRbzVxo",
+      "type": "video"
+    },
+    {
+      "position": 2,
+      "id": "KZXVlJbYoOY",
+      "title": "배가 산을 넘어갑니다  ,펌프 한 개 없이 5만 톤을 들어 올리는 법",
+      "views": "조회수 24만회",
+      "published": "8일 전",
+      "duration": "4:33",
+      "thumbnail": "https://i.ytimg.com/vi/KZXVlJbYoOY/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuALzGA==&rs=AOn4CLDxkm0S2XH4xHRmoY3eRnw5phvmPw",
+      "url": "https://www.youtube.com/watch?v=KZXVlJbYoOY",
+      "type": "video"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0e14" />
+    <title>PS4 AI Video Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><div class="brand-mark">P4</div><div><strong>PS4 STUDIO</strong><span>AI VIDEO SYSTEM</span></div></div>
+        <nav class="nav-list" aria-label="제작 단계">
+          <a class="nav-item active" aria-current="page" href="#create"><span class="nav-index">01</span><span><b>기획 엔진</b><small>주제·대본·훅</small></span></a>
+          <a class="nav-item" href="#generation"><span class="nav-index">02</span><span><b>Gemini 클립</b><small>Chrome 자동 생성</small></span></a>
+          <a class="nav-item" href="#rendering"><span class="nav-index">03</span><span><b>자동 편집</b><small>정규화·믹스·자막</small></span></a>
+          <a class="nav-item" href="#benchmark"><span class="nav-index">04</span><span><b>벤치마크</b><small>채널 분석·RLM receipts</small></span></a>
+        </nav>
+        <div class="sidebar-bottom"><div class="system-chip"><span class="dot" id="system-dot"></span><span id="system-label">시스템 확인 중</span></div><p>로컬 우선 · 오픈소스 기반<br />모든 산출물은 workspace에 저장</p></div>
+      </aside>
+      <main class="main-content">
+        <header class="topbar"><div class="breadcrumb">WORKSPACE <span>/</span> AI SHORTS FACTORY</div><div class="top-actions"><button class="ghost-button" id="browser-start"><span class="button-dot"></span> Gemini Chrome 연결</button><button class="icon-button" id="refresh-all" aria-label="새로고침">↻</button></div></header>
+        <section class="hero"><div><p class="eyebrow">BENCHMARK-DRIVEN PRODUCTION</p><h1>사람들이 멈춰 보는<br /><em>이유</em>를 자동으로 만듭니다.</h1><p class="hero-copy">공개 채널의 영상 패턴을 분석하되, 새 주제와 출처로 독창적인 영상을 만들고,<br />주제 선정부터 Gemini 생성·편집·자막까지 하나의 로컬 파이프라인으로 연결합니다.</p></div><div class="hero-orbit" aria-hidden="true"><div class="orbit-ring ring-one"></div><div class="orbit-ring ring-two"></div><div class="orbit-core">AI<br /><span>FACT</span></div></div></section>
+        <section class="stats-grid" id="stats"></section>
+        <div id="health-capabilities" class="health-strip panel" role="status" aria-live="polite" aria-label="서버 기능 상태"></div>
+        <section class="section-block" id="create"><div class="section-heading"><div><p class="eyebrow">01 / PRODUCTION BRIEF</p><h2>새 영상 제작</h2></div><span class="section-note">자동 실행 모드</span></div><div class="production-grid">
+          <form class="panel create-panel" id="create-form"><div class="panel-head"><div><span class="panel-kicker">EDITORIAL INPUT</span><h3>주제에서 영상까지</h3></div><span class="live-badge">● READY</span></div>
+            <label class="field-label" for="topic">영상 주제</label><div class="topic-input-wrap"><input id="topic" name="topic" placeholder="예: 오래된 도시 시설의 숨은 원리를 설명하는 이야기" required minlength="4" /><span class="input-hint">HOOK</span></div>
+            <div class="suggestions" aria-label="독창적인 주제 예시"><button type="button" data-topic="비 오는 날 도시의 물은 어디로 사라질까">도시 물순환</button><button type="button" data-topic="엘리베이터가 멈출 때 안전장치는 어떻게 작동할까">생활 안전장치</button><button type="button" data-topic="낡은 다리가 수십 년을 버티는 구조적 이유">교량 구조</button></div>
+            <div class="form-row"><div><label class="field-label" for="format">영상 비율</label><select id="format"><option value="vertical">9:16 · Shorts</option><option value="landscape">16:9 · Long form</option></select></div><div><label class="field-label" for="clip-count">AI 클립 수</label><select id="clip-count"><option>4</option><option selected>6</option><option>8</option><option>10</option></select></div></div>
+            <label class="field-label" for="provider">생성 소스</label><select id="provider"><option value="gemini-browser">Gemini · Chrome 자동 조작</option><option value="local">로컬 클립 업로드 후 편집</option></select>
+            <label class="field-label" for="sources">검증 출처 URL <span class="muted">(의미론 심사에 필요한 공식 근거 · 줄바꿈 구분)</span></label><textarea id="sources" rows="2" placeholder="주제에 맞는 공식 출처 URL을 입력하세요.&#10;예: https://www.gov.kr/"></textarea>
+            <div class="toggle-row"><label class="toggle-label"><input id="captions" type="checkbox" checked /><span class="toggle"></span><span>한국어 자막 번인 <b class="toggle-state" data-toggle-state="captions">ON</b></span></label><label class="toggle-label"><input id="voiceover" type="checkbox" checked /><span class="toggle"></span><span>macOS 음성 내레이션 <b class="toggle-state" data-toggle-state="voiceover">ON</b></span></label></div>
+            <button class="primary-button" type="submit"><span>자동 제작 시작</span><span class="arrow">↗</span></button><p class="form-footnote">Gemini 모드는 전용 Chrome 프로필의 쿠키·세션을 재사용합니다. CAPTCHA·로그인 입력은 우회하지 않습니다.</p>
+          </form>
+          <div class="panel pipeline-panel" id="generation"><div class="panel-head"><div><span class="panel-kicker">PIPELINE MONITOR</span><h3>제작 흐름</h3></div><span id="pipeline-status" class="muted" role="status" aria-live="polite">대기 중</span></div><div class="pipeline-steps" id="pipeline-steps">
+            <div class="pipeline-step" data-stage="기획"><span class="step-icon">✦</span><div><b>Editorial engine</b><small>훅·대본·장면 프롬프트</small></div><span class="step-state">WAIT</span></div><div class="pipeline-step" data-stage="소스 준비"><span class="step-icon">◎</span><div><b>Source bundle</b><small>클립·출처·run manifest</small></div><span class="step-state">WAIT</span></div><div class="pipeline-step" data-stage="Gemini 영상"><span class="step-icon">◈</span><div><b>Gemini video</b><small>Chrome 브라우저 자동화</small></div><span class="step-state">WAIT</span></div><div class="pipeline-step" data-stage="편집"><span class="step-icon">◒</span><div><b>Media assembly</b><small>화면비·프레임·오디오 정규화</small></div><span class="step-state">WAIT</span></div><div class="pipeline-step" data-stage="자막"><span class="step-icon">Aa</span><div><b>Caption burn-in</b><small>스크립트 추정 SRT·VTT 타이밍</small></div><span class="step-state">WAIT</span></div><div class="pipeline-step" data-stage="검증"><span class="step-icon">!</span><div><b>Evidence verification</b><small>run manifest·출처·AHP gate</small></div><span class="step-state">WAIT</span></div><div class="pipeline-step" data-stage="완료"><span class="step-icon">✓</span><div><b>Delivery</b><small>MP4·SRT·스크립트·썸네일</small></div><span class="step-state">WAIT</span></div>
+          </div><div class="pipeline-footer"><span>OPEN SOURCE STACK</span><span>FFmpeg · video-use concepts · CDP</span></div></div>
+        </div></section>
+        <section class="section-block" id="rendering"><div class="section-heading"><div><p class="eyebrow">02 / JOB CONTROL</p><h2>생성 작업</h2></div><span class="section-note">최근 작업 우선</span></div><div class="jobs-layout"><div class="jobs-list" id="jobs-list" aria-live="polite" aria-label="생성 작업 목록"><div class="empty-state">아직 제작 작업이 없습니다.<br />위에서 주제를 입력하면 파이프라인이 시작됩니다.</div></div><aside class="job-detail panel" id="job-detail" aria-live="polite"><div class="empty-detail"><span>◌</span><p>작업을 선택하면<br />실시간 산출물이 표시됩니다.</p></div></aside></div></section>
+        <section class="section-block" id="benchmark"><div class="section-heading"><div><p class="eyebrow">03 / RESEARCH INTELLIGENCE</p><h2>채널 벤치마크</h2></div><a class="text-link" href="https://www.youtube.com/@신비한_건축사전_1" target="_blank" rel="noreferrer">채널 열기 ↗</a></div>
+          <div class="benchmark-summary"><div class="panel editorial-panel"><div class="panel-head"><div><span class="panel-kicker">EDITORIAL DNA</span><h3 id="promise"></h3></div></div><div class="formula" id="formula"></div><div class="narrative-list" id="narrative"></div></div><div class="panel category-panel"><div class="panel-head"><div><span class="panel-kicker">PERFORMANCE BY TOPIC</span><h3>반응을 만든 주제</h3></div></div><div id="categories"></div></div></div>
+          <div class="panel committee-panel"><div class="panel-head"><div><span class="panel-kicker">EXPERT COMMITTEE · AHP</span><h3>품질 심사 위원회</h3></div><span class="live-badge">WEIGHTED 100</span></div><p class="committee-intro">고정 가중치 AHP 기계 점수와 별도 위원회 리뷰를 함께 표시합니다. 로컬 제공자는 기계 점수만 계산하며 Gemini 의미론 통과를 주장하지 않습니다.</p><div id="ahp-criteria" class="ahp-criteria" aria-label="AHP 평가 기준과 가중치"></div><div id="committee-roles" class="committee-roles"></div><div id="duration-profile" class="duration-profile"></div><p class="committee-limit">Gemini도 로그인·CAPTCHA·쿼터 제한을 우회하지 않으며, 필요한 provenance가 없으면 심사를 보류합니다.</p></div>
+          <div class="benchmark-bottom"><div class="panel top-panel"><div class="panel-head"><div><span class="panel-kicker">TOP HOOKS</span><h3>조회수를 끌어낸 문장 구조</h3></div></div><div id="top-hooks" class="hook-list"></div></div><div class="panel top-videos-panel"><div class="panel-head"><div><span class="panel-kicker">HIGH SIGNAL LIBRARY</span><h3>상위 영상</h3></div><span class="muted">채널 분석 결과</span></div><div id="top-videos" class="top-video-list"></div></div></div>
+          <div class="panel library-panel"><div class="panel-head library-head"><div><span class="panel-kicker">FULL CHANNEL INDEX</span><h3>전체 영상 인덱스</h3></div><div class="library-controls"><label class="sr-only" for="video-search">영상 제목 검색</label><input id="video-search" placeholder="제목 검색" aria-label="영상 제목 검색" /><label class="sr-only" for="video-sort">영상 정렬</label><select id="video-sort" aria-label="영상 정렬"><option value="views">조회수순</option><option value="recent">최신순</option></select><label class="sr-only" for="video-category">주제 필터</label><select id="video-category" aria-label="주제 필터"><option value="">전체 주제</option></select></div></div><div id="video-library" class="video-library"></div><div class="pagination"><button id="prev-page" aria-label="이전 페이지">← 이전</button><span id="page-label" aria-live="polite">1 / 1</span><button id="next-page" aria-label="다음 페이지">다음 →</button></div></div>
+        </section>
+        <footer class="footer"><span>PS4 AI VIDEO STUDIO · LOCAL-FIRST</span><span>video-use MIT · OpenCut MIT reference · FFmpeg</span></footer>
+      </main>
+    </div><div id="toast" class="toast" role="status"></div><script type="module" src="/app.js"></script>
+  </body>
+</html>
