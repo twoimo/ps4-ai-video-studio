@@ -254,7 +254,8 @@ async function clickVideoTool(browser, format = "vertical") {
       buttons = [...document.querySelectorAll('button,[role="button"],[role="menuitem"],a,div[role="option"]')].filter(visible);
       const fields = [...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(visible);
       if (/동영상 만들기|create videos?/i.test(body) && fields.length) {
-        return { clicked: true, label: "prompt-ready", ratioConfigured: await chooseRatio() };
+        const ratioConfigured = await chooseRatio();
+        return { clicked: true, label: "prompt-ready", ratioConfigured };
       }
       const tryIt = buttons.find((el) => /사용해 보기|try it|create videos?/i.test(text(el)));
       if (tryIt) {
@@ -262,17 +263,25 @@ async function clickVideoTool(browser, format = "vertical") {
         await new Promise((resolve) => setTimeout(resolve, 1400));
         const after = (document.body?.innerText || "").slice(-6000);
         if (quotaPattern.test(after)) return { clicked: false, quota: true, body: after };
-        await chooseRatio();
-        return { clicked: true, label: text(tryIt) };
+        const ratioConfigured = await chooseRatio();
+        return { clicked: true, label: text(tryIt), ratioConfigured };
       }
       const video = buttons.find((el) => /동영상 만들기|create videos?/i.test(text(el)) && !/deselect|선택 해제/.test(text(el)));
-      if (video) { video.click(); await chooseRatio(); return { clicked: true, label: text(video) }; }
+      if (video) {
+        video.click();
+        const ratioConfigured = await chooseRatio();
+        return { clicked: true, label: text(video), ratioConfigured };
+      }
       const tools = buttons.find((el) => /도구|tools|더보기|more|모드/.test(text(el)));
       if (tools) {
         tools.click();
         await new Promise((resolve) => setTimeout(resolve, 600));
         const menu = [...document.querySelectorAll('button,[role="button"],[role="menuitem"],a,div[role="option"]')].filter(visible).find((el) => /동영상 만들기|create videos?|video/.test(text(el)) && !/deselect|선택 해제/.test(text(el)));
-        if (menu) { menu.click(); await chooseRatio(); return { clicked: true, label: text(menu) }; }
+        if (menu) {
+          menu.click();
+          const ratioConfigured = await chooseRatio();
+          return { clicked: true, label: text(menu), ratioConfigured };
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
@@ -604,6 +613,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       const quotaText = String(tool.body || "").match(/동영상을 다시 생성할 수 있습니다[^.。\n]*|동영상 생성 할당량[^.。\n]*|you(?:'|’)re out of videos[^.\n]*|videos will be available again[^.\n]*/i)?.[0];
       if (tool.quota) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${quotaText || "계정 업그레이드 또는 할당량 갱신이 필요합니다."}`);
       if (!tool.clicked) throw new Error(`Gemini 동영상 도구를 찾지 못했습니다. 화면에 "동영상 만들기"가 활성화되어 있는지 확인하세요. 감지된 버튼: ${(tool.buttons || []).join(", ")}`);
+      if (tool.ratioConfigured !== true) throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비를 선택하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
       const prompt = `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, no watermark, no logos. Korean documentary mood.`;
       const filled = await fillPrompt(browser, prompt);
       if (!filled.filled) throw new Error("Gemini 입력창을 찾지 못했습니다.");

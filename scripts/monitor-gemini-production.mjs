@@ -270,7 +270,18 @@ async function main() {
       const result = await pollJob(Date.now() + jobPollWindowMs);
       if (result.kind === "completed") return;
       if (result.kind === "failed") {
-        if (state.attempts >= retryLimit) return;
+        if (state.attempts >= retryLimit) {
+          const failedJobId = state.jobId;
+          state = { ...state, jobId: null, runId: null, profileId: null, attempts: 0 };
+          await persist("job_retry_limit_reached", {
+            status: "monitoring",
+            failedJobId,
+            lastError: result.error,
+            nextAction: "create_new_job"
+          });
+          await sleep(pollMs);
+          continue;
+        }
         await persist("job_retry_scheduled", {
           status: "retrying",
           jobId: state.jobId,
