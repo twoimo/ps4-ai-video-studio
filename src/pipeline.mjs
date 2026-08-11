@@ -473,13 +473,14 @@ function segmentWindowsForDuration(script, duration) {
 
 function captionEntriesForDuration(script, duration, voiceoverSync = null) {
   const entries = [];
+  const maxChars = captionMaxChars(script, duration);
   for (const { segment, index, start: segmentStart, end: segmentEnd } of segmentWindowsForDuration(script, duration)) {
     const syncSegment = voiceoverSync?.segments?.[index];
     const speechDuration = Number(syncSegment?.captionDurationSec);
     const captionEnd = Number.isFinite(speechDuration)
       ? Math.min(segmentEnd, segmentStart + Math.max(0.4, speechDuration))
       : segmentEnd;
-    const chunks = splitCaptionText(segment.narration || segment.caption);
+    const chunks = splitCaptionText(segment.narration || segment.caption, maxChars);
     const chunkWeights = chunks.map((chunk) => Math.max(1, [...chunk.replace(/\s/g, "")].length));
     const chunkTotal = chunkWeights.reduce((sum, value) => sum + value, 0) || 1;
     let chunkCursor = segmentStart;
@@ -495,6 +496,16 @@ function captionEntriesForDuration(script, duration, voiceoverSync = null) {
 function captionCueEnd(entry, nextEntry = null) {
   const minimumEnd = Math.max(entry.start + 0.4, entry.end);
   return Number(Math.min(nextEntry?.start ?? minimumEnd, minimumEnd).toFixed(3));
+}
+
+const BENCHMARK_CAPTION_CUES_PER_MINUTE = 62.6;
+
+function captionMaxChars(script, duration) {
+  const segments = script?.segments || [];
+  const totalTextChars = segments.reduce((sum, segment) => sum + [...String(segment.narration || segment.caption || "").replace(/\s+/g, " ").trim()].length, 0);
+  const targetCueCount = Math.max(segments.length, Math.round((Number(duration) || 0) / 60 * BENCHMARK_CAPTION_CUES_PER_MINUTE));
+  if (!totalTextChars || !targetCueCount) return 8;
+  return Math.max(8, Math.min(18, Math.ceil(totalTextChars / targetCueCount) + 1));
 }
 
 function captionsForDuration(script, duration, voiceoverSync = null) {
@@ -854,11 +865,21 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
   await onProgress(58, "편집", `${names.length}개 클립의 화면비·프레임·오디오를 통일하는 중입니다.`);
   const normalized = [];
   let totalDuration = 0;
+  const hintedTotalDuration = (script?.segments || []).reduce((sum, segment) => {
+    const value = Number(segment.durationHint);
+    return sum + (Number.isFinite(value) && value > 0 ? value : 0);
+  }, 0);
+  const requestedDuration = Number(job.targetDurationSec);
+  const renderDuration = Number.isFinite(requestedDuration) && requestedDuration > 0
+    ? requestedDuration
+    : hintedTotalDuration > 0
+      ? hintedTotalDuration
+      : names.length;
+  const targetWindows = segmentWindowsForDuration(script, renderDuration);
   for (let index = 0; index < names.length; index += 1) {
     const input = selectedEntries[index].absolutePath;
     const output = join(normalizedDir, `${String(index + 1).padStart(2, "0")}.mp4`);
-    const hintedDuration = Number(script?.segments?.[index]?.durationHint);
-    const targetDuration = Number.isFinite(hintedDuration) && hintedDuration > 0 ? hintedDuration : Number(job.targetDurationSec) / names.length;
+    const targetDuration = targetWindows[index]?.durationSec || renderDuration / names.length;
     const duration = await normalizeClip(input, output, job.format, targetDuration);
     normalized.push(output);
     totalDuration += duration;
