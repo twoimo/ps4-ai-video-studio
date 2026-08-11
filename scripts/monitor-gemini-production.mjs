@@ -1,11 +1,13 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { geminiQuotaStatus } from "../src/gemini-browser.mjs";
+import { createUltragoalResumeSignal } from "../src/ultragoal-signal.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const workspaceDir = join(root, "workspace");
 const statePath = join(workspaceDir, "gemini-monitor.json");
 const logPath = join(workspaceDir, "gemini-monitor.jsonl");
+const ultragoalSignalPath = process.env.GEMINI_ULTRAGOAL_SIGNAL_PATH || join(workspaceDir, "ultragoal-resume-request.json");
 const apiBase = process.env.PS4_API_BASE || "http://localhost:3000";
 const pollMs = Math.max(30_000, Number(process.env.GEMINI_MONITOR_INTERVAL_MS || 300_000));
 const jobPollMs = Math.max(3_000, Number(process.env.GEMINI_JOB_POLL_INTERVAL_MS || 10_000));
@@ -64,6 +66,25 @@ async function persist(event, details = {}) {
   await writeFile(statePath, JSON.stringify(state, null, 2));
   await appendFile(logPath, `${JSON.stringify({ schemaVersion: 2, event, at: state.updatedAt, ...details })}\n`);
   console.log(JSON.stringify({ event, ...details }));
+}
+
+async function writeUltragoalSignal(event, details = {}) {
+  const payload = createUltragoalResumeSignal({
+    event,
+    goalId: "G005",
+    jobId: details.jobId ?? state.jobId,
+    runId: details.runId ?? state.runId,
+    status: details.status ?? state.status,
+    profiles: details.profiles || state.profiles || [],
+    completion: details.completion ?? state.completion ?? null
+  });
+  const temporaryPath = `${ultragoalSignalPath}.tmp-${process.pid}`;
+  try {
+    await writeFile(temporaryPath, JSON.stringify(payload, null, 2));
+    await rename(temporaryPath, ultragoalSignalPath);
+  } catch (error) {
+    await writeFile(ultragoalSignalPath, JSON.stringify({ ...payload, signalError: error.message }, null, 2)).catch(() => {});
+  }
 }
 
 async function api(path, options) {
@@ -163,6 +184,10 @@ async function observeProfiles() {
     profiles: observations,
     lastError: observations.find((profile) => profile.error)?.error || null
   });
+  await writeUltragoalSignal(
+    observations.some((profile) => profile.available) ? "provider-available" : "provider-blocked",
+    { profiles: observations, status: observations.some((profile) => profile.available) ? "quota-available" : "quota-blocked" }
+  );
   return observations;
 }
 
@@ -186,6 +211,7 @@ async function createJob(profile) {
   state.jobId = job.job.id;
   state.profileId = profile.id;
   await persist("job_created", { jobId: state.jobId, profileId: profile.id, email: profile.email, status: job.job.status });
+  await writeUltragoalSignal("production-started", { jobId: state.jobId, status: job.job.status });
 }
 
 async function resumeJob() {
@@ -211,6 +237,7 @@ async function pollJob(deadline) {
         semanticReviewPending: quality.semanticGate !== true
       };
       await persist("production_completed", { status: "production-complete", completion });
+      await writeUltragoalSignal("production-complete", { jobId: state.jobId, runId: state.runId, status: "production-complete", completion });
       return { kind: "completed", job, quality };
     }
     if (job.status === "failed") {
