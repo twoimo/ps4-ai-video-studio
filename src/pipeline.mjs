@@ -505,7 +505,7 @@ function captionMaxChars(script, duration) {
   const totalTextChars = segments.reduce((sum, segment) => sum + [...String(segment.narration || segment.caption || "").replace(/\s+/g, " ").trim()].length, 0);
   const targetCueCount = Math.max(segments.length, Math.round((Number(duration) || 0) / 60 * BENCHMARK_CAPTION_CUES_PER_MINUTE));
   if (!totalTextChars || !targetCueCount) return 8;
-  return Math.max(8, Math.min(18, Math.ceil(totalTextChars / targetCueCount) + 1));
+  return Math.max(8, Math.min(12, Math.ceil(totalTextChars / targetCueCount) + 1));
 }
 
 function captionsForDuration(script, duration, voiceoverSync = null) {
@@ -743,9 +743,9 @@ async function normalizeClip(input, output, format, targetDuration = null) {
 async function renderCaptions(input, output, captionsPath, format) {
   const size = format === "landscape" ? "1920:1080" : "1080:1920";
   const escaped = captionsPath.replaceAll("\\", "/").replaceAll(":", "\\:").replaceAll("'", "\\'");
-  const fontSize = format === "landscape" ? 22 : 26;
-  const margin = format === "landscape" ? 56 : 120;
-  const style = `FontName=Apple SD Gothic Neo,FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${margin}`;
+  const fontSize = format === "landscape" ? 18 : 20;
+  const margin = format === "landscape" ? 56 : 140;
+  const style = `FontName=Apple SD Gothic Neo,Bold=1,FontSize=${fontSize},PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=${margin},WrapStyle=2,ScaledBorderAndShadow=yes`;
   await runCommand("ffmpeg", ["-y", "-i", input, "-vf", `scale=${size}:force_original_aspect_ratio=decrease,pad=${size}:(ow-iw)/2:(oh-ih)/2:color=black,subtitles=filename='${escaped}':force_style='${style}'`, "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-c:a", "copy", output]);
 }
 
@@ -817,8 +817,8 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
     const voiceoverDurationSec = await probeDuration(voicePath);
     await runCommand("ffmpeg", [
       "-y", "-i", input, "-i", voicePath,
-      "-filter_complex", "[0:a]aresample=48000,volume=0.24[base];[1:a]aresample=48000,volume=1.00[voice];[base][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mix]",
-      "-map", "0:v:0", "-map", "[mix]", "-t", String(target),
+      "-filter_complex", "[1:a]aresample=48000,volume=1.00[voice]",
+      "-map", "0:v:0", "-map", "[voice]", "-t", String(target),
       "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", output
     ]);
     const sync = {
@@ -828,7 +828,8 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
       estimated: true,
       targetDurationSec: Number(target.toFixed(3)),
       voiceoverDurationSec: Number(voiceoverDurationSec.toFixed(3)),
-      backgroundAudioGain: 0.24,
+      sourceAudioMode: "muted-when-voiceover-enabled",
+      sourceAudioGain: 0,
       voiceAudioGain: 1,
       segments: segmentSync
     };
