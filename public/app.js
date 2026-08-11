@@ -63,6 +63,8 @@ function renderAHPPanel(quality, history) {
     ["RUN", quality?.runId || "—"],
     ["PROVIDER", metrics.provider || "—"],
     ["SEMANTIC GATE", quality?.semanticGate ? "OPEN" : "CLOSED · 증거 부족"],
+    ["AUDIO TRACKS", metrics.finalMedia?.audioStreamCount ?? "—"],
+    ["VOICE STYLE", metrics.voiceoverSync?.voiceStyle || "—"],
     ["INPUT BINDING", metrics.inputManifestBinding ? "PASS" : "FAIL"],
     ["BENCHMARK RECEIPT", metrics.benchmarkReceiptBinding ? "PASS" : "FAIL"],
     ["IMMUTABLE CLOSURE", metrics.immutableClosureBinding ? "PASS" : "FAIL"],

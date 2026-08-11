@@ -783,6 +783,12 @@ export async function evaluateJob(jobId, options = {}) {
       voiceoverSync: voiceoverSync ? {
         alignment: voiceoverSync.alignment || null,
         estimated: Boolean(voiceoverSync.estimated),
+        voiceStyle: voiceoverSync.voiceStyle || null,
+        voiceSelection: voiceoverSync.voiceSelection || null,
+        sayRate: voiceoverSync.sayRate ?? null,
+        loudnessTarget: voiceoverSync.loudnessTarget || null,
+        sourceAudioMode: voiceoverSync.sourceAudioMode || null,
+        sourceAudioGain: voiceoverSync.sourceAudioGain ?? null,
         targetDurationSec: voiceoverSync.targetDurationSec ?? null,
         voiceoverDurationSec: voiceoverSync.voiceoverDurationSec ?? null,
         segmentCount: Array.isArray(voiceoverSync.segments) ? voiceoverSync.segments.length : 0
