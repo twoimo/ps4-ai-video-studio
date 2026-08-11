@@ -823,9 +823,15 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
     }
     await writeFile(concatPath, audioPaths.map((path) => `file '${path.replaceAll("'", "'\\\\''")}'`).join("\n"));
     await runCommand("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", concatPath, "-c:a", "pcm_s16le", voicePath]);
-    const voiceoverDurationSec = await probeDuration(voicePath);
+    const masteredVoicePath = join(jobDir, "voiceover-mastered.wav");
     await runCommand("ffmpeg", [
-      "-y", "-i", input, "-i", voicePath,
+      "-y", "-i", voicePath,
+      "-af", "loudnorm=I=-14:LRA=3.5:TP=-1.0:linear=false",
+      "-c:a", "pcm_s16le", masteredVoicePath
+    ]);
+    const voiceoverDurationSec = await probeDuration(masteredVoicePath);
+    await runCommand("ffmpeg", [
+      "-y", "-i", input, "-i", masteredVoicePath,
       "-filter_complex", "[1:a]aresample=48000,volume=1.00[voice]",
       "-map", "0:v:0", "-map", "[voice]", "-t", String(target),
       "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", output
@@ -838,6 +844,7 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
       voiceStyle: "documentary-ko-neutral",
       voiceSelection: configuredVoice || "system-default-korean",
       sayRate,
+      loudnessTarget: { integratedLufs: -14, loudnessRangeLu: 3.5, truePeakDbfs: -1 },
       targetDurationSec: Number(target.toFixed(3)),
       voiceoverDurationSec: Number(voiceoverDurationSec.toFixed(3)),
       sourceAudioMode: "muted-when-voiceover-enabled",
@@ -949,7 +956,7 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
   };
 }
 const MUTABLE_OUTPUTS = [
-  "final.mp4", "assembled.mp4", "voiced.mp4", "voiceover.aiff", "voiceover-concat.txt", "concat.txt",
+  "final.mp4", "assembled.mp4", "voiced.mp4", "voiceover.aiff", "voiceover-mastered.wav", "voiceover-concat.txt", "concat.txt",
   "captions.srt", "captions.vtt", "caption-timing.json", "voiceover-sync.json", "script.json",
   "sources.json", "frame-audio-caption.json", "thumbnail.jpg", "quality.json",
   "committee-review.json"
