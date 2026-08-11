@@ -9,9 +9,9 @@ const logPath = join(workspaceDir, "gemini-monitor.jsonl");
 const apiBase = process.env.PS4_API_BASE || "http://localhost:3000";
 const pollMs = Math.max(30_000, Number(process.env.GEMINI_MONITOR_INTERVAL_MS || 300_000));
 const jobPollMs = Math.max(3_000, Number(process.env.GEMINI_JOB_POLL_INTERVAL_MS || 10_000));
-const maxRuntimeMs = Math.max(60_000, Number(process.env.GEMINI_MONITOR_MAX_RUNTIME_MS || 24 * 60 * 60 * 1000));
+const maxRuntimeMs = Math.max(60_000, Number(process.env.GEMINI_MONITOR_MAX_RUNTIME_MS || 7 * 24 * 60 * 60 * 1000));
 const retryLimit = Math.max(1, Math.min(5, Number(process.env.GEMINI_MONITOR_RETRY_LIMIT || 3)));
-const jobPollWindowMs = Math.max(jobPollMs * 3, 4 * 60 * 1000);
+const jobPollWindowMs = Math.max(jobPollMs * 3, Number(process.env.GEMINI_JOB_POLL_WINDOW_MS || 10 * 60 * 1000));
 const topic = process.env.GEMINI_MONITOR_TOPIC || "경복궁 마당이 평평해 보여도 울퉁불퉁한 이유";
 const clipCount = Math.max(6, Math.min(12, Number(process.env.GEMINI_MONITOR_CLIP_COUNT || 8)));
 const targetDurationSec = Math.max(54, Math.min(91, Number(process.env.GEMINI_MONITOR_TARGET_DURATION_SEC || 78)));
@@ -115,16 +115,23 @@ function nextQuotaResetAt(observations, now = new Date()) {
 
 async function waitForQuotaWindow(observations, reason) {
   const resetAt = nextQuotaResetAt(observations);
+  const needsFrequentProbe = observations.some((profile) => (
+    !profile.available
+    && !profile.quotaResetText
+    && (profile.videoMode === false || profile.error || profile.quotaMessage == null)
+  ));
   const now = Date.now();
-  const waitMs = resetAt
-    ? Math.max(30_000, resetAt.getTime() - now - quotaWakeLeadMs)
-    : pollMs;
+  const waitMs = needsFrequentProbe
+    ? pollMs
+    : resetAt
+      ? Math.max(30_000, resetAt.getTime() - now - quotaWakeLeadMs)
+      : pollMs;
   await persist("quota_wait_scheduled", {
     status: "quota-blocked",
     quotaResetAt: resetAt?.toISOString() || null,
     nextQuotaCheckAt: new Date(now + waitMs).toISOString(),
     quotaWaitMs: waitMs,
-    quotaWaitReason: reason
+    quotaWaitReason: needsFrequentProbe ? "frequent_probe_required" : reason
   });
   await sleep(waitMs);
 }

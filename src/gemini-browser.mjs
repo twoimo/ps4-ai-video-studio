@@ -8,7 +8,7 @@ import { hashFile } from "./run-ledger.mjs";
 
 const DEFAULT_CDP = process.env.CHROME_CDP_URL || "http://127.0.0.1:9222";
 const PROFILE_DIR = process.env.CHROME_PROFILE_DIR || join(process.env.HOME || "/tmp", ".ps4-ai-video-studio", "chrome-profile");
-const DOWNLOAD_TIMEOUT_MS = Number(process.env.GEMINI_VIDEO_TIMEOUT_MS || 180000);
+const DOWNLOAD_TIMEOUT_MS = Math.max(60_000, Number(process.env.GEMINI_VIDEO_TIMEOUT_MS || 600_000));
 function browserConfig(input = {}) {
   return {
     cdpUrl: String(input.cdpUrl || DEFAULT_CDP).replace(/\/$/, ""),
