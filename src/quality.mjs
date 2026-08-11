@@ -83,8 +83,10 @@ async function probeMedia(path) {
   if (!result) return null;
   try {
     const payload = JSON.parse(result.stdout);
-    const video = payload.streams?.find((stream) => stream.codec_type === "video") || null;
-    const audio = payload.streams?.find((stream) => stream.codec_type === "audio") || null;
+    const videoStreams = payload.streams?.filter((stream) => stream.codec_type === "video") || [];
+    const audioStreams = payload.streams?.filter((stream) => stream.codec_type === "audio") || [];
+    const video = videoStreams[0] || null;
+    const audio = audioStreams[0] || null;
     const duration = Number(payload.format?.duration || video?.duration || audio?.duration || 0);
     const frameRate = video?.avg_frame_rate || video?.r_frame_rate || "0/1";
     const [numerator, denominator] = frameRate.split("/").map(Number);
@@ -94,6 +96,8 @@ async function probeMedia(path) {
       width: Number(video?.width || 0),
       height: Number(video?.height || 0),
       fps: denominator ? numerator / denominator : 0,
+      videoStreamCount: videoStreams.length,
+      audioStreamCount: audioStreams.length,
       videoCodec: video?.codec_name || null,
       audioCodec: audio?.codec_name || null,
       sampleRate: Number(audio?.sample_rate || 0),
@@ -640,7 +644,7 @@ export async function evaluateJob(jobId, options = {}) {
     { id: "durationProfile", label: "벤치마크 평균 길이 범위", max: 10, pass: durationProfilePass },
     { id: "cutReconciliation", label: "클립 경계·프레임 컷 정합", max: 10, pass: cutReconciliationPass },
     { id: "video", label: "최종 비디오 트랙", max: 15, pass: Boolean(finalMedia?.hasVideo) },
-    { id: "audio", label: "최종 오디오 트랙", max: 15, pass: Boolean(finalMedia?.hasAudio) },
+    { id: "audio", label: "최종 단일 오디오 트랙", max: 15, pass: finalMedia?.audioStreamCount === 1 },
     { id: "thumbnail", label: "썸네일 생성", max: 5, pass: existsSync(join(jobDir, "thumbnail.jpg")) }
   ];
   const audioFactors = [
@@ -648,7 +652,7 @@ export async function evaluateJob(jobId, options = {}) {
     { id: "captionCount", label: "장면 수와 자막 수 정합", max: 15, pass: !job.captions || captions.length >= expectedSegments },
     { id: "captionCoverage", label: "자막 타임라인 커버리지", max: 10, pass: captionCoveragePass },
     { id: "captionDensity", label: "벤치마크 자막 밀도", max: 5, pass: captionDensityPass },
-    { id: "audio", label: "오디오 트랙", max: 15, pass: Boolean(finalMedia?.hasAudio) },
+    { id: "audio", label: "단일 오디오 트랙", max: 15, pass: finalMedia?.audioStreamCount === 1 },
     { id: "sampleRate", label: "48kHz 오디오", max: 10, pass: Boolean(finalMedia?.sampleRate === 48000) },
     { id: "frameCaptionAudio", label: "프레임·자막·음성 분석 완료", max: 15, pass: Boolean(frameAudioCaption && frameAudioCaption.captions.count === captions.length && frameAudioCaption.audio) },
     { id: "audioQc", label: "LUFS·true peak·클리핑 분석", max: 10, pass: audioQcPass },
@@ -707,6 +711,7 @@ export async function evaluateJob(jobId, options = {}) {
     && sourceSetBinding
     && claimEvidencePass;
   if (!committee) blockers.push("전문가 위원회 리뷰 파일이 없습니다.");
+  if (finalMedia && finalMedia.audioStreamCount !== 1) blockers.push(`최종 오디오 트랙 수가 1개가 아닙니다: ${finalMedia.audioStreamCount}개`);
   if (committee && !committeeEvidenceBound) blockers.push("전문가 위원회 리뷰가 현재 runId·미디어 해시와 결속되지 않았습니다.");
   if (!inputManifestBinding) blockers.push("현재 실행의 입력 manifest가 요청한 클립 집합과 결속되지 않았습니다.");
   if (!runManifestBinding) blockers.push("현재 실행의 run manifest가 작업·요청 식별자와 결속되지 않았습니다.");

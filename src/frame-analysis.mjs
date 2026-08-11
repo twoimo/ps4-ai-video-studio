@@ -25,8 +25,10 @@ async function run(command, args) {
 async function probe(path) {
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", path]);
   const payload = JSON.parse(stdout);
-  const video = payload.streams?.find((stream) => stream.codec_type === "video") || null;
-  const audio = payload.streams?.find((stream) => stream.codec_type === "audio") || null;
+  const videoStreams = payload.streams?.filter((stream) => stream.codec_type === "video") || [];
+  const audioStreams = payload.streams?.filter((stream) => stream.codec_type === "audio") || [];
+  const video = videoStreams[0] || null;
+  const audio = audioStreams[0] || null;
   const rate = (video?.avg_frame_rate || "0/1").split("/").map(Number);
   return {
     durationSec: Number(payload.format?.duration || video?.duration || audio?.duration || 0),
@@ -34,6 +36,8 @@ async function probe(path) {
     height: Number(video?.height || 0),
     fps: rate[1] ? rate[0] / rate[1] : 0,
     frameCount: Number(video?.nb_frames || 0),
+    videoStreamCount: videoStreams.length,
+    audioStreamCount: audioStreams.length,
     videoCodec: video?.codec_name || null,
     audioCodec: audio?.codec_name || null,
     sampleRate: Number(audio?.sample_rate || 0),
