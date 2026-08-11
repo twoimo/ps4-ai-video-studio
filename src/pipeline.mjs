@@ -17,6 +17,7 @@ export const ANALYSIS_PATH = join(DATA_DIR, "channel-analysis.json");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
 const SUPPORTED_PROVIDERS = new Set(["local", "gemini-browser"]);
+const DEFAULT_SAY_RATE = 165;
 const GEMINI_PROFILE_ROOT = resolve(process.env.HOME || "/tmp", ".ps4-ai-video-studio");
 function normalizeGeminiProfile(input) {
   const cdpUrl = input.geminiCdpUrl;
@@ -753,6 +754,9 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
   if (!hasCommand("say")) throw new Error("macOS say 명령이 없어 음성 합성을 수행할 수 없습니다.");
   const target = Number(targetDuration);
   if (!Number.isFinite(target) || target <= 0) throw new Error("음성 합성 목표 영상 길이가 올바르지 않습니다.");
+  const configuredRate = Number(process.env.PS4_SAY_RATE || DEFAULT_SAY_RATE);
+  const sayRate = Number.isFinite(configuredRate) ? Math.max(120, Math.min(220, Math.round(configuredRate))) : DEFAULT_SAY_RATE;
+  const configuredVoice = String(process.env.PS4_SAY_VOICE || "").trim();
   const jobDir = dirname(output);
   const voicePath = join(jobDir, "voiceover.aiff");
   const concatPath = join(jobDir, "voiceover-concat.txt");
@@ -771,7 +775,12 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
       const rawPath = join(jobDir, `voiceover-${String(index + 1).padStart(2, "0")}.aiff`);
       const calibratedPath = join(jobDir, `voiceover-${String(index + 1).padStart(2, "0")}-calibrated.aiff`);
       const paddedPath = join(jobDir, `voiceover-${String(index + 1).padStart(2, "0")}-padded.aiff`);
-      await runCommand("say", ["-o", rawPath, text]);
+      await runCommand("say", [
+        ...(configuredVoice ? ["-v", configuredVoice] : []),
+        "-r", String(sayRate),
+        "-o", rawPath,
+        text
+      ]);
       const sourceDurationSec = await probeDuration(rawPath);
       if (!Number.isFinite(sourceDurationSec) || sourceDurationSec <= 0) throw new Error(`${index + 1}번 장면 음성 길이를 확인할 수 없습니다.`);
       const atempoRate = sourceDurationSec > durationSec + 0.02 ? sourceDurationSec / Math.max(0.1, durationSec) : 1;
@@ -826,6 +835,9 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
       source: "macOS say",
       alignment: "segment-duration-calibrated",
       estimated: true,
+      voiceStyle: "documentary-ko-neutral",
+      voiceSelection: configuredVoice || "system-default-korean",
+      sayRate,
       targetDurationSec: Number(target.toFixed(3)),
       voiceoverDurationSec: Number(voiceoverDurationSec.toFixed(3)),
       sourceAudioMode: "muted-when-voiceover-enabled",
