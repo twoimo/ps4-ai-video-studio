@@ -109,7 +109,7 @@ function evaluatedQualityFixture({ context = revisionContext(), review = reviewF
     "localVideoModelBinding", "localVideoRequestBinding", "localVideoClipBinding", "localVideoReceiptBinding",
     "providerGenerationProvenance", "generationClipBinding", "generationProvenance", "terminalRunBinding",
     "terminalEventBinding", "eventLogParsePass", "immutableClosureBinding", "immutableEvidenceBinding",
-    "inputDiversityBinding", "inputManifestBinding", "runManifestBinding", "benchmarkReceiptBinding",
+    "inputMotionGateBinding", "inputDiversityBinding", "inputManifestBinding", "runManifestBinding", "benchmarkReceiptBinding",
     "sourceSetBinding", "sourceContentBinding", "committeeEvidenceBound", "committeeAttestationValid",
     "sourceQuality", "researchStatusVerified", "evidenceTextBindingVerified", "claimEvidencePass"
   ].map((name) => [name, true]));

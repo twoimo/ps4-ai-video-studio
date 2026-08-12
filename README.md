@@ -145,6 +145,14 @@ bun run monitor:gemini
 
 모니터는 서버가 만든 mode `0600` 토큰 파일을 읽어 Bearer 인증하고, `workspace/gemini-monitor.json` 및 JSONL 로그를 mode `0600`으로 갱신합니다. 계정 이름·이메일, Chrome profile 경로, Gemini 페이지 본문은 상태·로그·UI·API에 저장하지 않으며 이전 버전 산출물도 시작 시 일방향으로 제거합니다. 쿼터 시각·가용성처럼 자동 재개에 필요한 운영 정보만 남깁니다. 기본 최대 실행 시간은 7일입니다. 이 명령은 사용 가능한 쿼터를 발견하면 실제 생성 작업을 만들 수 있으므로 계정·주제·출처 설정을 먼저 검토하세요.
 
+각 쿼터 관측 전에 모니터가 전용 CDP 포트와 저장된 프로필을 확인하며, 프로세스가 내려갔으면 기본 `--headless=new` 정책으로 다시 시작합니다. 이미 열린 Chrome이 요청 모드와 다르거나 로그인 세션이 만료된 경우에는 자동 우회하지 않고 blocker를 기록합니다.
+
+## 승인 provider 클립 동작 gate
+
+Gemini와 `local-video` 생성 클립은 편집 전에 `ffmpeg-luma-motion-32x32-v1` 검사를 통과해야 합니다. FFmpeg가 디코딩한 32×32 grayscale 프레임으로 첫 1초의 동작 시작 시점과 전체 구간의 움직이는 전환율, 고유 프레임율, 인접 근중복률, 최장 정지 구간을 계산합니다. 파일 SHA-256만 다른 단색 정지 영상이나 소수 프레임 반복 영상은 통과하지 못합니다.
+
+측정값과 고정 threshold는 input manifest schema v3에 저장되고, quality 평가가 원본 클립에서 다시 계산한 영수증과 바이트 단위 canonical hash로 일치해야 `inputMotionGateBinding`이 열립니다. 로컬 업로드 모드는 편집 fixture이므로 같은 지표를 표시하지만 제출용 provider gate로 강제하지 않습니다. 이 기술 검사는 콘텐츠 의미를 판정하지 않으며 `semanticGate=false` 정책을 바꾸지 않습니다.
+
 ## FLUX 3 / BFL 어댑터
 
 [`scripts/bfl-flux-video-generator.mjs`](scripts/bfl-flux-video-generator.mjs)는 BFL의 공식 `POST /v1/flux-3-video` 계약을 `local-video` 프로토콜에 맞춥니다. 각 장면을 직렬 제출하고, task ID를 체크포인트에 기록한 뒤 polling·HTTPS delivery URL·미디어 크기·SHA-256을 검증합니다. 제출 결과가 모호하면 중복 과금을 피하기 위해 자동 재제출하지 않습니다.

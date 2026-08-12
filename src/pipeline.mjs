@@ -109,14 +109,28 @@ export async function createJob(input) {
   const provider = input.provider === undefined ? "gemini-browser" : input.provider;
   if (!SUPPORTED_PROVIDERS.has(provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
   const clipCount = Math.max(1, Math.min(12, Number(input.clipCount) || (provider === "gemini-browser" ? 2 : 6)));
+  const hasExplicitTargetDuration = Object.hasOwn(input, "targetDurationSec");
+  const requestedTargetDuration = input.targetDurationSec;
+  if (hasExplicitTargetDuration && (
+    typeof requestedTargetDuration !== "number"
+    || !Number.isInteger(requestedTargetDuration)
+    || requestedTargetDuration < 20
+    || requestedTargetDuration > 180
+  )) throw new Error("목표 길이는 20초 이상 180초 이하의 정수여야 합니다.");
   const providerDefaultDuration = provider === "gemini-browser"
     ? Math.min(Number(benchmarkDuration.recommendedTargetSec || 110), clipCount * 8)
     : Number(benchmarkDuration.recommendedTargetSec || 78);
-  const targetDurationSec = Math.max(20, Math.min(180, Number(input.targetDurationSec) || providerDefaultDuration));
+  const targetDurationSec = hasExplicitTargetDuration
+    ? requestedTargetDuration
+    : Math.max(20, Math.min(180, providerDefaultDuration));
   const benchmarkRange = benchmarkDuration.recommendedRangeSec || [benchmarkDuration.p10Sec || 43, benchmarkDuration.p90Sec || 104];
-  const targetDurationRangeSec = provider === "gemini-browser"
-    ? [Math.max(10, Math.floor(targetDurationSec * 0.8)), Math.min(180, Math.ceil(targetDurationSec * 1.2))]
-    : benchmarkRange;
+  const targetDurationRangeSec = hasExplicitTargetDuration
+    ? provider === "gemini-browser"
+      ? [Math.max(10, Math.floor(targetDurationSec * 0.8)), Math.min(180, Math.ceil(targetDurationSec * 1.2))]
+      : [Math.max(1, Math.floor(targetDurationSec * 0.95)), Math.min(180, Math.ceil(targetDurationSec * 1.05))]
+    : provider === "gemini-browser"
+      ? [Math.max(10, Math.floor(targetDurationSec * 0.8)), Math.min(180, Math.ceil(targetDurationSec * 1.2))]
+      : benchmarkRange;
   const geminiProfile = provider === "gemini-browser" ? normalizeGeminiProfile(input) : {};
   const job = {
     id,
@@ -1445,6 +1459,188 @@ export function perceptualFingerprintDistance(left = [], right = []) {
   return Number((distance / samples).toFixed(3));
 }
 
+const CLIP_MOTION_GATE_PROVIDERS = new Set(["gemini-browser", "local-video"]);
+const CLIP_MOTION_POLICY = Object.freeze({
+  algorithm: "ffmpeg-luma-motion-32x32-v1",
+  frameWidth: 32,
+  frameHeight: 32,
+  earlyWindowSec: 1,
+  earlySampleRateFps: 8,
+  maximumMotionStartSec: 0.375,
+  motionDeltaThreshold: 0.75,
+  temporalTargetSampleCount: 32,
+  temporalMinimumSampleCount: 8,
+  temporalMaximumSampleRateFps: 4,
+  nearDuplicateDeltaThreshold: 0.75,
+  minimumMovingTransitionRatio: 0.25,
+  minimumUniqueFrameRatio: 0.35,
+  maximumAdjacentNearDuplicateRatio: 0.7,
+  maximumStaticRunRatio: 0.5
+});
+
+export function clipMotionGateRequired(provider) {
+  return CLIP_MOTION_GATE_PROVIDERS.has(provider);
+}
+
+export function clipMotionGatePolicy() {
+  return { ...CLIP_MOTION_POLICY };
+}
+
+function roundedMetric(value) {
+  return Number(Number(value).toFixed(4));
+}
+
+function meanAbsoluteLumaDelta(left, right) {
+  if (!left || !right || left.length !== right.length || !left.length) return Number.POSITIVE_INFINITY;
+  let sum = 0;
+  for (let index = 0; index < left.length; index += 1) sum += Math.abs(left[index] - right[index]);
+  return sum / left.length;
+}
+
+function rawLumaFrames(bytes) {
+  const frameBytes = CLIP_MOTION_POLICY.frameWidth * CLIP_MOTION_POLICY.frameHeight;
+  const frames = [];
+  for (let offset = 0; offset + frameBytes <= bytes.length; offset += frameBytes) {
+    frames.push(bytes.subarray(offset, offset + frameBytes));
+  }
+  return frames;
+}
+
+async function sampleLumaFrames(path, { fps, maxFrames, trimEndSec = null }) {
+  const filters = [];
+  if (Number.isFinite(trimEndSec)) filters.push(`trim=start=0:end=${Number(trimEndSec).toFixed(6)}`, "setpts=PTS-STARTPTS");
+  filters.push(
+    `fps=${Number(fps).toFixed(6)}:round=near`,
+    `scale=${CLIP_MOTION_POLICY.frameWidth}:${CLIP_MOTION_POLICY.frameHeight}:flags=area`,
+    "format=gray"
+  );
+  const bytes = await commandBytes("ffmpeg", [
+    "-v", "error", "-i", path,
+    "-an", "-sn", "-dn",
+    "-vf", filters.join(","),
+    "-frames:v", String(maxFrames),
+    "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"
+  ]);
+  return rawLumaFrames(bytes);
+}
+
+function frameDigest(frame) {
+  return createHash("sha256").update(frame).digest("hex").slice(0, 16);
+}
+
+function longestRun(values, predicate) {
+  let longest = 0;
+  let current = 0;
+  for (const value of values) {
+    if (predicate(value)) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return longest;
+}
+
+/**
+ * Deterministic decoded-frame motion receipt. The first-second probe prevents a
+ * still opening card, while the stratified probe catches static and short-loop
+ * clips even when their container SHA-256 values differ.
+ */
+export async function analyzeClipMotion(path) {
+  const durationSec = await probeDuration(path);
+  const earlyWindowSec = Math.min(CLIP_MOTION_POLICY.earlyWindowSec, durationSec);
+  const earlyMaximumFrames = Math.max(3, Math.ceil(earlyWindowSec * CLIP_MOTION_POLICY.earlySampleRateFps));
+  const earlyFrames = await sampleLumaFrames(path, {
+    fps: CLIP_MOTION_POLICY.earlySampleRateFps,
+    maxFrames: earlyMaximumFrames,
+    trimEndSec: earlyWindowSec
+  });
+  const temporalTarget = Math.max(
+    CLIP_MOTION_POLICY.temporalMinimumSampleCount,
+    Math.min(CLIP_MOTION_POLICY.temporalTargetSampleCount, Math.ceil(durationSec * CLIP_MOTION_POLICY.temporalMaximumSampleRateFps))
+  );
+  const temporalSampleRateFps = Math.min(CLIP_MOTION_POLICY.temporalMaximumSampleRateFps, temporalTarget / durationSec);
+  const temporalFrames = await sampleLumaFrames(path, {
+    fps: temporalSampleRateFps,
+    maxFrames: temporalTarget
+  });
+
+  const firstFrameDeltas = earlyFrames.slice(1).map((frame) => roundedMetric(meanAbsoluteLumaDelta(earlyFrames[0], frame)));
+  const firstMotionIndex = firstFrameDeltas.findIndex((delta) => delta >= CLIP_MOTION_POLICY.motionDeltaThreshold);
+  const motionStartSec = firstMotionIndex < 0
+    ? null
+    : roundedMetric((firstMotionIndex + 1) / CLIP_MOTION_POLICY.earlySampleRateFps);
+  const earlyPass = earlyFrames.length >= 3
+    && Number.isFinite(motionStartSec)
+    && motionStartSec <= CLIP_MOTION_POLICY.maximumMotionStartSec;
+
+  const consecutiveDeltas = temporalFrames.slice(1).map((frame, index) => roundedMetric(meanAbsoluteLumaDelta(temporalFrames[index], frame)));
+  const nearestPriorDeltas = temporalFrames.map((frame, index) => {
+    if (index === 0) return null;
+    let nearest = Number.POSITIVE_INFINITY;
+    for (let prior = 0; prior < index; prior += 1) nearest = Math.min(nearest, meanAbsoluteLumaDelta(frame, temporalFrames[prior]));
+    return roundedMetric(nearest);
+  });
+  const transitionCount = consecutiveDeltas.length;
+  const movingTransitionRatio = transitionCount
+    ? consecutiveDeltas.filter((delta) => delta >= CLIP_MOTION_POLICY.motionDeltaThreshold).length / transitionCount
+    : 0;
+  const adjacentNearDuplicateRatio = transitionCount
+    ? consecutiveDeltas.filter((delta) => delta <= CLIP_MOTION_POLICY.nearDuplicateDeltaThreshold).length / transitionCount
+    : 1;
+  const uniqueFrameCount = nearestPriorDeltas.filter((delta) => delta === null || delta > CLIP_MOTION_POLICY.nearDuplicateDeltaThreshold).length;
+  const uniqueFrameRatio = temporalFrames.length ? uniqueFrameCount / temporalFrames.length : 0;
+  const repeatedFrameRatio = temporalFrames.length ? 1 - uniqueFrameRatio : 1;
+  const longestStaticTransitionRun = longestRun(consecutiveDeltas, (delta) => delta <= CLIP_MOTION_POLICY.nearDuplicateDeltaThreshold);
+  const longestStaticRunRatio = transitionCount ? longestStaticTransitionRun / transitionCount : 1;
+  const temporalPass = temporalFrames.length >= CLIP_MOTION_POLICY.temporalMinimumSampleCount
+    && movingTransitionRatio >= CLIP_MOTION_POLICY.minimumMovingTransitionRatio
+    && uniqueFrameRatio >= CLIP_MOTION_POLICY.minimumUniqueFrameRatio
+    && adjacentNearDuplicateRatio <= CLIP_MOTION_POLICY.maximumAdjacentNearDuplicateRatio
+    && longestStaticRunRatio <= CLIP_MOTION_POLICY.maximumStaticRunRatio;
+  const blockers = [];
+  if (earlyFrames.length < 3) blockers.push("첫 1초 동작 분석 프레임이 부족합니다.");
+  else if (!earlyPass) blockers.push("첫 프레임 직후 허용 시간 안에 유의미한 동작이 시작되지 않습니다.");
+  if (temporalFrames.length < CLIP_MOTION_POLICY.temporalMinimumSampleCount) blockers.push("시간축 다양성 분석 프레임이 부족합니다.");
+  if (movingTransitionRatio < CLIP_MOTION_POLICY.minimumMovingTransitionRatio) blockers.push("움직이는 프레임 전환 비율이 기준보다 낮습니다.");
+  if (uniqueFrameRatio < CLIP_MOTION_POLICY.minimumUniqueFrameRatio) blockers.push("고유 프레임 비율이 낮아 정지 또는 짧은 반복 영상으로 판정됩니다.");
+  if (adjacentNearDuplicateRatio > CLIP_MOTION_POLICY.maximumAdjacentNearDuplicateRatio) blockers.push("인접한 근중복 프레임 비율이 기준보다 높습니다.");
+  if (longestStaticRunRatio > CLIP_MOTION_POLICY.maximumStaticRunRatio) blockers.push("연속 정지 구간이 허용 비율보다 깁니다.");
+
+  return {
+    schemaVersion: 1,
+    algorithm: CLIP_MOTION_POLICY.algorithm,
+    policy: clipMotionGatePolicy(),
+    durationSec: roundedMetric(durationSec),
+    early: {
+      sampleRateFps: CLIP_MOTION_POLICY.earlySampleRateFps,
+      frameCount: earlyFrames.length,
+      frameDigests: earlyFrames.map(frameDigest),
+      firstFrameDeltas,
+      motionStartSec,
+      passed: earlyPass
+    },
+    temporal: {
+      sampleRateFps: roundedMetric(temporalSampleRateFps),
+      frameCount: temporalFrames.length,
+      frameDigests: temporalFrames.map(frameDigest),
+      consecutiveDeltas,
+      nearestPriorDeltas,
+      movingTransitionRatio: roundedMetric(movingTransitionRatio),
+      uniqueFrameCount,
+      uniqueFrameRatio: roundedMetric(uniqueFrameRatio),
+      repeatedFrameRatio: roundedMetric(repeatedFrameRatio),
+      adjacentNearDuplicateRatio: roundedMetric(adjacentNearDuplicateRatio),
+      longestStaticTransitionRun,
+      longestStaticRunRatio: roundedMetric(longestStaticRunRatio),
+      passed: temporalPass
+    },
+    passed: earlyPass && temporalPass,
+    blockers
+  };
+}
+
 async function perceptualFingerprint(path) {
   const duration = await probeDuration(path);
   const sampleCount = 8;
@@ -1460,7 +1656,7 @@ async function perceptualFingerprint(path) {
   return { algorithm: "temporal-ahash-8x8-v1", durationSec: Number(duration.toFixed(3)), frames: hashes };
 }
 
-async function createInputManifest(jobDir, runDir, jobId, runId, requestedNames = null, expectedCount = null) {
+export async function createInputManifest(jobDir, runDir, jobId, runId, requestedNames = null, expectedCount = null, provider = "local") {
   const clipsDir = join(jobDir, "clips");
   const names = [...new Set((requestedNames || (await readdir(clipsDir).catch(() => [])))
     .filter((name) => VIDEO_EXTENSIONS.has(extname(name).toLowerCase()))
@@ -1476,7 +1672,8 @@ async function createInputManifest(jobDir, runDir, jobId, runId, requestedNames 
     if (!fileStat.isFile()) throw new Error(`영상 클립 파일이 아닙니다: ${name}`);
     const sha256 = await hashFile(absolutePath);
     const perceptual = await perceptualFingerprint(absolutePath);
-    selected.push({ name, relativePath: `clips/${name}`, bytes: fileStat.size, sha256, perceptual, absolutePath });
+    const motion = await analyzeClipMotion(absolutePath);
+    selected.push({ name, relativePath: `clips/${name}`, bytes: fileStat.size, sha256, perceptual, motion, absolutePath });
   }
   const exactHashes = new Map();
   for (const entry of selected) {
@@ -1491,12 +1688,30 @@ async function createInputManifest(jobDir, runDir, jobId, runId, requestedNames 
       if (distance <= 3) throw new Error(`서로 다른 장면이 필요합니다. ${selected[left].name}와 ${selected[right].name}의 지각 지문 거리가 ${distance}로 너무 가깝습니다.`);
     }
   }
+  const motionRequired = clipMotionGateRequired(provider);
+  const motionFailures = selected.filter((entry) => !entry.motion.passed).map((entry) => ({ name: entry.name, blockers: entry.motion.blockers }));
+  if (motionRequired && motionFailures.length) {
+    const detail = motionFailures.map((entry) => `${entry.name}: ${entry.blockers.join(" ")}`).join(" | ");
+    throw new Error(`승인 provider 클립 동작 품질 gate를 통과하지 못했습니다. ${detail}`);
+  }
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId,
     jobId,
     capturedAt: new Date().toISOString(),
     diversityGate: { exactSha256Unique: true, perceptualAlgorithm: "temporal-ahash-8x8-v1", minimumDistanceExclusive: 3, comparisons: perceptualComparisons },
+    motionGate: {
+      schemaVersion: 1,
+      algorithm: CLIP_MOTION_POLICY.algorithm,
+      provider,
+      approvedProvider: motionRequired,
+      enforced: motionRequired,
+      observedPass: motionFailures.length === 0,
+      enforcementPass: !motionRequired || motionFailures.length === 0,
+      policy: clipMotionGatePolicy(),
+      policyHash: hashJson(CLIP_MOTION_POLICY),
+      failures: motionFailures
+    },
     entries: selected.map(({ absolutePath: _absolutePath, ...entry }) => entry)
   };
   const manifestPath = join(runDir, "input-manifest.json");
@@ -1965,7 +2180,7 @@ export async function runJob(jobId, options = {}) {
   let localVideoGeneration = null;
   const captureRunInputs = async (requestedNames = null, expectedCount = job.clipCount) => {
     if (inputManifest) return inputManifest;
-    inputManifest = await createInputManifest(jobDir, runDir, jobId, runId, requestedNames, expectedCount);
+    inputManifest = await createInputManifest(jobDir, runDir, jobId, runId, requestedNames, expectedCount, job.provider);
     runManifest = { ...runManifest, inputManifest: inputManifest.receipt };
     await writeRunManifest(runDir, runManifest);
     await record({ type: "inputs_captured", inputManifest: inputManifest.receipt, entries: inputManifest.manifest.entries });

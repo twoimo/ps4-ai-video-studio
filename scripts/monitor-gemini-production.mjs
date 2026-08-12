@@ -1,6 +1,6 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { geminiQuotaStatus } from "../src/gemini-browser.mjs";
+import { geminiQuotaStatus, startGeminiBrowser } from "../src/gemini-browser.mjs";
 import { automatedReviewCheckpointPath, runAutomatedQualityReview } from "../src/automated-review.mjs";
 import { geminiSessionBindingHash } from "../src/provenance.mjs";
 import { createUltragoalResumeSignal } from "../src/ultragoal-signal.mjs";
@@ -307,6 +307,7 @@ async function observeProfiles() {
   const observations = [];
   for (const profile of profiles) {
     try {
+      await startGeminiBrowser({ cdpUrl: profile.cdpUrl, profileDir: profile.profileDir });
       observations.push({
         id: profile.id,
         ...(await geminiQuotaStatus({ cdpUrl: profile.cdpUrl, profileDir: profile.profileDir }))

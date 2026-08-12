@@ -33,6 +33,7 @@ import {
 } from "./quality.mjs";
 import { ytDlpInfo } from "./yt-dlp.mjs";
 import { redactGeminiMonitor } from "./gemini-monitor-privacy.mjs";
+import { buildProviderReadiness } from "./provider-readiness.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 export const DEFAULT_HOST = "127.0.0.1";
@@ -372,7 +373,37 @@ async function verifyRevisionJobDeclarations(job, state) {
   });
 }
 
-function immutableProviderClosureBound(provider, quality, manifest) {
+export function providerMotionClosureBound(provider, metrics, inputManifest) {
+  if (!["gemini-browser", "local-video"].includes(provider)) return true;
+  const schemaVersion = Number(inputManifest?.schemaVersion);
+  if ([1, 2].includes(schemaVersion)) {
+    return !Object.hasOwn(metrics || {}, "inputMotionGate")
+      && !Object.hasOwn(metrics || {}, "inputMotionGateBinding");
+  }
+  return Number.isInteger(schemaVersion)
+    && schemaVersion >= 3
+    && metrics?.inputMotionGateBinding === true
+    && metrics.inputMotionGate?.approvedProvider === true
+    && metrics.inputMotionGate.enforced === true
+    && metrics.inputMotionGate.enforcementPass === true
+    && inputManifest.motionGate?.provider === provider
+    && inputManifest.motionGate.approvedProvider === true
+    && inputManifest.motionGate.enforced === true
+    && inputManifest.motionGate.enforcementPass === true;
+}
+
+export function providerDiversityClosureBound(provider, metrics, inputManifest) {
+  if (!["gemini-browser", "local-video"].includes(provider)) return true;
+  const schemaVersion = Number(inputManifest?.schemaVersion);
+  if (schemaVersion === 1) {
+    return !Object.hasOwn(metrics || {}, "inputDiversityBinding");
+  }
+  return Number.isInteger(schemaVersion)
+    && schemaVersion >= 2
+    && metrics?.inputDiversityBinding === true;
+}
+
+function immutableProviderClosureBound(provider, quality, manifest, inputManifest) {
   const metrics = quality?.metrics || {};
   const immutableNames = new Set((manifest?.immutableArtifacts || []).map((artifact) => artifact?.name));
   if (provider === "gemini-browser") {
@@ -382,6 +413,9 @@ function immutableProviderClosureBound(provider, quality, manifest) {
       && metrics.generationClipBinding === true
       && metrics.providerDecisionBinding === true
       && metrics.providerDecisionEventBinding === true
+      && providerMotionClosureBound(provider, metrics, inputManifest)
+      && providerDiversityClosureBound(provider, metrics, inputManifest)
+      && metrics.inputManifestBinding === true
       && immutableNames.has("gemini-generation.json");
   }
   if (provider === "local-video") {
@@ -392,6 +426,9 @@ function immutableProviderClosureBound(provider, quality, manifest) {
       && metrics.localVideoModelBinding === true
       && metrics.localVideoClipBinding === true
       && metrics.localVideoReceiptBinding === true
+      && providerMotionClosureBound(provider, metrics, inputManifest)
+      && providerDiversityClosureBound(provider, metrics, inputManifest)
+      && metrics.inputManifestBinding === true
       && immutableNames.has(receiptName)
       && manifest.providerReceipt?.path === receiptName
       && manifest.providerReceipt.sha256 === manifest.immutableArtifacts.find((artifact) => artifact?.name === receiptName)?.sha256;
@@ -433,7 +470,9 @@ async function reconcileQualityRevisionJobUnlocked(job) {
   const provider = immutableRunProvider(manifest);
   if (!provider) throw new Error("봉인된 base run의 provider 요청·결정 결속이 유효하지 않습니다.");
   const state = await readQualityRevisionState(job.id, job.runId);
-  if (!immutableProviderClosureBound(provider, state.baseQuality.value, manifest)) {
+  const inputDeclaration = manifest.immutableArtifacts.find((artifact) => artifact?.name === `runs/${job.runId}/input-manifest.json`);
+  const verifiedInput = await readVerifiedImmutableArtifact(job, inputDeclaration, `runs/${job.runId}/input-manifest.json`);
+  if (!verifiedInput?.value || !immutableProviderClosureBound(provider, state.baseQuality.value, manifest, verifiedInput.value)) {
     throw new Error("봉인된 base run의 provider 증거 폐쇄가 유효하지 않습니다.");
   }
   const revisionArtifacts = await revisionArtifactDeclarations(job, state);
@@ -530,7 +569,9 @@ async function readVerifiedQuality(job) {
   if (manifest.status === "needs-improvement" && (verified.value.status === "passed" || verified.value.semanticGate === true)) return null;
   const provider = immutableRunProvider(manifest);
   if (!provider) return null;
-  if (!immutableProviderClosureBound(provider, verified.value, manifest)) return null;
+  const inputDeclaration = manifest.immutableArtifacts.find((artifact) => artifact?.name === `runs/${job.runId}/input-manifest.json`);
+  const verifiedInput = await readVerifiedImmutableArtifact(job, inputDeclaration, `runs/${job.runId}/input-manifest.json`);
+  if (!verifiedInput?.value || !immutableProviderClosureBound(provider, verified.value, manifest, verifiedInput.value)) return null;
   const qualitySummaryFields = ["status", "totalScore", "threshold", "technicalEvidenceGate", "semanticGate", "runId", "blockers"];
   const summaryMatches = Boolean(
     manifest.qualitySummary
@@ -797,6 +838,13 @@ async function rehydrateCompletedRun(job, manifest) {
   if (sealedStatus === "completed" && (quality.status !== "passed" || quality.semanticGate !== true)) return null;
   if (sealedStatus === "needs-improvement" && (quality.status === "passed" || quality.semanticGate === true)) return null;
   const immutableByName = new Map(immutableArtifacts.map((artifact) => [artifact?.name, artifact]));
+  const readImmutableJson = async (name) => {
+    const declaration = immutableByName.get(name);
+    if (!declaration) return null;
+    return readOptionalJson(resolve(jobRoot, declaration.path));
+  };
+  const inputArtifact = await readImmutableJson(`runs/${job.runId}/input-manifest.json`);
+  if (!inputArtifact) return null;
   const qualityMetrics = quality.metrics || {};
   const providerClosureBound = provider === "gemini-browser"
     ? qualityMetrics.provider === "gemini-browser"
@@ -805,6 +853,9 @@ async function rehydrateCompletedRun(job, manifest) {
       && qualityMetrics.generationClipBinding === true
       && qualityMetrics.providerDecisionBinding === true
       && qualityMetrics.providerDecisionEventBinding === true
+      && providerMotionClosureBound(provider, qualityMetrics, inputArtifact)
+      && providerDiversityClosureBound(provider, qualityMetrics, inputArtifact)
+      && qualityMetrics.inputManifestBinding === true
       && immutableByName.has("gemini-generation.json")
     : provider === "local-video"
       ? qualityMetrics.provider === "local-video"
@@ -813,6 +864,9 @@ async function rehydrateCompletedRun(job, manifest) {
         && qualityMetrics.localVideoModelBinding === true
         && qualityMetrics.localVideoClipBinding === true
         && qualityMetrics.localVideoReceiptBinding === true
+        && providerMotionClosureBound(provider, qualityMetrics, inputArtifact)
+        && providerDiversityClosureBound(provider, qualityMetrics, inputArtifact)
+        && qualityMetrics.inputManifestBinding === true
         && immutableByName.has(`runs/${job.runId}/local-video-generation.json`)
         && manifest.providerReceipt?.path === `runs/${job.runId}/local-video-generation.json`
         && manifest.providerReceipt.sha256 === immutableByName.get(`runs/${job.runId}/local-video-generation.json`)?.sha256
@@ -820,13 +874,7 @@ async function rehydrateCompletedRun(job, manifest) {
         ? qualityMetrics.provider === "local" && qualityMetrics.providerProof === true
         : false;
   if (!providerClosureBound) return null;
-  const readImmutableJson = async (name) => {
-    const declaration = immutableByName.get(name);
-    if (!declaration) return null;
-    return readOptionalJson(resolve(jobRoot, declaration.path));
-  };
   const scriptArtifact = await readImmutableJson("script.json");
-  const inputArtifact = await readImmutableJson(`runs/${job.runId}/input-manifest.json`);
   const inputEntries = Array.isArray(inputArtifact?.entries) ? inputArtifact.entries : [];
   const inputByName = new Map(inputEntries.map((entry) => [entry.name, entry]));
   const clipArtifactBound = (relativePath, sha256) => {
@@ -1249,6 +1297,9 @@ async function handleApi(request, url) {
   if (path === "/api/gemini/monitor" && request.method === "GET") {
     const monitor = await readOptionalJson(join(ROOT, "workspace", "gemini-monitor.json")) || { schemaVersion: 2, status: "not-running", profiles: [] };
     return json(redactGeminiMonitor(monitor));
+  }
+  if (path === "/api/providers/readiness" && request.method === "GET") {
+    return json(await buildProviderReadiness({ root: ROOT }));
   }
   if (path === "/api/channel" && request.method === "GET") return json(await readAnalysis());
   if (path === "/api/benchmark/profile" && request.method === "GET") {

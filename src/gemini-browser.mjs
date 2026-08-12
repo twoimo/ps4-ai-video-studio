@@ -787,8 +787,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   }
   return generation;
 }
-export async function startGeminiBrowser() {
-  const config = browserConfig();
+export async function startGeminiBrowser(input = {}) {
+  const config = browserConfig(input);
   const policy = resolveGeminiChromeLaunchPolicy();
   let version;
   try {

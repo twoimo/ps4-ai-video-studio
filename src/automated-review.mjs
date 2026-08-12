@@ -56,7 +56,6 @@ const REQUIRED_BOOLEAN_GATES = Object.freeze([
   "eventLogParsePass",
   "immutableClosureBinding",
   "immutableEvidenceBinding",
-  "inputDiversityBinding",
   "inputManifestBinding",
   "runManifestBinding",
   "geminiRequestSessionBinding",
@@ -169,6 +168,10 @@ function metricSnapshot(metrics = {}) {
     localVideoRequestBinding: metrics.localVideoRequestBinding === true,
     localVideoClipBinding: metrics.localVideoClipBinding === true,
     localVideoReceiptBinding: metrics.localVideoReceiptBinding === true,
+    inputMotionGateDeclared: Boolean(metrics.inputMotionGate),
+    inputMotionGateBinding: metrics.inputMotionGateBinding === true,
+    inputDiversityDeclared: Boolean(metrics.inputDiversityBinding !== undefined || metrics.inputMotionGate),
+    inputDiversityBinding: metrics.inputDiversityBinding === true,
     evidenceFrameCount: Array.isArray(metrics.evidenceFrames) ? metrics.evidenceFrames.length : 0,
     evidenceFramesHash: canonicalJsonHash(Array.isArray(metrics.evidenceFrames) ? metrics.evidenceFrames : []),
     finalMediaPresent: Boolean(metrics.finalMedia),
@@ -232,6 +235,8 @@ function methodChecks(method, metrics) {
     add("audio-qc-measured", metrics.frameAudioCaption?.audioQc?.status === "measured");
   } else if (method.id === "provenance-recovery/v1") {
     REQUIRED_BOOLEAN_GATES.filter((key) => !["semanticGateStateEligible"].includes(key)).forEach((key) => add(key, metrics[key]));
+    if (metrics.inputMotionGate) add("input-motion-gate-binding", metrics.inputMotionGateBinding);
+    if (metrics.inputDiversityBinding !== undefined || metrics.inputMotionGate) add("input-diversity-binding", metrics.inputDiversityBinding);
     add("provider-decision-binding", metrics.providerDecisionBinding);
     add("provider-decision-event-binding", metrics.providerDecisionEventBinding);
   }
@@ -316,6 +321,8 @@ export function analyzeAutomatedPanel({ quality, evidenceHashes, revisionContext
   REQUIRED_BOOLEAN_GATES.forEach((key) => {
     if (metrics[key] !== true) reasons.push(`gate:${key}`);
   });
+  if (metrics.inputMotionGate && metrics.inputMotionGateBinding !== true) reasons.push("gate:inputMotionGateBinding");
+  if ((metrics.inputDiversityBinding !== undefined || metrics.inputMotionGate) && metrics.inputDiversityBinding !== true) reasons.push("gate:inputDiversityBinding");
   if (metrics.providerDecisionBinding !== true) reasons.push("gate:providerDecisionBinding");
   if (metrics.providerDecisionEventBinding !== true) reasons.push("gate:providerDecisionEventBinding");
   if (!metrics.frameAudioCaption) reasons.push("gate:frameAudioCaption");

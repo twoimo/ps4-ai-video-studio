@@ -93,6 +93,8 @@ function qualityFixture(overrides = {}) {
     eventLogParsePass: true,
     immutableClosureBinding: true,
     immutableEvidenceBinding: true,
+    inputMotionGate: { approvedProvider: true, enforced: true, enforcementPass: true },
+    inputMotionGateBinding: true,
     inputDiversityBinding: true,
     inputManifestBinding: true,
     runManifestBinding: true,
@@ -220,6 +222,26 @@ describe("deterministic non-human software review panel", () => {
 
     const evidenceMismatch = analyzeAutomatedPanel({ quality, evidenceHashes: { ...quality.metrics.evidenceHashes, "final.mp4": HASH_B }, revisionContext: context() });
     expect(evidenceMismatch.reasons).toContain("evidence-set-mismatch");
+  });
+
+  test("allows a sealed pre-motion-gate base to append a re-evaluation but never ignores a declared failed gate", () => {
+    const legacy = qualityFixture({ metrics: { inputMotionGate: null, inputMotionGateBinding: false, inputDiversityBinding: undefined } });
+    const legacyAnalysis = analyzeAutomatedPanel({ quality: legacy, evidenceHashes: legacy.metrics.evidenceHashes, revisionContext: context() });
+    expect(legacyAnalysis.reasons).not.toContain("gate:inputMotionGateBinding");
+    expect(legacyAnalysis.reasons).not.toContain("gate:inputDiversityBinding");
+    expect(legacyAnalysis.methodResults.find((result) => result.method === "provenance-recovery/v1")?.checks)
+      .not.toContainEqual({ id: "input-motion-gate-binding", pass: false });
+
+    const declaredFailure = qualityFixture({
+      metrics: {
+        inputMotionGate: { approvedProvider: true, enforced: true, enforcementPass: false },
+        inputMotionGateBinding: false
+      }
+    });
+    const failedAnalysis = analyzeAutomatedPanel({ quality: declaredFailure, evidenceHashes: declaredFailure.metrics.evidenceHashes, revisionContext: context() });
+    expect(failedAnalysis.reasons).toContain("gate:inputMotionGateBinding");
+    expect(failedAnalysis.methodResults.find((result) => result.method === "provenance-recovery/v1")?.checks)
+      .toContainEqual({ id: "input-motion-gate-binding", pass: false });
   });
 
   test("detects method-result mutation and fingerprints only immutable automatic evidence", () => {

@@ -1,3 +1,5 @@
+import { providerReadinessMarkup } from "./provider-readiness-view.js";
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const state = { analysis: null, jobs: [], selectedJobId: null, page: 1, query: "", sort: "views", category: "", poll: null, searchTimer: null, qualityDetails: {} };
@@ -101,6 +103,7 @@ function renderAHPPanel(quality, history) {
     ["AUDIO TRACKS", metrics.finalMedia?.audioStreamCount ?? "—"],
     ["VOICE STYLE", metrics.voiceoverSync?.voiceStyle || "—"],
     ["INPUT BINDING", metrics.inputManifestBinding ? "PASS" : "FAIL"],
+    ["CLIP MOTION", metrics.inputMotionGate?.enforced ? (metrics.inputMotionGateBinding ? "PASS · RECOMPUTED" : "FAIL") : (metrics.inputMotionGate ? `MEASURED · ${metrics.inputMotionGate.observedPass ? "PASS" : "NOT SUBMISSION-ELIGIBLE"}` : "—")],
     ["BENCHMARK RECEIPT", metrics.benchmarkReceiptBinding ? "PASS" : "FAIL"],
     ["IMMUTABLE CLOSURE", metrics.immutableClosureBinding ? "PASS" : "FAIL"],
     ["EVIDENCE HASHES", `${Object.keys(metrics.evidenceHashes || {}).length}개`],
@@ -364,7 +367,7 @@ async function createProduction(event) {
   event.preventDefault();
   const provider = $("#provider").value;
   const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, captions: $("#captions").checked, voiceover: $("#voiceover").checked };
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), targetDurationSec: Number($("#target-duration").value), provider, sources, captions: $("#captions").checked, voiceover: $("#voiceover").checked };
   if (["gemini-browser", "local-video"].includes(provider)) body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;
@@ -386,8 +389,11 @@ async function createProduction(event) {
 
 async function refreshHealth() {
   try {
-    const health = await api("/api/health");
-    const monitor = await api("/api/gemini/monitor").catch(() => null);
+    const [health, monitor, readiness] = await Promise.all([
+      api("/api/health"),
+      api("/api/gemini/monitor").catch(() => null),
+      api("/api/providers/readiness").catch((error) => ({ error: error.message }))
+    ]);
     const monitorProfiles = Array.isArray(monitor?.profiles) ? monitor.profiles : [];
     const monitorDetails = monitorProfiles.map((profile) => {
       const mode = profile.headless === true ? "headless" : profile.headless === false ? "background" : "mode unknown";
@@ -413,10 +419,14 @@ async function refreshHealth() {
     $("#browser-start").classList.toggle("connected", browserConnected);
     $("#browser-start").innerHTML = `<span class="button-dot"></span>${browserConnected ? "Gemini Chrome 연결됨" : "Gemini Chrome 연결"}`;
     $("#health-capabilities").innerHTML = `<div class="health-title">LOCAL CAPABILITIES <small>${ready ? "LOCAL TOOLING READY · PROVIDER STATUS SEPARATE" : "CHECK REQUIRED"}</small></div><div class="health-items">${checks.map(([name, value]) => `<span class="${value ? "ok" : "missing"}"><i></i>${name} ${value ? "PASS" : "MISSING"}</span>`).join("")}<span class="${browserConnected ? "ok" : "missing"}"><i></i>Gemini Chrome ${browserConnected ? "CONNECTED" : "DISCONNECTED"}</span><span class="${health.capabilities.geminiApiKey ? "ok" : "muted"}"><i></i>Gemini text API ${health.capabilities.geminiApiKey ? "CONFIGURED" : "NOT CONFIGURED"}</span><span class="muted"><i></i>yt-dlp ${escapeHtml(ytDlp.version || "unknown")} · ${escapeHtml(ytDlp.maintenance || "maintenance unavailable")}</span><span class="${monitorProfiles.some((profile) => profile.available) ? "ok" : "muted"}"><i></i>Gemini quota monitor ${escapeHtml(monitorLabel)}</span></div>`;
+    $("#provider-readiness").innerHTML = readiness.error
+      ? `<span class="health-error">제공자 준비상태를 확인하지 못했습니다: ${escapeHtml(readiness.error)}</span>`
+      : providerReadinessMarkup(readiness);
     if (!health.capabilities.ffmpeg) showToast("ffmpeg가 없습니다. 터미널에서 brew install ffmpeg를 실행하세요.", "error");
   } catch (error) {
     $("#system-label").textContent = "서버 연결 실패";
     $("#health-capabilities").innerHTML = `<span class="health-error">서버 상태를 확인하지 못했습니다: ${escapeHtml(error.message)}</span>`;
+    $("#provider-readiness").innerHTML = `<span class="health-error">제공자 준비상태를 확인하지 못했습니다.</span>`;
   }
 }
 
@@ -451,15 +461,19 @@ function bindEvents() {
 function syncProviderDefaults() {
   const provider = $("#provider").value;
   const clipCount = $("#clip-count");
+  const targetDuration = $("#target-duration");
   const help = $("#provider-help");
   if (provider === "gemini-browser") {
     clipCount.value = "2";
+    targetDuration.value = "20";
     help.textContent = "관측된 계정 쿼터 안에서 완주하도록 기본 2개 클립·약 20초를 요청합니다. 쿼터가 허용되면 클립 수를 늘릴 수 있습니다.";
   } else if (provider === "local-video") {
     clipCount.value = "6";
+    targetDuration.value = "110";
     help.textContent = "최근 채널 길이 기준 약 110초를 6개 장면으로 구성합니다. FLUX 3 실호출에는 API 키·크레딧·비용 상한이 필요합니다.";
   } else {
     clipCount.value = "4";
+    targetDuration.value = "110";
     help.textContent = "업로드한 서로 다른 클립으로 편집 경로를 검증합니다(기본 4개). 이 모드는 AI provider 기술 증거 gate 대상이 아닙니다.";
   }
 }

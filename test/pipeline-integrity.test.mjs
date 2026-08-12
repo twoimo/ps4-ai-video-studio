@@ -191,6 +191,27 @@ describe("provider clip defaults", () => {
       await Promise.all(jobs.map((job) => rm(join(JOBS_DIR, job.id), { recursive: true, force: true })));
     }
   });
+
+  test("binds an explicit local-video duration to its own tolerance instead of the channel-wide range", async () => {
+    const jobs = [];
+    try {
+      jobs.push(await createJob({ topic: "FLUX 명시 길이", provider: "local-video", clipCount: 2, targetDurationSec: 20 }));
+      jobs.push(await createJob({ topic: "FLUX 벤치마크 길이", provider: "local-video", clipCount: 6 }));
+      expect(jobs[0]).toMatchObject({ targetDurationSec: 20, targetDurationRangeSec: [19, 21] });
+      expect(jobs[1].targetDurationRangeSec).not.toEqual([19, 21]);
+      expect(jobs[1].targetDurationRangeSec[0]).toBeLessThan(jobs[1].targetDurationSec);
+      expect(jobs[1].targetDurationRangeSec[1]).toBeGreaterThan(jobs[1].targetDurationSec);
+    } finally {
+      await Promise.all(jobs.map((job) => rm(join(JOBS_DIR, job.id), { recursive: true, force: true })));
+    }
+  });
+
+  test("rejects malformed or silently clamped explicit durations", async () => {
+    for (const targetDurationSec of [19, 181, 20.5, "20", null, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(createJob({ topic: "길이 계약 검증", provider: "local-video", targetDurationSec }))
+        .rejects.toThrow("20초 이상 180초 이하의 정수");
+    }
+  });
 });
 
 const heritageArticle = `<!doctype html>

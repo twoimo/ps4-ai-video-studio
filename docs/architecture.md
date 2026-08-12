@@ -106,7 +106,7 @@ stateDiagram-v2
 3. 사용자가 지정한 출처를 캡처합니다.
 4. 캡처된 evidence에서만 대본을 생성하거나 evidence-extract fallback을 사용합니다.
 5. 선택한 provider로 장면을 생성하거나 업로드 클립을 선택합니다.
-6. 입력 클립 수·해시·지각 지문을 `input-manifest.json`에 기록합니다.
+6. 입력 클립 수·해시·지각 지문·디코딩 프레임 동작 영수증을 `input-manifest.json`에 기록합니다.
 7. FFmpeg로 정규화·결합·음성·자막·썸네일을 만듭니다.
 8. 프레임·오디오·자막 검사와 AHP 평가를 수행합니다.
 9. 산출물을 `runs/<run-id>/artifacts/`로 복사하고 바이트 수·SHA-256을 manifest에 봉인합니다.
@@ -194,12 +194,13 @@ BFL adapter는 generic 계약을 구현하는 독립 실행 파일입니다.
 
 ## 8. Duplicate-clip gate
 
-입력 manifest는 두 단계로 장면 다양성을 검사합니다.
+입력 manifest schema v3는 세 단계로 장면 다양성과 실제 동작을 검사합니다.
 
 1. 모든 파일의 SHA-256이 고유해야 합니다.
 2. 각 영상에서 시간축으로 최대 8프레임을 뽑고 8×8 grayscale average hash를 계산합니다. 모든 쌍의 평균 Hamming distance가 **3보다 커야** 합니다.
+3. Gemini와 `local-video` 클립은 FFmpeg 디코딩 프레임으로 첫 1초의 동작 시작, 전체 구간의 움직이는 전환율·고유 프레임율·인접 근중복률·최장 정지 구간을 검사합니다. 정지 영상, 초반 무동작, 소수 프레임 반복 중 하나라도 검출되면 manifest를 봉인하지 않고 실행을 중단합니다.
 
-알고리즘 ID는 `temporal-ahash-8x8-v1`이고 비교 결과가 manifest에 저장됩니다. 이는 복사 파일과 거의 동일한 영상을 빠르게 막는 휴리스틱이지, 두 장면의 의미가 충분히 다른지를 증명하는 모델은 아닙니다. 의미적 다양성은 별도 시각 검토가 필요합니다.
+클립 간 알고리즘 ID는 `temporal-ahash-8x8-v1`, 클립 내부 동작 알고리즘 ID는 `ffmpeg-luma-motion-32x32-v1`입니다. quality 단계는 승인 provider의 동작 영수증을 원본 클립에서 다시 계산해 canonical hash가 일치할 때만 `inputMotionGateBinding`을 엽니다. 로컬 업로드는 같은 지표를 기록하지만 강제하지 않습니다. 이 검사는 복사·정지·단순 반복 영상을 막는 결정론적 휴리스틱이지, 장면의 의미적 차이나 내용 적합성을 증명하는 모델은 아닙니다. 의미적 다양성은 별도 시각 검토가 필요합니다.
 
 ## 9. Rendering and quality
 

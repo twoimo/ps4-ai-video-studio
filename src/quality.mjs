@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
-import { JOBS_DIR, ROOT, readJob, verifyEvidenceBoundScript } from "./pipeline.mjs";
+import { analyzeClipMotion, clipMotionGatePolicy, clipMotionGateRequired, JOBS_DIR, ROOT, readJob, verifyEvidenceBoundScript } from "./pipeline.mjs";
 import { analyzeJobMedia } from "./frame-analysis.mjs";
 import { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 import { hashFile } from "./run-ledger.mjs";
@@ -250,6 +250,51 @@ function providerPolicy(provider) {
   if (provider === "gemini-browser") return "no-local-video-fallback";
   if (provider === "local-video") return "local-video-command-adapter-no-fallback";
   return "local-upload-edit";
+}
+
+export function verifyInputMotionGate(inputManifest, provider, recomputedClipMotion = null) {
+  const entries = Array.isArray(inputManifest?.entries) ? inputManifest.entries : null;
+  const gate = inputManifest?.motionGate;
+  const policy = clipMotionGatePolicy();
+  const required = clipMotionGateRequired(provider);
+  const receiptsValid = Boolean(entries?.every((entry) => (
+    entry.motion?.schemaVersion === 1
+    && entry.motion.algorithm === policy.algorithm
+    && hashJson(entry.motion.policy) === hashJson(policy)
+    && typeof entry.motion.passed === "boolean"
+    && typeof entry.motion.early?.passed === "boolean"
+    && typeof entry.motion.temporal?.passed === "boolean"
+    && entry.motion.passed === (entry.motion.early.passed && entry.motion.temporal.passed)
+    && Array.isArray(entry.motion.blockers)
+  )));
+  const observedPass = Boolean(receiptsValid && entries.every((entry) => entry.motion.passed));
+  const expectedFailures = receiptsValid
+    ? entries.filter((entry) => !entry.motion.passed).map((entry) => ({ name: entry.name, blockers: entry.motion.blockers }))
+    : null;
+  const recomputedBinding = !required || Boolean(
+    Array.isArray(recomputedClipMotion)
+    && recomputedClipMotion.length === entries?.length
+    && recomputedClipMotion.every((receipt, index) => hashJson(receipt) === hashJson(entries[index].motion))
+  );
+  const binding = Boolean(
+    inputManifest?.schemaVersion === 3
+    && gate?.schemaVersion === 1
+    && gate.algorithm === policy.algorithm
+    && gate.provider === provider
+    && gate.approvedProvider === required
+    && gate.enforced === required
+    && gate.observedPass === observedPass
+    && gate.enforcementPass === (!required || observedPass)
+    && hashJson(gate.policy) === hashJson(policy)
+    && gate.policyHash === hashJson(policy)
+    && Array.isArray(gate.failures)
+    && expectedFailures
+    && hashJson(gate.failures) === hashJson(expectedFailures)
+    && receiptsValid
+    && recomputedBinding
+    && (!required || observedPass)
+  );
+  return { binding, required, observedPass, recomputedBinding };
 }
 
 function immutableRunProvider(manifest) {
@@ -848,6 +893,7 @@ export function validateQualityRevisionEvaluation(quality, { context, review } =
     "eventLogParsePass",
     "immutableClosureBinding",
     "immutableEvidenceBinding",
+    "inputMotionGateBinding",
     "inputDiversityBinding",
     "inputManifestBinding",
     "runManifestBinding",
@@ -925,6 +971,7 @@ export function validateQualityRevisionEvaluation(quality, { context, review } =
     "terminalEventBinding",
     "immutableClosureBinding",
     "immutableEvidenceBinding",
+    "inputMotionGateBinding",
     "inputDiversityBinding",
     "inputManifestBinding",
     "runManifestBinding",
@@ -1296,10 +1343,23 @@ export async function evaluateJob(jobId, options = {}) {
     && runInputReceipt.sha256 === inputManifestHash
     && runInputReceipt.entryCount === manifestEntries?.length
   );
+  const motionGate = inputManifest?.motionGate;
+  const motionRequired = clipMotionGateRequired(job.provider);
+  let recomputedClipMotion = null;
+  let motionRecomputationError = null;
+  if (motionRequired && manifestEntries?.length === currentClipPaths.length) {
+    try {
+      recomputedClipMotion = [];
+      for (const path of currentClipPaths) recomputedClipMotion.push(await analyzeClipMotion(path));
+    } catch (error) {
+      motionRecomputationError = error.message;
+    }
+  }
+  const inputMotionGateBinding = verifyInputMotionGate(inputManifest, job.provider, recomputedClipMotion).binding;
   const diversity = inputManifest?.diversityGate;
   const expectedComparisonCount = manifestEntries ? manifestEntries.length * (manifestEntries.length - 1) / 2 : -1;
   const inputDiversityBinding = Boolean(
-    inputManifest?.schemaVersion === 2
+    inputManifest?.schemaVersion === 3
     && diversity?.exactSha256Unique === true
     && diversity.perceptualAlgorithm === "temporal-ahash-8x8-v1"
     && Number(diversity.minimumDistanceExclusive) === 3
@@ -1308,9 +1368,10 @@ export async function evaluateJob(jobId, options = {}) {
     && diversity.comparisons.every((comparison) => Number(comparison.distance) > 3)
     && manifestEntries?.every((entry) => entry.perceptual?.algorithm === "temporal-ahash-8x8-v1" && Array.isArray(entry.perceptual.frames) && entry.perceptual.frames.length > 0)
     && new Set(manifestEntries?.map((entry) => entry.sha256)).size === manifestEntries?.length
+    && inputMotionGateBinding
   );
   const inputManifestBinding = Boolean(
-    inputManifest?.schemaVersion === 2
+    inputManifest?.schemaVersion === 3
     && inputManifest.jobId === jobId
     && inputManifest.runId === currentRunId
     && currentRunId === job.runId
@@ -1581,6 +1642,7 @@ export async function evaluateJob(jobId, options = {}) {
     { id: "normalized", label: "정규화 클립 존재", max: 15, pass: normalized.length >= actualClipTarget },
     { id: "sameSpec", label: "클립 사양 일치", max: 15, pass: sameNormalizedSpec },
     { id: "frames", label: "프레임 단위 분석 증거", max: 10, pass: Boolean(frameAudioCaption?.frames?.frameCountObserved > 0) },
+    { id: "providerMotion", label: "클립 첫 프레임 동작·시간축 다양성", max: 15, pass: !motionRequired || inputMotionGateBinding },
     { id: "clipCount", label: "생성 클립 수 충족", max: 15, pass: clips.length >= actualClipTarget }
   ];
   const editFactors = [
@@ -1649,6 +1711,7 @@ export async function evaluateJob(jobId, options = {}) {
     && terminalEventBinding
     && immutableClosureBinding
     && immutableEvidenceBinding
+    && inputMotionGateBinding
     && inputDiversityBinding
     && inputManifestBinding
     && runManifestBinding
@@ -1670,6 +1733,7 @@ export async function evaluateJob(jobId, options = {}) {
   if (committee && !committeeReviewValid(committee)) blockers.push("reviewer payload의 고유 id·role·method와 attestation hash가 검증되지 않았습니다. 이 해시는 사람의 신원·독립성 인증이 아닙니다.");
   if (finalMedia && finalMedia.audioStreamCount !== 1) blockers.push(`최종 오디오 트랙 수가 1개가 아닙니다: ${finalMedia.audioStreamCount}개`);
   if (committee && !committeeEvidenceBound) blockers.push("reviewer payload가 현재 runId·미디어 해시와 결속되지 않았습니다.");
+  if (motionRequired && !inputMotionGateBinding) blockers.push(`승인 provider 클립의 첫 프레임 동작·시간축 다양성·근중복 gate가 재현되지 않았습니다${motionRecomputationError ? `: ${motionRecomputationError}` : ""}`);
   if (!inputDiversityBinding) blockers.push("입력 클립의 SHA-256 고유성 또는 시간축 지각 다양성 gate가 검증되지 않았습니다.");
   if (!inputManifestBinding) blockers.push("현재 실행의 입력 manifest가 요청한 클립 집합과 결속되지 않았습니다.");
   if (!runManifestBinding) blockers.push("현재 실행의 run manifest가 작업·요청 식별자와 결속되지 않았습니다.");
@@ -1748,6 +1812,17 @@ export async function evaluateJob(jobId, options = {}) {
       geminiSessionBindingHash: expectedGeminiSessionBindingHash,
       geminiRequestSessionBinding,
       inputManifest: inputManifest ? { path: evidenceRelative(jobDir, inputManifestPath), sha256: inputManifestHash, entryCount: manifestEntries?.length || 0 } : null,
+      inputMotionGate: motionGate ? {
+        algorithm: motionGate.algorithm,
+        approvedProvider: motionGate.approvedProvider,
+        enforced: motionGate.enforced,
+        observedPass: motionGate.observedPass,
+        enforcementPass: motionGate.enforcementPass,
+        failures: motionGate.failures,
+        recomputed: motionRequired,
+        recomputationError: motionRecomputationError
+      } : null,
+      inputMotionGateBinding,
       inputDiversityBinding,
       inputManifestBinding,
       runManifestBinding,
