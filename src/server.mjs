@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   ANALYSIS_PATH,
   JOBS_DIR,
@@ -16,19 +16,208 @@ import {
   updateJob
 } from "./pipeline.mjs";
 import { appendRunEvent, hashFile, readRunManifest, writeRunManifest } from "./run-ledger.mjs";
-import { geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
-import { evaluateJob, runQualityLoop, saveCommitteeReview } from "./quality.mjs";
+import { configuredGeminiJobProfile, geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
+import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
+import {
+  assertRuntimeQualityRevisionEvaluation,
+  bindQualityRevision,
+  buildQualityRevisionEvent,
+  buildQualityRevisionManifest,
+  canonicalJsonHash,
+  committeeEvidenceHash,
+  evaluateJob,
+  prepareQualityRevision,
+  readQualityRevisionState,
+  runQualityLoop,
+  saveCommitteeReview
+} from "./quality.mjs";
 import { ytDlpInfo } from "./yt-dlp.mjs";
+import { redactGeminiMonitor } from "./gemini-monitor-privacy.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
+export const DEFAULT_HOST = "127.0.0.1";
+const HOST = String(process.env.HOST || DEFAULT_HOST).trim() || DEFAULT_HOST;
 const PUBLIC_DIR = join(ROOT, "public");
 const activeJobs = new Set();
 const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{5,120}$/;
-const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+export const SESSION_COOKIE_NAME = "ps4_studio_session";
+export const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
+export const MAX_UPLOAD_FILES = 12;
+export const MAX_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024;
+const MAX_REQUEST_BODY_BYTES = MAX_UPLOAD_TOTAL_BYTES + 2 * 1024 * 1024;
+const STUDIO_RUNTIME_DIR = join(ROOT, "workspace", ".runtime");
+export const STUDIO_TOKEN_PATH = join(STUDIO_RUNTIME_DIR, "studio-token");
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
 const JOB_LEASE_FILENAME = ".run.lock";
 const JOB_LEASE_WINDOW_MS = 30 * 60 * 1000;
 const JOB_LEASE_HEARTBEAT_MS = JOB_LEASE_WINDOW_MS / 3;
+const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+export { redactGeminiMonitor } from "./gemini-monitor-privacy.mjs";
+
+export function createSessionToken(bytes = 32) {
+  if (!Number.isSafeInteger(bytes) || bytes < 32) throw new Error("세션 토큰은 최소 32바이트여야 합니다.");
+  return randomBytes(bytes).toString("base64url");
+}
+
+export function resolveStudioToken(explicitToken = "") {
+  const token = String(explicitToken || "");
+  if (!token) return createSessionToken();
+  if (token !== token.trim() || /\s/.test(token) || Buffer.byteLength(token, "utf8") < 32) {
+    throw new Error("PS4_STUDIO_TOKEN은 공백 없이 최소 32바이트여야 합니다.");
+  }
+  return token;
+}
+
+const STUDIO_TOKEN = resolveStudioToken(process.env.PS4_STUDIO_TOKEN);
+
+function constantTimeTokenEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""));
+  const rightBuffer = Buffer.from(String(right || ""));
+  if (leftBuffer.length !== rightBuffer.length || leftBuffer.length === 0) return false;
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+export function redactJobResponse(job) {
+  if (!job || typeof job !== "object" || Array.isArray(job)) return job;
+  const { geminiProfileDir: _geminiProfileDir, ...safe } = job;
+  const sessionBinding = canonicalGeminiSessionBinding(job);
+  return sessionBinding ? { ...safe, geminiSessionBinding: sessionBinding, geminiSessionBindingHash: geminiSessionBindingHash(job) } : safe;
+}
+
+export function isLoopbackHostname(hostname) {
+  const value = String(hostname || "").toLowerCase();
+  if (value === "localhost" || value.endsWith(".localhost") || value === "::1" || value === "[::1]") return true;
+  const octets = value.split(".");
+  return octets.length === 4
+    && octets[0] === "127"
+    && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
+
+function configuredOrigins(value = process.env.PS4_ALLOWED_ORIGINS || "") {
+  return String(value).split(",").map((item) => item.trim()).filter(Boolean).flatMap((item) => {
+    try {
+      const url = new URL(item);
+      return url.origin === item ? [item] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function isTrustedStudioOrigin(origin, allowedOrigins = configuredOrigins()) {
+  try {
+    const url = origin instanceof URL ? origin : new URL(origin);
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    return isLoopbackHostname(url.hostname) || allowedOrigins.includes(url.origin);
+  } catch {
+    return false;
+  }
+}
+
+function cookieValue(request, name) {
+  const cookie = request.headers.get("cookie") || "";
+  for (const part of cookie.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function bearerValue(request) {
+  const authorization = request.headers.get("authorization") || "";
+  const match = /^Bearer\s+([^\s]+)$/i.exec(authorization);
+  return match?.[1] || "";
+}
+
+export function authorizeMutationRequest(request, url = new URL(request.url), options = {}) {
+  const token = options.token || "";
+  const allowedOrigins = options.allowedOrigins || configuredOrigins();
+  if (!isTrustedStudioOrigin(url, allowedOrigins)) return { ok: false, status: 403, code: "untrusted-host" };
+  const suppliedToken = bearerValue(request) || cookieValue(request, SESSION_COOKIE_NAME);
+  if (SAFE_HTTP_METHODS.has(request.method.toUpperCase())) {
+    if (!constantTimeTokenEqual(suppliedToken, token)) return { ok: false, status: 403, code: "invalid-session" };
+    return { ok: true, code: bearerValue(request) ? "safe-bearer" : "safe-session" };
+  }
+  const origin = request.headers.get("origin");
+  if (!origin || origin === "null" || origin !== url.origin || !isTrustedStudioOrigin(origin, allowedOrigins)) {
+    return { ok: false, status: 403, code: "cross-origin" };
+  }
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite && fetchSite !== "same-origin") return { ok: false, status: 403, code: "cross-site" };
+  if (!constantTimeTokenEqual(suppliedToken, token)) return { ok: false, status: 403, code: "invalid-session" };
+  return { ok: true, code: bearerValue(request) ? "bearer" : "session" };
+}
+
+export function createSessionCookie(token, { secure = false } = {}) {
+  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure ? "; Secure" : ""}`;
+}
+
+export function shouldIssueSessionCookie(request, url = new URL(request.url), allowedOrigins = configuredOrigins()) {
+  if (request.method !== "GET" || !["/", "/index.html"].includes(url.pathname) || !isTrustedStudioOrigin(url, allowedOrigins)) return false;
+  const destination = request.headers.get("sec-fetch-dest");
+  const mode = request.headers.get("sec-fetch-mode");
+  const site = request.headers.get("sec-fetch-site");
+  if (destination && destination !== "document") return false;
+  if (mode && mode !== "navigate") return false;
+  if (site && !["none", "same-origin"].includes(site)) return false;
+  return true;
+}
+
+function requestError(message, statusCode) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+export function validateUploadBatch(files, limits = {}) {
+  const maxFiles = limits.maxFiles ?? MAX_UPLOAD_FILES;
+  const maxFileBytes = limits.maxFileBytes ?? MAX_UPLOAD_BYTES;
+  const maxTotalBytes = limits.maxTotalBytes ?? MAX_UPLOAD_TOTAL_BYTES;
+  if (!Array.isArray(files) || files.length === 0) throw requestError("업로드할 영상 파일을 선택하세요.", 400);
+  if (files.length > maxFiles) throw requestError(`한 번에 최대 ${maxFiles}개 클립만 업로드할 수 있습니다.`, 413);
+  let totalBytes = 0;
+  for (const file of files) {
+    const size = Number(file?.size);
+    if (!Number.isSafeInteger(size) || size < 0) throw requestError("업로드 파일 크기가 올바르지 않습니다.", 400);
+    if (size > maxFileBytes) throw requestError(`클립 하나의 최대 크기는 ${Math.floor(maxFileBytes / 1024 / 1024)}MB입니다.`, 413);
+    totalBytes += size;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > maxTotalBytes) {
+      throw requestError(`클립 전체 크기는 ${Math.floor(maxTotalBytes / 1024 / 1024)}MB를 넘을 수 없습니다.`, 413);
+    }
+  }
+  return { count: files.length, totalBytes };
+}
+
+export function validateRequestContentLength(request, maxBytes = MAX_REQUEST_BODY_BYTES) {
+  const raw = request.headers.get("content-length");
+  if (raw == null) return null;
+  if (!/^\d+$/.test(raw)) throw requestError("Content-Length가 올바르지 않습니다.", 400);
+  const bytes = Number(raw);
+  if (!Number.isSafeInteger(bytes)) throw requestError("Content-Length가 올바르지 않습니다.", 400);
+  if (bytes > maxBytes) throw requestError("업로드 요청 본문이 허용 크기를 초과했습니다.", 413);
+  return bytes;
+}
+
+export async function persistStudioToken(token, tokenPath = STUDIO_TOKEN_PATH) {
+  const runtimeDir = resolve(tokenPath, "..");
+  await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
+  await chmod(runtimeDir, 0o700);
+  const temporaryPath = `${tokenPath}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await writeFile(temporaryPath, `${token}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await chmod(temporaryPath, 0o600);
+    await rename(temporaryPath, tokenPath);
+    await chmod(tokenPath, 0o600);
+  } finally {
+    await unlink(temporaryPath).catch(() => {});
+  }
+  return tokenPath;
+}
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -39,10 +228,41 @@ function stableValue(value) {
 function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
 }
-await ensureWorkspace();
+
+function providerPolicy(provider) {
+  if (provider === "gemini-browser") return "no-local-video-fallback";
+  if (provider === "local-video") return "local-video-command-adapter-no-fallback";
+  if (provider === "local") return "local-upload-edit";
+  return null;
+}
+
+function immutableRunProvider(manifest) {
+  const request = manifest?.request;
+  const decision = manifest?.providerDecision;
+  const provider = request?.provider;
+  const policy = providerPolicy(provider);
+  if (
+    !policy
+    || decision?.requested !== provider
+    || decision?.selected !== provider
+    || decision?.fallbackUsed !== false
+    || decision?.policy !== policy
+    || request?.fallbackPolicy !== policy
+    || manifest?.providerDecisionHash !== hashJson(decision)
+  ) return null;
+  return provider;
+}
 
 function json(data, status = 200) {
-  return Response.json(data, { status, headers: { "cache-control": "no-store" } });
+  return Response.json(data, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      "cross-origin-resource-policy": "same-origin",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff"
+    }
+  });
 }
 
 function errorResponse(error, status = 400) {
@@ -95,7 +315,10 @@ async function readVerifiedImmutableArtifact(job, artifact, expectedName = artif
   return { path, value: await readOptionalJson(path) };
 }
 async function verifyImmutableRun(job, manifest) {
-  if (!job?.runId || !manifest || manifest.status !== "completed" || manifest.jobId !== job.id || manifest.runId !== job.runId || !Array.isArray(manifest.ledgerErrors) || manifest.ledgerErrors.length !== 0) return false;
+  const sealedStatus = manifest?.status;
+  if (!job?.runId || !manifest || !["completed", "needs-improvement"].includes(sealedStatus) || manifest.jobId !== job.id || manifest.runId !== job.runId || !Array.isArray(manifest.ledgerErrors) || manifest.ledgerErrors.length !== 0) return false;
+  if (sealedStatus === "completed" && manifest.runStatus !== "verified") return false;
+  if (sealedStatus === "needs-improvement" && manifest.runStatus !== "needs-improvement") return false;
   const immutableArtifacts = Array.isArray(manifest.immutableArtifacts) ? manifest.immutableArtifacts : [];
   const names = immutableArtifacts.map((artifact) => artifact?.name).filter(Boolean);
   const expectedPath = (name) => `runs/${job.runId}/artifacts/${String(name).replaceAll("/", "__")}`;
@@ -125,32 +348,190 @@ async function verifyImmutableRun(job, manifest) {
   }));
   return results.every(Boolean);
 }
-async function readVerifiedRevisionArtifact(job, declaration) {
-  if (!job?.runId || !declaration?.path || !String(declaration.sha256 || "").startsWith("sha256:")) return null;
-  const revisionPath = /^runs\/([^/]+)\/revisions\/([^/]+)\/(?:manifest\.json|committee-review\.json|quality\.json|events\.jsonl)$/.exec(declaration.path);
-  if (!revisionPath || revisionPath[1] !== job.runId) return null;
-  const jobRoot = resolve(JOBS_DIR, job.id);
-  const path = resolve(jobRoot, declaration.path);
-  if (!path.startsWith(`${jobRoot}${sep}`)) return null;
-  const jobDeclaration = Array.isArray(job.artifacts)
-    ? job.artifacts.find((artifact) => artifact?.name === declaration.path && String(artifact.sha256 || "").startsWith("sha256:"))
-    : null;
-  if (!jobDeclaration || jobDeclaration.sha256 !== declaration.sha256) return null;
-  const fileStat = await stat(path).catch(() => null);
-  const expectedBytes = declaration.bytes ?? jobDeclaration.bytes;
-  if (!fileStat?.isFile() || (expectedBytes != null && Number(expectedBytes) !== fileStat.size)) return null;
-  if (await hashFile(path).catch(() => null) !== jobDeclaration.sha256) return null;
-  return { path, value: await readOptionalJson(path) };
+async function verifyRevisionJobDeclarations(job, state) {
+  const prefix = `runs/${job.runId}/revisions/`;
+  const declared = (job.artifacts || []).filter((artifact) => String(artifact?.name || "").startsWith(prefix));
+  if (new Set(declared.map((artifact) => artifact.name)).size !== declared.length) return false;
+  const expected = new Map();
+  for (const record of state.revisions) {
+    const { manifest, manifestHash } = record;
+    const manifestPath = `${prefix}${manifest.revisionId}/manifest.json`;
+    const manifestStat = await stat(resolve(JOBS_DIR, job.id, manifestPath)).catch(() => null);
+    if (!manifestStat?.isFile()) return false;
+    expected.set(manifestPath, { sha256: manifestHash, bytes: manifestStat.size });
+    for (const declaration of [manifest.committeeReview, manifest.quality, manifest.events]) {
+      expected.set(declaration.path, { sha256: declaration.sha256, bytes: declaration.bytes });
+    }
+  }
+  if (declared.length !== expected.size) return false;
+  return declared.every((artifact) => {
+    const receipt = expected.get(artifact.name);
+    return receipt
+      && artifact.sha256 === receipt.sha256
+      && Number(artifact.bytes) === Number(receipt.bytes);
+  });
+}
+
+function immutableProviderClosureBound(provider, quality, manifest) {
+  const metrics = quality?.metrics || {};
+  const immutableNames = new Set((manifest?.immutableArtifacts || []).map((artifact) => artifact?.name));
+  if (provider === "gemini-browser") {
+    return metrics.provider === "gemini-browser"
+      && metrics.providerProof === true
+      && metrics.generationProvenance === true
+      && metrics.generationClipBinding === true
+      && metrics.providerDecisionBinding === true
+      && metrics.providerDecisionEventBinding === true
+      && immutableNames.has("gemini-generation.json");
+  }
+  if (provider === "local-video") {
+    const receiptName = `runs/${manifest.runId}/local-video-generation.json`;
+    return metrics.provider === "local-video"
+      && metrics.providerProof === true
+      && metrics.providerGenerationProvenance === true
+      && metrics.localVideoModelBinding === true
+      && metrics.localVideoClipBinding === true
+      && metrics.localVideoReceiptBinding === true
+      && immutableNames.has(receiptName)
+      && manifest.providerReceipt?.path === receiptName
+      && manifest.providerReceipt.sha256 === manifest.immutableArtifacts.find((artifact) => artifact?.name === receiptName)?.sha256;
+  }
+  return provider === "local" && metrics.provider === "local" && metrics.providerProof === true;
+}
+
+async function revisionArtifactDeclarations(job, state) {
+  const declarations = [];
+  const artifactUrl = (path) => `/api/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(path)}`;
+  for (const record of state.revisions) {
+    const manifest = record.manifest;
+    const root = `runs/${job.runId}/revisions/${manifest.revisionId}`;
+    const manifestPath = `${root}/manifest.json`;
+    const manifestStat = await stat(resolve(JOBS_DIR, job.id, manifestPath));
+    const values = [
+      [{ path: manifest.committeeReview.path, sha256: manifest.committeeReview.sha256, bytes: manifest.committeeReview.bytes }, "committee-review-revision"],
+      [{ path: manifest.quality.path, sha256: manifest.quality.sha256, bytes: manifest.quality.bytes }, "quality-revision"],
+      [{ path: manifest.events.path, sha256: manifest.events.sha256, bytes: manifest.events.bytes }, "quality-revision-events"],
+      [{ path: manifestPath, sha256: record.manifestHash, bytes: manifestStat.size }, "quality-revision-manifest"]
+    ];
+    declarations.push(...values.map(([receipt, kind]) => ({
+      name: receipt.path,
+      kind,
+      bytes: Number(receipt.bytes),
+      sha256: receipt.sha256,
+      url: artifactUrl(receipt.path)
+    })));
+  }
+  return declarations;
+}
+
+async function reconcileQualityRevisionJobUnlocked(job) {
+  if (!job?.runId) return job;
+  const runDir = join(JOBS_DIR, job.id, "runs", job.runId);
+  const manifest = await readRunManifest(runDir);
+  if (!manifest || !["completed", "needs-improvement"].includes(manifest.status)) return job;
+  if (!(await verifyImmutableRun(job, manifest))) throw new Error("봉인된 base run의 불변 산출물 무결성 검증에 실패했습니다.");
+  const provider = immutableRunProvider(manifest);
+  if (!provider) throw new Error("봉인된 base run의 provider 요청·결정 결속이 유효하지 않습니다.");
+  const state = await readQualityRevisionState(job.id, job.runId);
+  if (!immutableProviderClosureBound(provider, state.baseQuality.value, manifest)) {
+    throw new Error("봉인된 base run의 provider 증거 폐쇄가 유효하지 않습니다.");
+  }
+  const revisionArtifacts = await revisionArtifactDeclarations(job, state);
+  const revisionPrefix = `runs/${job.runId}/revisions/`;
+  const baseArtifacts = (job.artifacts || []).filter((artifact) => !String(artifact?.name || "").startsWith(revisionPrefix));
+  const quality = state.latestQuality || state.baseQuality.value;
+  const effectiveStatus = state.effectiveStatus;
+  const effectiveRunStatus = effectiveStatus === "completed" ? "verified" : "needs-improvement";
+  const qualitySummary = state.latestManifest
+    ? {
+      status: quality.status,
+      totalScore: quality.totalScore,
+      threshold: quality.threshold,
+      technicalEvidenceGate: quality.technicalEvidenceGate,
+      semanticGate: quality.semanticGate,
+      runId: quality.runId,
+      blockers: quality.blockers,
+      inputManifest: manifest.qualitySummary?.inputManifest || quality.inputManifest || quality.metrics?.inputManifest || null,
+      revisionId: state.latestManifest.revisionId,
+      revisionSequence: Number(state.latestManifest.sequence),
+      revisionManifest: `runs/${job.runId}/revisions/${state.latestManifest.revisionId}/manifest.json`
+    }
+    : { ...manifest.qualitySummary };
+  const artifacts = [...baseArtifacts, ...revisionArtifacts];
+  const desired = { provider, status: effectiveStatus, runStatus: effectiveRunStatus, qualitySummary, artifacts };
+  const current = { provider: job.provider, status: job.status, runStatus: job.runStatus, qualitySummary: job.qualitySummary, artifacts: job.artifacts || [] };
+  if (canonicalJsonHash(current) === canonicalJsonHash(desired)) return job;
+  const latest = await readJob(job.id);
+  if (latest.runId !== job.runId || ["running", "verifying"].includes(latest.status)) return latest;
+  return updateJob(job.id, {
+    ...desired,
+    ...(state.latestManifest ? {
+      stage: effectiveStatus === "completed" ? "완료" : "개선 필요",
+      progress: 100,
+      message: effectiveStatus === "completed"
+        ? `봉인된 reviewer payload revision 상태를 복구했습니다. (${quality.totalScore}점)`
+        : `봉인된 reviewer payload revision 상태를 복구했습니다 · 추가 개선이 필요합니다. (${quality.totalScore}점)`,
+      error: null
+    } : {})
+  });
+}
+
+export async function reconcileQualityRevisionJob(job, options = {}) {
+  if (!job?.runId || activeJobs.has(job.id)) return job;
+  if (options.leaseHeld === true) return reconcileQualityRevisionJobUnlocked(job);
+  const lease = await acquireJobLease(job.id);
+  if (!lease) return readJob(job.id);
+  try {
+    const locked = await readJob(job.id);
+    if (locked.runId !== job.runId || ["running", "verifying"].includes(locked.status)) return locked;
+    return await reconcileQualityRevisionJobUnlocked(locked);
+  } finally {
+    await releaseJobLease(lease);
+  }
+}
+
+function integrityBlockedJobResponse(job) {
+  return {
+    ...job,
+    integrity: {
+      status: "blocked",
+      code: "sealed-run-integrity-failure",
+      message: "봉인된 실행의 무결성 검증에 실패해 자동 복구와 품질 판정을 차단했습니다.",
+      mutableJobPreserved: true
+    }
+  };
+}
+
+export async function reconcileJobsIndependently(jobs, options = {}) {
+  const results = [];
+  for (const job of jobs) {
+    if (options.revisionOnly === true && (!job.runId || !existsSync(join(JOBS_DIR, job.id, "runs", job.runId, "revisions")))) {
+      results.push(job);
+      continue;
+    }
+    try {
+      results.push(await reconcileQualityRevisionJob(job));
+    } catch (error) {
+      options.onIntegrityError?.(job, error);
+      results.push(integrityBlockedJobResponse(job));
+    }
+  }
+  return results;
 }
 
 async function readVerifiedQuality(job) {
-  if (job?.status !== "completed") return null;
+  if (!["completed", "needs-improvement"].includes(job?.status)) return null;
   const manifest = job?.runId ? await readRunManifest(join(JOBS_DIR, job.id, "runs", job.runId)) : null;
   if (!(await verifyImmutableRun(job, manifest))) return null;
   const declaration = manifest.immutableArtifacts.find((artifact) => artifact?.name === "quality.json");
   const verified = await readVerifiedImmutableArtifact(job, declaration, "quality.json");
   if (!verified?.value || verified.value.jobId !== job.id || verified.value.runId !== job.runId) return null;
-  const qualitySummaryFields = ["status", "totalScore", "threshold", "semanticGate", "runId", "blockers"];
+  if (manifest.status === "completed" && (verified.value.status !== "passed" || verified.value.semanticGate !== true)) return null;
+  if (manifest.status === "needs-improvement" && (verified.value.status === "passed" || verified.value.semanticGate === true)) return null;
+  const provider = immutableRunProvider(manifest);
+  if (!provider) return null;
+  if (!immutableProviderClosureBound(provider, verified.value, manifest)) return null;
+  const qualitySummaryFields = ["status", "totalScore", "threshold", "technicalEvidenceGate", "semanticGate", "runId", "blockers"];
   const summaryMatches = Boolean(
     manifest.qualitySummary
     && qualitySummaryFields.every((field) => JSON.stringify(manifest.qualitySummary[field]) === JSON.stringify(verified.value[field]))
@@ -168,30 +549,35 @@ async function readVerifiedQuality(job) {
     && qualitySummaryFields.every((field) => JSON.stringify(terminal.qualitySummary[field]) === JSON.stringify(verified.value[field]))
   );
   if (!summaryMatches || !terminalMatches) return null;
-  const revisionId = job?.qualitySummary?.revisionId;
-  if (revisionId) {
-    const revisionManifestPath = `runs/${job.runId}/revisions/${revisionId}/manifest.json`;
-    const revisionJobDeclaration = Array.isArray(job.artifacts)
-      ? job.artifacts.find((artifact) => artifact?.name === revisionManifestPath && String(artifact.sha256 || "").startsWith("sha256:"))
-      : null;
-    const revisionManifestArtifact = await readVerifiedRevisionArtifact(job, revisionJobDeclaration ? { path: revisionManifestPath, sha256: revisionJobDeclaration.sha256, bytes: revisionJobDeclaration.bytes } : null);
-    const revisionManifest = revisionManifestArtifact?.value;
-    const parentManifestPath = join(JOBS_DIR, job.id, revisionManifest?.parentManifest?.path || "");
-    const parentManifestHash = revisionManifest?.parentManifest?.path ? await hashFile(parentManifestPath).catch(() => null) : null;
-    const revisionQuality = await readVerifiedRevisionArtifact(job, revisionManifest?.quality);
+  const state = await readQualityRevisionState(job.id, job.runId).catch(() => null);
+  if (!state || !(await verifyRevisionJobDeclarations(job, state))) return null;
+  if (!state.latestManifest) {
+    const expectedRunStatus = manifest.status === "completed" ? "verified" : "needs-improvement";
     if (
-      revisionManifest?.jobId === job.id
-      && revisionManifest?.runId === job.runId
-      && revisionManifest?.revisionId === revisionId
-      && revisionManifest.parentManifest?.path === `runs/${job.runId}/manifest.json`
-      && revisionManifest.parentManifest.sha256 === parentManifestHash
-      && revisionQuality?.value?.jobId === job.id
-      && revisionQuality.value.runId === job.runId
-    ) {
-      return revisionQuality.value;
-    }
+      job.status !== manifest.status
+      || job.runStatus !== expectedRunStatus
+      || job.provider !== provider
+      || job.qualitySummary?.revisionId
+      || job.qualitySummary?.revisionSequence
+      || job.qualitySummary?.revisionManifest
+      || qualitySummaryFields.some((field) => JSON.stringify(job.qualitySummary?.[field]) !== JSON.stringify(verified.value[field]))
+    ) return null;
+    return verified.value;
   }
-  return verified.value;
+  const revisionQuality = state.latestQuality;
+  const revisionManifest = state.latestManifest;
+  const expectedRunStatus = state.effectiveStatus === "completed" ? "verified" : "needs-improvement";
+  if (
+    !revisionQuality
+    || job.status !== state.effectiveStatus
+    || job.provider !== provider
+    || job.runStatus !== expectedRunStatus
+    || job.qualitySummary?.revisionId !== revisionManifest.revisionId
+    || Number(job.qualitySummary?.revisionSequence) !== Number(revisionManifest.sequence)
+    || job.qualitySummary?.revisionManifest !== `runs/${job.runId}/revisions/${revisionManifest.revisionId}/manifest.json`
+    || qualitySummaryFields.some((field) => JSON.stringify(job.qualitySummary?.[field]) !== JSON.stringify(revisionQuality[field]))
+  ) return null;
+  return revisionQuality;
 }
 
 async function readVerifiedQualityHistory(job) {
@@ -206,6 +592,9 @@ async function readVerifiedQualityHistory(job) {
     const verified = await readVerifiedImmutableArtifact(job, declaration);
     if (verified?.value?.jobId === job.id && verified.value.runId === job.runId) values.push(verified.value);
   }
+  const state = await readQualityRevisionState(job.id, job.runId).catch(() => null);
+  if (!state || !(await verifyRevisionJobDeclarations(job, state))) return null;
+  for (const record of state.revisions) values.push(record.quality);
   return values;
 }
 
@@ -332,7 +721,7 @@ async function withQualityLease(jobId, callback) {
   const lease = await acquireJobLease(jobId);
   if (!lease) return null;
   try {
-    const locked = await readJob(jobId);
+    const locked = await reconcileQualityRevisionJob(await readJob(jobId), { leaseHeld: true });
     if (locked.runId !== current.runId || ["running", "verifying"].includes(locked.status)) return null;
     const result = await callback(locked);
     const after = await readJob(jobId);
@@ -350,6 +739,7 @@ async function rehydrateCompletedRun(job, manifest) {
   const immutableArtifacts = Array.isArray(manifest.immutableArtifacts) ? manifest.immutableArtifacts : [];
   const jobRoot = resolve(JOBS_DIR, job.id);
   const expectedPath = (name) => `runs/${job.runId}/artifacts/${String(name).replaceAll("/", "__")}`;
+  const sealedStatus = manifest?.status;
   const requiredNames = new Set([
     "final.mp4",
     "captions.srt",
@@ -364,7 +754,9 @@ async function rehydrateCompletedRun(job, manifest) {
     `runs/${job.runId}/benchmarks/shorts-metadata.json`,
     `runs/${job.runId}/benchmarks/rlm-benchmark-analysis.json`
   ]);
-  if (manifest.status !== "completed" || manifest.jobId !== job.id || manifest.runId !== job.runId || immutableArtifacts.length < requiredNames.size || new Set(immutableArtifacts.map((artifact) => artifact?.name)).size !== immutableArtifacts.length || manifest.runStatus === "failed" || !Array.isArray(manifest.ledgerErrors) || manifest.ledgerErrors.length !== 0 || ![...requiredNames].every((name) => immutableArtifacts.some((artifact) => artifact.name === name && artifact.path === expectedPath(name)))) return null;
+  if (!["completed", "needs-improvement"].includes(sealedStatus) || !["running", "verifying", sealedStatus].includes(job.status) || manifest.jobId !== job.id || manifest.runId !== job.runId || immutableArtifacts.length < requiredNames.size || new Set(immutableArtifacts.map((artifact) => artifact?.name)).size !== immutableArtifacts.length || manifest.runStatus === "failed" || !Array.isArray(manifest.ledgerErrors) || manifest.ledgerErrors.length !== 0 || ![...requiredNames].every((name) => immutableArtifacts.some((artifact) => artifact.name === name && artifact.path === expectedPath(name)))) return null;
+  if (sealedStatus === "completed" && manifest.runStatus !== "verified") return null;
+  if (sealedStatus === "needs-improvement" && manifest.runStatus !== "needs-improvement") return null;
   const verified = await Promise.all(immutableArtifacts.map(async (artifact) => {
     if (!artifact?.name || artifact.path !== expectedPath(artifact.name) || !String(artifact.sha256 || "").startsWith("sha256:")) return false;
     const path = resolve(jobRoot, artifact.path);
@@ -378,11 +770,13 @@ async function rehydrateCompletedRun(job, manifest) {
   const eventPath = resolve(jobRoot, eventArtifact.path);
   const events = (await readFile(eventPath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
   const qualityArtifact = immutableArtifacts.find((artifact) => artifact.name === "quality.json" && artifact.path === expectedPath(artifact.name));
+  const provider = immutableRunProvider(manifest);
+  if (!provider) return null;
   const expectedProviderDecision = {
-    requested: job.provider,
-    selected: job.provider,
+    requested: provider,
+    selected: provider,
     fallbackUsed: false,
-    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : job.provider === "local-video" ? "local-video-command-adapter-no-fallback" : "local-upload-edit"
+    policy: providerPolicy(provider)
   };
   const expectedProviderDecisionHash = hashJson(expectedProviderDecision);
   const providerDecisionEvent = events.find((event) => event.type === "provider_decision");
@@ -392,12 +786,162 @@ async function rehydrateCompletedRun(job, manifest) {
     && manifest.providerDecisionHash === expectedProviderDecisionHash
     && providerDecisionEvent?.jobId === job.id
     && providerDecisionEvent.runId === job.runId
+    && providerDecisionEvent.requested === expectedProviderDecision.requested
+    && providerDecisionEvent.selected === expectedProviderDecision.selected
+    && providerDecisionEvent.fallbackUsed === expectedProviderDecision.fallbackUsed
+    && providerDecisionEvent.policy === expectedProviderDecision.policy
     && providerDecisionEvent.decisionHash === expectedProviderDecisionHash
   );
   const quality = qualityArtifact ? JSON.parse(await readFile(resolve(jobRoot, qualityArtifact.path), "utf8")) : null;
   if (!quality || quality.jobId !== job.id || quality.runId !== job.runId) return null;
+  if (sealedStatus === "completed" && (quality.status !== "passed" || quality.semanticGate !== true)) return null;
+  if (sealedStatus === "needs-improvement" && (quality.status === "passed" || quality.semanticGate === true)) return null;
+  const immutableByName = new Map(immutableArtifacts.map((artifact) => [artifact?.name, artifact]));
+  const qualityMetrics = quality.metrics || {};
+  const providerClosureBound = provider === "gemini-browser"
+    ? qualityMetrics.provider === "gemini-browser"
+      && qualityMetrics.providerProof === true
+      && qualityMetrics.generationProvenance === true
+      && qualityMetrics.generationClipBinding === true
+      && qualityMetrics.providerDecisionBinding === true
+      && qualityMetrics.providerDecisionEventBinding === true
+      && immutableByName.has("gemini-generation.json")
+    : provider === "local-video"
+      ? qualityMetrics.provider === "local-video"
+        && qualityMetrics.providerProof === true
+        && qualityMetrics.providerGenerationProvenance === true
+        && qualityMetrics.localVideoModelBinding === true
+        && qualityMetrics.localVideoClipBinding === true
+        && qualityMetrics.localVideoReceiptBinding === true
+        && immutableByName.has(`runs/${job.runId}/local-video-generation.json`)
+        && manifest.providerReceipt?.path === `runs/${job.runId}/local-video-generation.json`
+        && manifest.providerReceipt.sha256 === immutableByName.get(`runs/${job.runId}/local-video-generation.json`)?.sha256
+      : provider === "local"
+        ? qualityMetrics.provider === "local" && qualityMetrics.providerProof === true
+        : false;
+  if (!providerClosureBound) return null;
+  const readImmutableJson = async (name) => {
+    const declaration = immutableByName.get(name);
+    if (!declaration) return null;
+    return readOptionalJson(resolve(jobRoot, declaration.path));
+  };
+  const scriptArtifact = await readImmutableJson("script.json");
+  const inputArtifact = await readImmutableJson(`runs/${job.runId}/input-manifest.json`);
+  const inputEntries = Array.isArray(inputArtifact?.entries) ? inputArtifact.entries : [];
+  const inputByName = new Map(inputEntries.map((entry) => [entry.name, entry]));
+  const clipArtifactBound = (relativePath, sha256) => {
+    const clipName = relativePath?.replace(/^clips\//, "");
+    const inputEntry = inputByName.get(clipName);
+    const declaration = immutableByName.get(relativePath);
+    return Boolean(
+      clipName
+      && inputEntry?.relativePath === relativePath
+      && inputEntry.sha256 === sha256
+      && declaration?.sha256 === sha256
+    );
+  };
+  if (provider === "local-video") {
+    const receipt = await readImmutableJson(`runs/${job.runId}/local-video-generation.json`);
+    const scriptHash = hashJson(scriptArtifact);
+    const baseRequest = {
+      schemaVersion: 1,
+      jobId: job.id,
+      runId: job.runId,
+      provider: "local-video",
+      topic: manifest.request.topic || "",
+      format: manifest.request.format || "vertical",
+      targetDurationSec: Number(manifest.request.targetDurationSec || 0),
+      targetDurationRangeSec: manifest.request.targetDurationRangeSec || null,
+      segments: (scriptArtifact?.segments || []).map((segment, index) => ({
+        index: index + 1,
+        durationHint: segment.durationHint || null,
+        prompt: segment.visualPrompt || "",
+        visualPrompt: segment.visualPrompt || "",
+        caption: segment.caption || "",
+        narration: segment.narration || ""
+      }))
+    };
+    const requestHash = hashJson({ ...baseRequest, scriptHash });
+    const request = { ...baseRequest, requestHash, scriptHash };
+    if (
+      !receipt
+      || receipt.status !== "completed"
+      || receipt.provider !== "local-video"
+      || receipt.jobId !== job.id
+      || receipt.runId !== job.runId
+      || !String(receipt.model || "").trim()
+      || !String(receipt.modelVersion || "").trim()
+      || !String(receipt.modelId || "").trim()
+      || receipt.requestHash !== requestHash
+      || receipt.scriptHash !== scriptHash
+      || !receipt.request
+      || hashJson(receipt.request) !== hashJson(request)
+      || !Array.isArray(receipt.segments)
+      || receipt.segments.length !== inputEntries.length
+      || !receipt.segments.every((segment) => clipArtifactBound(segment?.path || segment?.output, segment?.sha256))
+    ) return null;
+  } else if (provider === "gemini-browser") {
+    const generation = await readImmutableJson("gemini-generation.json");
+    const expectedGeminiRequest = {
+      provider: "gemini-browser",
+      topic: manifest.request.topic || "",
+      format: manifest.request.format || "vertical",
+      clipCount: Number(manifest.request.clipCount || scriptArtifact?.segments?.length || 0),
+      targetDurationSec: Number(manifest.request.targetDurationSec || 0),
+      targetDurationRangeSec: manifest.request.targetDurationRangeSec || null,
+      captions: manifest.request.captions !== false,
+      voiceover: manifest.request.voiceover !== false,
+      segments: (scriptArtifact?.segments || []).map((segment) => ({
+        durationHint: segment.durationHint || null,
+        visualPrompt: segment.visualPrompt || "",
+        caption: segment.caption || "",
+        narration: segment.narration || ""
+      }))
+    };
+    const expectedGeminiScriptHash = hashJson(scriptArtifact);
+    const expectedGeminiRequestHash = hashJson({ ...expectedGeminiRequest, scriptHash: expectedGeminiScriptHash });
+    const expectedGeminiDecision = { requested: "gemini-browser", selected: "gemini-browser", fallbackUsed: false, policy: "no-local-video-fallback" };
+    const expectedGeminiDecisionHash = hashJson(expectedGeminiDecision);
+    const expectedSessionBinding = manifest.request.geminiSessionBinding;
+    const expectedSessionBindingHash = manifest.request.geminiSessionBindingHash;
+    const attestation = generation?.providerAttestation;
+    if (
+      !generation
+      || generation.provider !== "gemini-browser"
+      || generation.jobId !== job.id
+      || generation.runId !== job.runId
+      || generation.status !== "completed"
+      || !expectedSessionBinding
+      || !expectedSessionBindingHash
+      || hashJson(expectedSessionBinding) !== expectedSessionBindingHash
+      || generation.sessionBindingHash !== expectedSessionBindingHash
+      || hashJson(generation.sessionBinding) !== expectedSessionBindingHash
+      || Object.hasOwn(generation, "profileDir")
+      || Object.hasOwn(generation, "cdpUrl")
+      || generation.requestHash !== expectedGeminiRequestHash
+      || generation.scriptHash !== expectedGeminiScriptHash
+      || !generation.providerDecision
+      || hashJson(generation.providerDecision) !== expectedGeminiDecisionHash
+      || generation.providerDecisionHash !== expectedGeminiDecisionHash
+      || !generation.request
+      || hashJson(generation.request) !== hashJson(expectedGeminiRequest)
+      || !attestation
+      || attestation.type !== "gemini-chrome-session"
+      || attestation.provider !== "gemini-browser"
+      || attestation.browser !== generation.browser
+      || attestation.sessionBindingHash !== expectedSessionBindingHash
+      || hashJson(attestation.sessionBinding) !== expectedSessionBindingHash
+      || Object.hasOwn(attestation, "profileDir")
+      || Object.hasOwn(attestation, "cdpUrl")
+      || attestation.persistentProfile !== true
+      || attestation.fallbackUsed !== false
+      || generation.providerAttestationHash !== hashJson(attestation)
+      || !Array.isArray(generation.segments)
+      || !generation.segments.every((segment) => clipArtifactBound(segment?.path || segment?.output, segment?.sha256))
+    ) return null;
+  }
   const manifestQualitySummary = manifest.qualitySummary;
-  const qualitySummaryFields = ["status", "totalScore", "threshold", "semanticGate", "runId", "blockers"];
+  const qualitySummaryFields = ["status", "totalScore", "threshold", "technicalEvidenceGate", "semanticGate", "runId", "blockers"];
   const summaryMatches = Boolean(manifestQualitySummary && qualitySummaryFields.every((field) => JSON.stringify(manifestQualitySummary[field]) === JSON.stringify(quality[field])));
   const terminalEvent = events.at(-1);
   const terminalSummary = terminalEvent?.qualitySummary;
@@ -415,6 +959,7 @@ async function rehydrateCompletedRun(job, manifest) {
     status: quality.status,
     totalScore: quality.totalScore,
     threshold: quality.threshold,
+    technicalEvidenceGate: quality.technicalEvidenceGate,
     semanticGate: quality.semanticGate,
     runId: quality.runId,
     blockers: quality.blockers,
@@ -423,10 +968,13 @@ async function rehydrateCompletedRun(job, manifest) {
   const artifactUrl = (path) => `/api/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(path)}`;
   const immutableDeclarations = immutableArtifacts.map(({ path, kind }) => ({ name: path, kind: `immutable-${kind || "artifact"}`, url: artifactUrl(path) }));
   return updateJob(job.id, {
-    status: "completed",
-    stage: "완료",
+    provider,
+    status: sealedStatus,
+    stage: sealedStatus === "completed" ? "완료" : "개선 필요",
     progress: 100,
-    message: qualitySummary?.semanticGate ? `영상 제작과 AHP 검사가 완료되었습니다. (${qualitySummary.totalScore}점)` : `영상 제작 완료 · 기계 검사 ${qualitySummary?.totalScore ?? quality?.totalScore ?? 0}점 · 의미론 판정 보류`,
+    message: sealedStatus === "completed"
+      ? `영상 제작과 AHP 검사가 완료되었습니다. (${qualitySummary.totalScore}점)`
+      : `영상 파일과 기계 검사만 봉인되었습니다 · 의미론 게이트가 닫혀 개선이 필요합니다. (${qualitySummary?.totalScore ?? quality?.totalScore ?? 0}점)`,
     artifacts: [...immutableDeclarations, { name: `runs/${job.runId}/manifest.json`, kind: "run-manifest", url: `/api/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(`runs/${job.runId}/manifest.json`)}` }],
     duration: quality?.metrics?.finalMedia?.duration ?? job.duration ?? null,
     scriptGeneratedBy: manifest.script?.generatedBy || job.scriptGeneratedBy,
@@ -492,7 +1040,7 @@ async function recoverStaleJob(job) {
     const leaseRecord = await readLeaseRecord(lease.lockPath);
     if (!leaseRecord || leaseRecord.token !== lease.token) return current;
     const runManifest = current.runId ? await readRunManifest(join(JOBS_DIR, current.id, "runs", current.runId)) : null;
-    if (runManifest?.status === "completed") {
+    if (["completed", "needs-improvement"].includes(runManifest?.status)) {
       const restored = await rehydrateCompletedRun(current, runManifest);
       if (restored) return restored;
     }
@@ -546,66 +1094,89 @@ async function recoverStaleJob(job) {
 async function recoverStaleJobs(jobs) {
   return Promise.all(jobs.map((job) => recoverStaleJob(job)));
 }
-async function sealQualityRevision(jobId, runId, review, quality) {
+export async function sealQualityRevision(jobId, runId, context, review, evaluatedQuality) {
   const jobDir = join(JOBS_DIR, jobId);
   const runDir = join(jobDir, "runs", runId);
-  const baseManifestPath = join(runDir, "manifest.json");
-  const baseManifest = await readRunManifest(runDir);
-  if (!baseManifest || baseManifest.status !== "completed" || baseManifest.jobId !== jobId || baseManifest.runId !== runId) {
-    throw new Error("완료된 run manifest가 없는 실행에는 위원회 리뷰를 봉인할 수 없습니다.");
+  if (!review?.runId || review.runId !== runId || review.jobId !== jobId || evaluatedQuality?.jobId !== jobId || evaluatedQuality?.runId !== runId) {
+    throw new Error("reviewer payload와 품질 산출물이 현재 jobId·runId에 결속되어 있지 않습니다.");
   }
-  if (!review?.runId || review.runId !== runId || (review.jobId && review.jobId !== jobId)) {
-    throw new Error("위원회 리뷰가 현재 jobId·runId에 결속되어 있지 않습니다.");
-  }
-  if (!quality || quality.jobId !== jobId || quality.runId !== runId) {
-    throw new Error("위원회 품질 산출물이 현재 jobId·runId에 결속되어 있지 않습니다.");
-  }
-  const revisionId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
-  const revisionDir = join(runDir, "revisions", revisionId);
-  await mkdir(revisionDir, { recursive: true });
-  const relative = (path) => path.slice(jobDir.length + 1);
+  const currentContext = await prepareQualityRevision(jobId, runId, context?.revisionId);
+  if (canonicalJsonHash(currentContext) !== canonicalJsonHash(context)) throw new Error("품질 revision context가 현재 append-only head와 일치하지 않습니다.");
+  assertRuntimeQualityRevisionEvaluation(evaluatedQuality, { context: currentContext, review });
+  const revisionId = context.revisionId;
+  const revisionsDir = join(runDir, "revisions");
+  const revisionDir = join(revisionsDir, revisionId);
+  const stagingDir = join(revisionsDir, `.quality-revision-staging-${revisionId}-${randomUUID()}`);
+  if (existsSync(revisionDir)) throw new Error("같은 revisionId의 품질 revision이 이미 봉인되었습니다.");
+  await mkdir(revisionsDir, { recursive: true });
+  await mkdir(stagingDir);
+  const relative = (name) => `runs/${runId}/revisions/${revisionId}/${name}`;
   const artifactUrl = (name) => `/api/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(name)}`;
-  const reviewPath = join(revisionDir, "committee-review.json");
-  const qualityPath = join(revisionDir, "quality.json");
-  const eventsPath = join(revisionDir, "events.jsonl");
-  await writeFile(reviewPath, JSON.stringify(review, null, 2));
-  await writeFile(qualityPath, JSON.stringify(quality, null, 2));
-  const reviewHash = await hashFile(reviewPath);
-  const qualityHash = await hashFile(qualityPath);
-  await writeFile(eventsPath, `${JSON.stringify({ schemaVersion: 1, type: "committee_reviewed", jobId, runId, revisionId, reviewHash, qualityHash, createdAt: new Date().toISOString() })}\n`);
-  const eventHash = await hashFile(eventsPath);
-  const revisionManifestPath = join(revisionDir, "manifest.json");
-  const revisionManifest = {
-    schemaVersion: 1,
-    type: "quality-revision",
-    status: "completed",
-    jobId,
-    runId,
-    revisionId,
-    createdAt: new Date().toISOString(),
-    parentManifest: { path: relative(baseManifestPath), sha256: await hashFile(baseManifestPath) },
-    committeeReview: { path: relative(reviewPath), sha256: reviewHash },
-    quality: { path: relative(qualityPath), sha256: qualityHash },
-    events: { path: relative(eventsPath), sha256: eventHash }
-  };
-  await writeFile(revisionManifestPath, JSON.stringify(revisionManifest, null, 2));
-  const paths = [
-    [relative(reviewPath), "committee-review-revision", reviewHash],
-    [relative(qualityPath), "quality-revision", qualityHash],
-    [relative(eventsPath), "quality-revision-events", eventHash],
-    [relative(revisionManifestPath), "quality-revision-manifest", await hashFile(revisionManifestPath)]
-  ];
-  return {
-    revisionId,
-    manifestPath: relative(revisionManifestPath),
-    artifacts: await Promise.all(paths.map(async ([name, kind, sha256]) => ({
-      name,
-      kind,
-      bytes: (await stat(join(jobDir, name))).size,
-      sha256,
-      url: artifactUrl(name)
-    })))
-  };
+  const declaration = async (stagedPath, name) => ({ path: relative(name), sha256: await hashFile(stagedPath), bytes: (await stat(stagedPath)).size });
+  let published = false;
+  try {
+    const reviewPath = join(stagingDir, "committee-review.json");
+    await writeFile(reviewPath, JSON.stringify(review, null, 2));
+    const reviewDeclaration = await declaration(reviewPath, "committee-review.json");
+
+    const quality = bindQualityRevision(evaluatedQuality, context, reviewDeclaration.sha256);
+    const qualityPath = join(stagingDir, "quality.json");
+    await writeFile(qualityPath, JSON.stringify(quality, null, 2));
+    const qualityDeclaration = await declaration(qualityPath, "quality.json");
+
+    const eventRecord = buildQualityRevisionEvent({
+      context,
+      committeeReview: reviewDeclaration,
+      qualityArtifact: qualityDeclaration,
+      transition: quality.revision.transition
+    });
+    const eventsPath = join(stagingDir, "events.jsonl");
+    await writeFile(eventsPath, `${JSON.stringify(eventRecord)}\n`);
+    const eventsDeclaration = await declaration(eventsPath, "events.jsonl");
+
+    const revisionManifest = buildQualityRevisionManifest({
+      context,
+      review,
+      quality,
+      committeeReview: reviewDeclaration,
+      qualityArtifact: qualityDeclaration,
+      events: eventsDeclaration,
+      eventRecord
+    });
+    const revisionManifestPath = join(stagingDir, "manifest.json");
+    await writeFile(revisionManifestPath, JSON.stringify(revisionManifest, null, 2));
+    const manifestDeclaration = await declaration(revisionManifestPath, "manifest.json");
+
+    const publishContext = await prepareQualityRevision(jobId, runId, revisionId);
+    if (canonicalJsonHash(publishContext) !== canonicalJsonHash(context)) throw new Error("품질 revision 봉인 중 append-only head가 변경되었습니다.");
+    if (existsSync(revisionDir)) throw new Error("같은 revisionId의 품질 revision이 이미 봉인되었습니다.");
+    await rename(stagingDir, revisionDir);
+    published = true;
+
+    const receipts = [
+      [reviewDeclaration, "committee-review-revision"],
+      [qualityDeclaration, "quality-revision"],
+      [eventsDeclaration, "quality-revision-events"],
+      [manifestDeclaration, "quality-revision-manifest"]
+    ];
+    return {
+      revisionId,
+      sequence: Number(context.sequence),
+      manifestPath: manifestDeclaration.path,
+      manifest: revisionManifest,
+      quality,
+      event: eventRecord,
+      artifacts: receipts.map(([receipt, kind]) => ({
+        name: receipt.path,
+        kind,
+        bytes: receipt.bytes,
+        sha256: receipt.sha256,
+        url: artifactUrl(receipt.path)
+      }))
+    };
+  } finally {
+    if (!published) await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 async function markLaunchFailure(jobId, error) {
   const current = await readJob(jobId).catch(() => null);
@@ -652,7 +1223,7 @@ async function startJob(jobId) {
 }
 
 async function health() {
-  const browser = await geminiBrowserStatus();
+  const browser = redactGeminiMonitor(await geminiBrowserStatus());
   const ytDlp = await ytDlpInfo();
   const command = (name) => typeof Bun.which === "function" && Boolean(Bun.which(name));
   return {
@@ -675,7 +1246,10 @@ async function health() {
 async function handleApi(request, url) {
   const path = url.pathname;
   if (path === "/api/health" && request.method === "GET") return json(await health());
-  if (path === "/api/gemini/monitor" && request.method === "GET") return json(await readOptionalJson(join(ROOT, "workspace", "gemini-monitor.json")) || { schemaVersion: 2, status: "not-running", profiles: [] });
+  if (path === "/api/gemini/monitor" && request.method === "GET") {
+    const monitor = await readOptionalJson(join(ROOT, "workspace", "gemini-monitor.json")) || { schemaVersion: 2, status: "not-running", profiles: [] };
+    return json(redactGeminiMonitor(monitor));
+  }
   if (path === "/api/channel" && request.method === "GET") return json(await readAnalysis());
   if (path === "/api/benchmark/profile" && request.method === "GET") {
     return json({
@@ -700,13 +1274,26 @@ async function handleApi(request, url) {
     const start = (page - 1) * limit;
     return json({ total: videos.length, page, limit, videos: videos.slice(start, start + limit) });
   }
-  if (path === "/api/jobs" && request.method === "GET") return json({ jobs: await recoverStaleJobs(await listJobs()) });
+  if (path === "/api/jobs" && request.method === "GET") {
+    const recovered = await recoverStaleJobs(await listJobs());
+    const jobs = await reconcileJobsIndependently(recovered);
+    return json({ jobs: jobs.map(redactJobResponse) });
+  }
   if (path === "/api/jobs" && request.method === "POST") {
     try {
       const body = await readJson(request);
       if (!body.topic || String(body.topic).trim().length < 4) throw new Error("영상 주제를 4자 이상 입력하세요.");
-      const job = await createJob(body);
-      if (job.provider === "gemini-browser") {
+      const requestedProvider = body.provider === undefined ? "gemini-browser" : body.provider;
+      if (requestedProvider === "local-video" && body.autoStart === true && !String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()) {
+        throw new Error("PS4_LOCAL_VIDEO_GENERATOR가 설정되지 않아 local-video 작업을 시작할 수 없습니다.");
+      }
+      const createInput = requestedProvider === "gemini-browser"
+        && body.geminiCdpUrl === undefined
+        && body.geminiProfileDir === undefined
+        ? { ...body, ...configuredGeminiJobProfile() }
+        : body;
+      const job = await createJob(createInput);
+      if (job.provider === "gemini-browser" && body.autoStart !== false) {
         await startJob(job.id);
       } else if (body.autoStart === true) {
         if (job.provider === "local-video") {
@@ -717,12 +1304,12 @@ async function handleApi(request, url) {
           await startJob(job.id);
         }
       }
-      return json({ job }, 201);
+      return json({ job: redactJobResponse(job) }, 201);
     } catch (error) {
       return errorResponse(error, 400);
     }
   }
-  if (path === "/api/browser/start" && request.method === "POST") return json(await startGeminiBrowser());
+  if (path === "/api/browser/start" && request.method === "POST") return json(redactGeminiMonitor(await startGeminiBrowser()));
 
   const jobMatch = path.match(/^\/api\/jobs\/([^/]+)(?:\/(.*))?$/);
   if (jobMatch) {
@@ -730,18 +1317,18 @@ async function handleApi(request, url) {
     const suffix = jobMatch[2] || "";
     if (!JOB_ID_PATTERN.test(jobId)) return errorResponse(new Error("잘못된 작업 ID입니다."), 400);
     if (request.method === "GET" && suffix === "quality") {
-      const current = await readJob(jobId);
+      const current = await reconcileQualityRevisionJob(await readJob(jobId));
       if (!current.runId) return errorResponse(new Error("현재 실행 산출물이 없어 품질 검사를 시작할 수 없습니다."), 409);
       const quality = await readVerifiedQuality(current);
       if (!quality) return errorResponse(new Error("봉인된 현재 품질 산출물을 찾지 못했거나 무결성 검증에 실패했습니다."), 409);
-      return json(quality);
+      return json(redactGeminiMonitor(quality));
     }
     if (request.method === "GET" && suffix === "quality/history") {
-      const current = await readJob(jobId);
+      const current = await reconcileQualityRevisionJob(await readJob(jobId));
       if (!current.runId) return json({ iterations: [] });
       const iterations = await readVerifiedQualityHistory(current);
       if (iterations === null) return errorResponse(new Error("봉인된 품질 이력을 찾지 못했거나 무결성 검증에 실패했습니다."), 409);
-      return json({ iterations });
+      return json(redactGeminiMonitor({ iterations }));
     }
     if (request.method === "POST" && suffix === "quality/evaluate") {
       try {
@@ -771,43 +1358,63 @@ async function handleApi(request, url) {
         return qualityErrorResponse(error);
       }
     }
-    if (request.method === "POST" && suffix === "committee-review") {
+    if (request.method === "POST" && suffix === "quality/revisions/prepare") {
       try {
-        const reviewInput = await readJson(request);
+        const body = await readJson(request);
         const result = await withQualityLease(jobId, async (lockedJob) => {
-          const review = await saveCommitteeReview(jobId, reviewInput);
-          const quality = await evaluateJob(jobId, { iteration: Number(review.iteration || 1), runId: lockedJob.runId, persist: false, committee: review, allowPostPublicationRevision: true, reuseExistingAnalysis: true, reuseEvidenceFrames: true });
-          const revision = await sealQualityRevision(jobId, lockedJob.runId, review, quality);
-          const revisionNames = new Set(revision.artifacts.map((artifact) => artifact.name));
-          const job = await updateJob(jobId, {
-            artifacts: [...(lockedJob.artifacts || []).filter((artifact) => !revisionNames.has(artifact.name)), ...revision.artifacts],
-            qualitySummary: {
-              status: quality.status,
-              totalScore: quality.totalScore,
-              threshold: quality.threshold,
-              semanticGate: quality.semanticGate,
-              runId: quality.runId,
-              blockers: quality.blockers,
-              revisionId: revision.revisionId,
-              revisionManifest: revision.manifestPath
-            }
-          });
-          return { review, quality, revision, job };
+          if (body.runId && body.runId !== lockedJob.runId) throw new Error("품질 revision은 현재 작업의 runId만 허용합니다.");
+          const revisionId = `revision-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+          const revisionContext = await prepareQualityRevision(jobId, lockedJob.runId, revisionId);
+          const state = await readQualityRevisionState(jobId, lockedJob.runId);
+          const evidenceHashes = state.baseQuality.value.metrics?.evidenceHashes || {};
+          return { revisionContext, evidenceHashes, evidenceHash: committeeEvidenceHash(evidenceHashes) };
         });
-        if (!result) return errorResponse(new Error("작업 실행 중에는 위원회 검수를 시작할 수 없습니다."), 409);
+        if (!result) return errorResponse(new Error("작업 실행 중에는 품질 revision을 준비할 수 없습니다."), 409);
         return json(result);
       } catch (error) {
         return qualityErrorResponse(error);
       }
     }
-    if (request.method === "GET" && !suffix) return json(await readJob(jobId));
+    if (request.method === "POST" && ["committee-review", "quality/revisions/submit"].includes(suffix)) {
+      try {
+        const submission = await readJson(request);
+        if (!submission?.revisionContext || !submission?.review) throw new Error("revisionContext와 review를 함께 제출해야 합니다.");
+        const result = await withQualityLease(jobId, async (lockedJob) => {
+          const prepared = await prepareQualityRevision(jobId, lockedJob.runId, submission.revisionContext.revisionId);
+          if (canonicalJsonHash(prepared) !== canonicalJsonHash(submission.revisionContext)) throw new Error("제출한 revisionContext가 현재 append-only head와 일치하지 않습니다.");
+          const review = await saveCommitteeReview(jobId, submission.review, { revisionContext: prepared });
+          const evaluated = await evaluateJob(jobId, {
+            iteration: Number(review.iteration || prepared.sequence),
+            runId: lockedJob.runId,
+            persist: false,
+            committee: review,
+            allowPostPublicationRevision: true,
+            revisionContext: prepared,
+            reuseExistingAnalysis: true,
+            reuseEvidenceFrames: true
+          });
+          const revision = await sealQualityRevision(jobId, lockedJob.runId, prepared, review, evaluated);
+          const quality = revision.quality;
+          const existingNames = new Set((lockedJob.artifacts || []).map((artifact) => artifact?.name));
+          if (revision.artifacts.some((artifact) => existingNames.has(artifact.name))) throw new Error("품질 revision 산출물 경로가 기존 선언과 충돌합니다.");
+          const job = await reconcileQualityRevisionJob(await readJob(jobId), { leaseHeld: true });
+          return { review, quality, revision, job: redactJobResponse(job) };
+        });
+        if (!result) return errorResponse(new Error("작업 실행 중에는 reviewer payload 검증을 시작할 수 없습니다."), 409);
+        return json(result);
+      } catch (error) {
+        return qualityErrorResponse(error);
+      }
+    }
+    if (request.method === "GET" && !suffix) return json(redactJobResponse(await reconcileQualityRevisionJob(await readJob(jobId))));
     if (request.method === "POST" && suffix === "run") {
-      const current = await readJob(jobId);
+      const current = await reconcileQualityRevisionJob(await readJob(jobId));
       if (activeJobs.has(jobId) || isFreshRunningJob(current)) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);
       if (!(await startJob(jobId))) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);
-      return json({ started: true, job: await readJob(jobId) });
+      return json({ started: true, job: redactJobResponse(await readJob(jobId)) });
     }
     if (request.method === "POST" && suffix === "clips") {
+      validateRequestContentLength(request);
       if (activeJobs.has(jobId)) return errorResponse(new Error("실행 중에는 클립을 업로드할 수 없습니다."), 409);
       const current = await readJob(jobId);
       if (isFreshRunningJob(current)) return errorResponse(new Error("실행 중에는 클립을 업로드할 수 없습니다."), 409);
@@ -816,11 +1423,10 @@ async function handleApi(request, url) {
       try {
         const form = await request.formData();
         const files = form.getAll("files").filter((value) => value instanceof File);
-        if (!files.length) throw new Error("업로드할 영상 파일을 선택하세요.");
+        validateUploadBatch(files);
         for (const file of files) {
           const extension = extname(file.name).toLowerCase();
-          if (!VIDEO_EXTENSIONS.has(extension) || (file.type && !file.type.startsWith("video/"))) throw new Error("MP4, MOV, WebM 영상만 업로드할 수 있습니다.");
-          if (file.size > MAX_UPLOAD_BYTES) throw new Error("클립 하나의 최대 크기는 250MB입니다.");
+          if (!VIDEO_EXTENSIONS.has(extension) || (file.type && !file.type.startsWith("video/"))) throw requestError("MP4, MOV, WebM 영상만 업로드할 수 있습니다.", 400);
         }
         const jobDir = join(JOBS_DIR, jobId);
         const stagingDir = join(jobDir, `.clips-upload-${randomUUID()}`);
@@ -874,7 +1480,7 @@ async function handleApi(request, url) {
           await mkdir(join(jobDir, "normalized"), { recursive: true });
           const finalizedUploads = uploaded.map((item) => ({ ...item, path: join(clipsDir, basename(item.path)) }));
           const job = await updateJob(jobId, { message: `${uploaded.length}개 클립이 업로드되었습니다. 기존 실행 증거를 무효화하고 새 실행을 대기합니다.` });
-          return json({ uploaded: finalizedUploads, job }, 201);
+          return json({ uploaded: finalizedUploads, job: redactJobResponse(job) }, 201);
         } finally {
           await rm(stagingDir, { recursive: true, force: true });
         }
@@ -895,7 +1501,7 @@ async function handleApi(request, url) {
       } catch (error) {
         return errorResponse(error, 403);
       }
-      const job = await readJob(jobId);
+      const job = await reconcileQualityRevisionJob(await readJob(jobId));
       const declaredArtifacts = new Set(Array.isArray(job.artifacts) ? job.artifacts.map((entry) => entry?.name).filter((name) => typeof name === "string") : []);
       if (!declaredArtifacts.has(filename)) return errorResponse(new Error("선언되지 않은 작업 산출물입니다."), 404);
       const immutableMatch = /^runs\/([^/]+)\/artifacts\/(.+)$/.exec(filename);
@@ -909,16 +1515,33 @@ async function handleApi(request, url) {
         const actualHash = await hashFile(artifact).catch(() => null);
         if (actualHash !== declaration.sha256) return errorResponse(new Error("불변 산출물 무결성 검증에 실패했습니다."), 409);
       }
-      const revisionMatch = /^runs\/([^/]+)\/revisions\/([^/]+)\/(.+)$/.exec(filename);
+      const revisionMatch = /^runs\/([^/]+)\/revisions\/([^/]+)\/(manifest\.json|committee-review\.json|quality\.json|events\.jsonl)$/.exec(filename);
+      if (filename.includes("/revisions/") && !revisionMatch) return errorResponse(new Error("허용되지 않은 품질 revision 산출물 경로입니다."), 404);
       if (revisionMatch) {
         const [, revisionRunId, revisionId, revisionFile] = revisionMatch;
-        const revisionManifestPath = join(JOBS_DIR, jobId, "runs", revisionRunId, "revisions", revisionId, "manifest.json");
-        const revisionManifest = await readOptionalJson(revisionManifestPath);
-        const revisionDeclaration = Object.values(revisionManifest || {}).find((value) => value?.path === filename && String(value.sha256 || "").startsWith("sha256:"));
-        const jobDeclaration = Array.isArray(job.artifacts) ? job.artifacts.find((entry) => entry?.name === filename && String(entry?.sha256 || "").startsWith("sha256:")) : null;
-        const expectedHash = jobDeclaration?.sha256;
-        const declarationBound = revisionFile === "manifest.json" ? Boolean(expectedHash) : Boolean(revisionDeclaration?.sha256 && revisionDeclaration.sha256 === expectedHash);
-        if (revisionRunId !== job.runId || revisionManifest?.jobId !== jobId || revisionManifest?.runId !== revisionRunId || revisionManifest?.revisionId !== revisionId || !declarationBound) {
+        const state = revisionRunId === job.runId ? await readQualityRevisionState(jobId, revisionRunId).catch(() => null) : null;
+        const record = state?.revisions.find((entry) => entry.manifest.revisionId === revisionId);
+        const jobDeclarations = (job.artifacts || []).filter((entry) => entry?.name === filename);
+        const internalDeclaration = revisionFile === "manifest.json"
+          ? null
+          : revisionFile === "committee-review.json"
+            ? record?.manifest.committeeReview
+            : revisionFile === "quality.json"
+              ? record?.manifest.quality
+              : record?.manifest.events;
+        const fileStat = await stat(artifact).catch(() => null);
+        const expectedHash = revisionFile === "manifest.json" ? record?.manifestHash : internalDeclaration?.sha256;
+        const expectedBytes = revisionFile === "manifest.json" ? fileStat?.size : internalDeclaration?.bytes;
+        if (
+          !state
+          || !record
+          || !(await verifyRevisionJobDeclarations(job, state))
+          || jobDeclarations.length !== 1
+          || jobDeclarations[0].sha256 !== expectedHash
+          || Number(jobDeclarations[0].bytes) !== Number(expectedBytes)
+          || !fileStat?.isFile()
+          || fileStat.size !== Number(expectedBytes)
+        ) {
           return errorResponse(new Error("품질 revision 무결성 선언을 찾지 못했습니다."), 409);
         }
         const actualHash = await hashFile(artifact).catch(() => null);
@@ -934,30 +1557,78 @@ async function handleApi(request, url) {
   return null;
 }
 
-async function serveStatic(pathname) {
-  const requested = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
+async function serveStatic(request, url, token, allowedOrigins) {
+  const requested = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
   const path = resolve(PUBLIC_DIR, requested);
   if (!(path === PUBLIC_DIR || path.startsWith(`${PUBLIC_DIR}${sep}`))) return new Response("Not found", { status: 404 });
   const file = Bun.file(path);
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
-  return new Response(file, { headers: { "content-type": contentType(path), "cache-control": "no-cache" } });
+  const headers = {
+    "content-type": contentType(path),
+    "cache-control": requested === "index.html" ? "no-store" : "no-cache",
+    "cross-origin-resource-policy": "same-origin",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY"
+  };
+  if (shouldIssueSessionCookie(request, url, allowedOrigins)) {
+    headers["set-cookie"] = createSessionCookie(token, { secure: url.protocol === "https:" });
+  }
+  return new Response(file, { headers });
 }
 
-const server = Bun.serve({
-  port: PORT,
-  async fetch(request) {
+export function createStudioRequestHandler(options = {}) {
+  const token = options.token || STUDIO_TOKEN;
+  const allowedOrigins = options.allowedOrigins || configuredOrigins();
+  return async function studioFetch(request) {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith("/api/")) {
+        const authorization = authorizeMutationRequest(request, url, { token, allowedOrigins });
+        if (!authorization.ok) return errorResponse(new Error("API 요청의 host, 출처 또는 세션을 확인할 수 없습니다."), authorization.status);
         const response = await handleApi(request, url);
         return response || errorResponse(new Error("API 경로를 찾지 못했습니다."), 404);
       }
-      return await serveStatic(url.pathname);
+      return await serveStatic(request, url, token, allowedOrigins);
     } catch (error) {
       console.error(error);
-      return errorResponse(error, error?.message?.includes("찾지") ? 404 : 500);
+      const status = Number.isInteger(error?.statusCode)
+        ? error.statusCode
+        : error?.message?.includes("찾지") ? 404 : 500;
+      return errorResponse(error, status);
     }
-  }
-});
+  };
+}
 
-console.log(`PS4 AI Video Studio: http://localhost:${server.port}`);
+export async function startStudioServer(options = {}) {
+  const port = options.port ?? PORT;
+  const hostname = options.hostname || HOST;
+  const token = options.token || STUDIO_TOKEN;
+  const allowedOrigins = options.allowedOrigins || configuredOrigins();
+  const tokenPath = options.tokenPath || STUDIO_TOKEN_PATH;
+  await ensureWorkspace();
+  const recoveredJobs = await recoverStaleJobs(await listJobs());
+  await reconcileJobsIndependently(recoveredJobs, {
+    revisionOnly: true,
+    onIntegrityError: (job, error) => console.error(`job ${job.id} quality revision reconciliation failed: ${error.message}`)
+  });
+  const server = Bun.serve({
+    hostname,
+    port,
+    maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+    fetch: createStudioRequestHandler({ token, allowedOrigins })
+  });
+  try {
+    await persistStudioToken(token, tokenPath);
+  } catch (error) {
+    server.stop(true);
+    throw error;
+  }
+  return server;
+}
+
+if (import.meta.main) {
+  const server = await startStudioServer();
+  const displayHost = HOST.includes(":") && !HOST.startsWith("[") ? `[${HOST}]` : HOST;
+  console.log(`PS4 AI Video Studio: http://${displayHost}:${server.port}`);
+}

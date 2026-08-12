@@ -1,13 +1,24 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { geminiQuotaStatus } from "../src/gemini-browser.mjs";
+import { automatedReviewCheckpointPath, runAutomatedQualityReview } from "../src/automated-review.mjs";
+import { geminiSessionBindingHash } from "../src/provenance.mjs";
 import { createUltragoalResumeSignal } from "../src/ultragoal-signal.mjs";
+import {
+  persistGeminiMonitorEvent,
+  readRedactedGeminiMonitorState,
+  redactGeminiMonitor,
+  scrubGeminiMonitorArtifacts,
+  writePrivateJson
+} from "../src/gemini-monitor-privacy.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const workspaceDir = join(root, "workspace");
 const statePath = join(workspaceDir, "gemini-monitor.json");
 const logPath = join(workspaceDir, "gemini-monitor.jsonl");
+const studioTokenPath = process.env.PS4_STUDIO_TOKEN_FILE || join(workspaceDir, ".runtime", "studio-token");
 const ultragoalSignalPath = process.env.GEMINI_ULTRAGOAL_SIGNAL_PATH || join(workspaceDir, "ultragoal-resume-request.json");
+const automatedReviewRoot = process.env.GEMINI_AUTOMATED_REVIEW_CHECKPOINT_ROOT || join(workspaceDir, "automated-review");
 const apiBase = process.env.PS4_API_BASE || "http://localhost:3000";
 const pollMs = Math.max(30_000, Number(process.env.GEMINI_MONITOR_INTERVAL_MS || 300_000));
 const jobPollMs = Math.max(3_000, Number(process.env.GEMINI_JOB_POLL_INTERVAL_MS || 10_000));
@@ -15,8 +26,15 @@ const maxRuntimeMs = Math.max(60_000, Number(process.env.GEMINI_MONITOR_MAX_RUNT
 const retryLimit = Math.max(1, Math.min(5, Number(process.env.GEMINI_MONITOR_RETRY_LIMIT || 3)));
 const jobPollWindowMs = Math.max(jobPollMs * 3, Number(process.env.GEMINI_JOB_POLL_WINDOW_MS || 10 * 60 * 1000));
 const topic = process.env.GEMINI_MONITOR_TOPIC || "경복궁 마당이 평평해 보여도 울퉁불퉁한 이유";
-const clipCount = Math.max(6, Math.min(12, Number(process.env.GEMINI_MONITOR_CLIP_COUNT || 8)));
-const targetDurationSec = Math.max(54, Math.min(91, Number(process.env.GEMINI_MONITOR_TARGET_DURATION_SEC || 78)));
+export function resolveMonitorClipPlan(environment = process.env) {
+  const configuredClipCount = Number(environment.GEMINI_MONITOR_CLIP_COUNT || 2);
+  const clipCount = Math.max(2, Math.min(12, Math.trunc(Number.isFinite(configuredClipCount) ? configuredClipCount : 2)));
+  const defaultDuration = Math.min(110, clipCount * 10);
+  const configuredDuration = Number(environment.GEMINI_MONITOR_TARGET_DURATION_SEC || defaultDuration);
+  const targetDurationSec = Math.max(20, Math.min(180, Number.isFinite(configuredDuration) ? configuredDuration : defaultDuration));
+  return { clipCount, targetDurationSec };
+}
+const { clipCount, targetDurationSec } = resolveMonitorClipPlan();
 const quotaWakeLeadMs = Math.max(0, Number(process.env.GEMINI_QUOTA_WAKE_LEAD_MS || 30_000));
 const sources = JSON.parse(process.env.GEMINI_MONITOR_SOURCES_JSON || JSON.stringify([
   {
@@ -44,6 +62,84 @@ const profiles = JSON.parse(process.env.GEMINI_MONITOR_PROFILES_JSON || JSON.str
   }
 ]));
 
+function normalizedPlanTopic(value) {
+  return String(value || "").trim();
+}
+
+function expectedProfileBindingHash(profile) {
+  if (!profile) return null;
+  return geminiSessionBindingHash({
+    geminiCdpUrl: profile.cdpUrl,
+    geminiProfileDir: profile.profileDir
+  });
+}
+
+export function monitorStartupPlanTransition({ monitorState, job, desiredPlan, configuredProfiles }) {
+  if (!monitorState || !job || !desiredPlan || !Array.isArray(configuredProfiles)) {
+    throw new Error("모니터 시작 계획 호환성 검사 입력이 유효하지 않습니다.");
+  }
+  const reasons = [];
+  const selectedProfile = configuredProfiles.find((profile) => profile?.id === monitorState.profileId) || null;
+  const expectedBindingHash = expectedProfileBindingHash(selectedProfile);
+  const actualBindingHash = String(job.geminiSessionBindingHash || "").trim() || null;
+  const desiredTopic = normalizedPlanTopic(desiredPlan.topic);
+  const stateTopic = normalizedPlanTopic(monitorState.topic);
+  const jobTopic = normalizedPlanTopic(job.topic);
+  const desiredClipCount = Number(desiredPlan.clipCount);
+  const desiredTargetDurationSec = Number(desiredPlan.targetDurationSec);
+
+  if (stateTopic !== desiredTopic) reasons.push("state-topic");
+  if (jobTopic !== desiredTopic) reasons.push("job-topic");
+  if (Number(monitorState.clipCount) !== desiredClipCount) reasons.push("state-clip-count");
+  if (Number(job.clipCount) !== desiredClipCount) reasons.push("job-clip-count");
+  if (Number(monitorState.targetDurationSec) !== desiredTargetDurationSec) reasons.push("state-target-duration");
+  if (Number(job.targetDurationSec) !== desiredTargetDurationSec) reasons.push("job-target-duration");
+  if (job.provider !== "gemini-browser") reasons.push("job-provider");
+  if (!selectedProfile) reasons.push("profile-id");
+  if (!expectedBindingHash || actualBindingHash !== expectedBindingHash) reasons.push("profile-binding");
+
+  const terminalRetryable = ["failed", "quota-blocked"].includes(job.status)
+    && !["running", "verified", "needs-improvement", "completed"].includes(job.runStatus);
+  const uniqueReasons = [...new Set(reasons)].sort();
+  const supersede = terminalRetryable && uniqueReasons.length > 0;
+  return {
+    action: supersede ? "supersede" : "preserve",
+    compatible: uniqueReasons.length === 0,
+    reasons: uniqueReasons,
+    reset: supersede
+      ? {
+          status: "monitoring",
+          jobId: null,
+          runId: null,
+          profileId: null,
+          attempts: 0,
+          topic: desiredTopic,
+          clipCount: desiredClipCount,
+          targetDurationSec: desiredTargetDurationSec,
+          completion: null,
+          lastError: null
+        }
+      : null,
+    previousPlan: {
+      jobId: job.id || monitorState.jobId || null,
+      runId: job.runId || monitorState.runId || null,
+      jobStatus: job.status || null,
+      runStatus: job.runStatus || null,
+      profileId: monitorState.profileId || null,
+      topic: jobTopic || stateTopic,
+      clipCount: Number(job.clipCount ?? monitorState.clipCount),
+      targetDurationSec: Number(job.targetDurationSec ?? monitorState.targetDurationSec),
+      sessionBindingHash: actualBindingHash
+    },
+    desiredPlan: {
+      provider: "gemini-browser",
+      topic: desiredTopic,
+      clipCount: desiredClipCount,
+      targetDurationSec: desiredTargetDurationSec
+    }
+  };
+}
+
 let state = {
   schemaVersion: 2,
   status: "starting",
@@ -62,10 +158,7 @@ let state = {
 };
 
 async function persist(event, details = {}) {
-  state = { ...state, ...details, updatedAt: new Date().toISOString() };
-  await writeFile(statePath, JSON.stringify(state, null, 2));
-  await appendFile(logPath, `${JSON.stringify({ schemaVersion: 2, event, at: state.updatedAt, ...details })}\n`);
-  console.log(JSON.stringify({ event, ...details }));
+  state = await persistGeminiMonitorEvent({ statePath, logPath, state, event, details });
 }
 
 async function writeUltragoalSignal(event, details = {}) {
@@ -78,22 +171,66 @@ async function writeUltragoalSignal(event, details = {}) {
     profiles: details.profiles || state.profiles || [],
     completion: details.completion ?? state.completion ?? null
   });
-  const temporaryPath = `${ultragoalSignalPath}.tmp-${process.pid}`;
   try {
-    await writeFile(temporaryPath, JSON.stringify(payload, null, 2));
-    await rename(temporaryPath, ultragoalSignalPath);
+    await writePrivateJson(ultragoalSignalPath, payload);
   } catch (error) {
-    await writeFile(ultragoalSignalPath, JSON.stringify({ ...payload, signalError: error.message }, null, 2)).catch(() => {});
+    await writePrivateJson(ultragoalSignalPath, { ...payload, signalError: error.message }).catch(() => {});
   }
 }
 
-async function api(path, options) {
-  const response = await fetch(`${apiBase}${path}`, options);
+let studioToken = String(process.env.PS4_STUDIO_TOKEN || "").trim();
+async function api(path, options = {}) {
+  if (!studioToken) {
+    try {
+      studioToken = (await readFile(studioTokenPath, "utf8")).trim();
+    } catch {
+      throw new Error(`로컬 Studio 인증 토큰을 읽을 수 없습니다: ${studioTokenPath}. 서버를 먼저 시작하세요.`);
+    }
+  }
+  const response = await fetch(`${apiBase}${path}`, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      origin: new URL(apiBase).origin,
+      authorization: `Bearer ${studioToken}`
+    }
+  });
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); } catch { body = { raw: text.slice(-1000) }; }
-  if (!response.ok) throw new Error(`${response.status}: ${body.error || body.message || text.slice(-500)}`);
+  if (!response.ok) {
+    const error = new Error(`${response.status}: ${body.error || body.message || text.slice(-500)}`);
+    error.status = response.status;
+    error.body = body;
+    throw error;
+  }
   return body;
+}
+
+export async function runSoftwareReview(job, quality, options = {}) {
+  if (!job?.id || !job?.runId || quality?.jobId !== job.id || quality?.runId !== job.runId) {
+    throw new Error("결정론적 소프트웨어 리뷰 입력이 현재 jobId·runId와 일치하지 않습니다.");
+  }
+  const apiClient = options.apiClient || api;
+  const persistEvent = options.persistEvent || persist;
+  const runner = options.runner || runAutomatedQualityReview;
+  const checkpointRoot = options.checkpointRoot || automatedReviewRoot;
+  await persistEvent("automated_review_started", {
+    status: "automated-reviewing",
+    jobId: job.id,
+    runId: job.runId,
+    reviewKind: "deterministic-software-methods",
+    human: false,
+    independentPrincipal: false
+  });
+  return runner({
+    jobId: job.id,
+    api: apiClient,
+    checkpointPath: automatedReviewCheckpointPath(job.id, job.runId, checkpointRoot),
+    onTransition: async (transition) => persistEvent("automated_review_transition", {
+      automatedReview: { ...transition, human: false, independentPrincipal: false }
+    })
+  });
 }
 
 async function sleep(ms) {
@@ -172,11 +309,10 @@ async function observeProfiles() {
     try {
       observations.push({
         id: profile.id,
-        email: profile.email,
         ...(await geminiQuotaStatus({ cdpUrl: profile.cdpUrl, profileDir: profile.profileDir }))
       });
     } catch (error) {
-      observations.push({ id: profile.id, email: profile.email, available: false, error: error.message });
+      observations.push({ id: profile.id, available: false, error: error.message });
     }
   }
   await persist("profiles_observed", {
@@ -210,7 +346,7 @@ async function createJob(profile) {
   });
   state.jobId = job.job.id;
   state.profileId = profile.id;
-  await persist("job_created", { jobId: state.jobId, profileId: profile.id, email: profile.email, status: job.job.status });
+  await persist("job_created", { jobId: state.jobId, profileId: profile.id, status: job.job.status });
   await writeUltragoalSignal("production-started", { jobId: state.jobId, status: job.job.status });
 }
 
@@ -240,6 +376,61 @@ async function pollJob(deadline) {
       await writeUltragoalSignal("production-complete", { jobId: state.jobId, runId: state.runId, status: "production-complete", completion });
       return { kind: "completed", job, quality };
     }
+    if (job.status === "needs-improvement") {
+      const quality = await api(`/api/jobs/${encodeURIComponent(state.jobId)}/quality`).catch((error) => ({ error: error.message }));
+      if (quality.error) {
+        const completion = {
+          jobStatus: job.status,
+          runId: job.runId || null,
+          qualityStatus: null,
+          semanticGate: false,
+          nextAction: "repair or reconcile the sealed quality chain before deterministic software review"
+        };
+        await persist("automated_review_reconciliation_required", { status: "review-reconciliation-required", completion, lastError: quality.error });
+        await writeUltragoalSignal("automated-review-reconciliation-required", { jobId: state.jobId, runId: state.runId, status: "review-reconciliation-required", completion });
+        return { kind: "review-reconciliation-required", job, quality };
+      }
+      const automatedReview = await runSoftwareReview(job, quality);
+      if (automatedReview.kind === "completed") {
+        const effectiveQuality = automatedReview.quality || await api(`/api/jobs/${encodeURIComponent(state.jobId)}/quality`);
+        const completion = {
+          jobStatus: "completed",
+          runId: job.runId || null,
+          qualityStatus: effectiveQuality.status || null,
+          totalScore: effectiveQuality.totalScore ?? null,
+          threshold: effectiveQuality.threshold ?? null,
+          semanticGate: effectiveQuality.semanticGate === true,
+          reviewKind: "deterministic-software-methods",
+          human: false,
+          independentPrincipal: false
+        };
+        await persist("production_completed", { status: "production-complete", completion });
+        await writeUltragoalSignal("production-complete", { jobId: state.jobId, runId: state.runId, status: "production-complete", completion });
+        return { kind: "completed", job: automatedReview.job || job, quality: effectiveQuality, automatedReview };
+      }
+      const completion = {
+        jobStatus: job.status,
+        runId: job.runId || null,
+        qualityStatus: quality.status || null,
+        totalScore: quality.totalScore ?? null,
+        threshold: quality.threshold ?? null,
+        semanticGate: quality.semanticGate ?? false,
+        reviewKind: "deterministic-software-methods",
+        human: false,
+        independentPrincipal: false,
+        automatedReviewKind: automatedReview.kind,
+        automatedReviewReasons: automatedReview.analysis?.reasons || automatedReview.checkpoint?.reasons || [],
+        nextAction: automatedReview.kind === "reconciliation-required" || automatedReview.kind === "submission-unknown"
+          ? "reconcile the append-only revision before any further review submission"
+          : "improve media or immutable evidence; do not spend quota or repeat software review on unchanged evidence"
+      };
+      const reconciliation = ["reconciliation-required", "submission-unknown"].includes(automatedReview.kind);
+      const event = reconciliation ? "automated_review_reconciliation_required" : "automated_review_needs_remediation";
+      const status = reconciliation ? "review-reconciliation-required" : "review-needs-remediation";
+      await persist(event, { status, completion });
+      await writeUltragoalSignal(event.replaceAll("_", "-"), { jobId: state.jobId, runId: state.runId, status, completion });
+      return { kind: reconciliation ? "review-reconciliation-required" : "review-needs-remediation", job, quality, automatedReview };
+    }
     if (job.status === "failed") {
       const detail = job.error || job.message || "Gemini 작업이 실패했습니다.";
       if (isQuotaError(detail)) {
@@ -256,9 +447,22 @@ async function pollJob(deadline) {
 }
 
 async function switchToAvailableProfile(observations) {
+  if (state.jobId) {
+    const current = await api(`/api/jobs/${encodeURIComponent(state.jobId)}`).catch(() => null);
+    if (current?.runId) {
+      await persist("profile_failover_blocked", {
+        status: "quota-blocked",
+        jobId: state.jobId,
+        runId: current.runId,
+        profileId: state.profileId,
+        nextAction: "keep this immutable run bound to its original persisted Chrome profile; create a new job manually for another profile"
+      });
+      return false;
+    }
+  }
   const alternate = observations.find((profile) => profile.available && profile.id !== state.profileId);
   if (!alternate) return false;
-  await persist("profile_failover", { status: "switching-profile", previousProfileId: state.profileId, nextProfileId: alternate.id, nextEmail: alternate.email, previousJobId: state.jobId });
+  await persist("profile_failover", { status: "switching-profile", previousProfileId: state.profileId, nextProfileId: alternate.id, previousJobId: state.jobId });
   state.jobId = null;
   state.runId = null;
   state.profileId = alternate.id;
@@ -266,16 +470,48 @@ async function switchToAvailableProfile(observations) {
   return true;
 }
 
-async function main() {
+export async function main() {
   await mkdir(workspaceDir, { recursive: true });
+  await scrubGeminiMonitorArtifacts({ statePath, logPath, signalPath: ultragoalSignalPath });
   try {
-    const previous = JSON.parse(await readFile(statePath, "utf8"));
-    if (previous?.status !== "production-complete") state = { ...state, ...previous, schemaVersion: 2, status: "resuming" };
+    const previous = await readRedactedGeminiMonitorState(statePath);
+    if (previous && typeof previous === "object") state = { ...state, ...previous, schemaVersion: 2, status: "resuming" };
   } catch {}
-  await persist("monitor_started", { status: "monitoring", apiBase, pollMs, quotaWakeLeadMs, jobPollMs, retryLimit, profiles: profiles.map(({ id, email, cdpUrl, profileDir }) => ({ id, email, cdpUrl, profileDir })), clipCount, targetDurationSec });
+  state.profiles = [];
+  const startupStateSnapshot = { ...state };
+  await persist("monitor_started", { status: "monitoring", apiBase, pollMs, quotaWakeLeadMs, jobPollMs, retryLimit, profiles: profiles.map(({ id, cdpUrl }) => ({ id, cdpUrl })), clipCount, targetDurationSec });
   const deadline = Date.now() + maxRuntimeMs;
+  let startupPlanPending = Boolean(startupStateSnapshot.jobId);
   while (Date.now() < deadline) {
     try {
+      let startupJob = null;
+      if (startupPlanPending && state.jobId) {
+        startupJob = await api(`/api/jobs/${encodeURIComponent(state.jobId)}`);
+        const transition = monitorStartupPlanTransition({
+          monitorState: startupStateSnapshot,
+          job: startupJob,
+          desiredPlan: { topic, clipCount, targetDurationSec },
+          configuredProfiles: profiles
+        });
+        startupPlanPending = false;
+        if (transition.action === "supersede") {
+          await persist("plan_superseded", {
+            ...transition.reset,
+            supersededPlan: transition.previousPlan,
+            selectedPlan: transition.desiredPlan,
+            planMismatchReasons: transition.reasons,
+            nextAction: "create_new_job_when_quota_available"
+          });
+          startupJob = null;
+        }
+      }
+      if (state.jobId) {
+        const existing = startupJob || await api(`/api/jobs/${encodeURIComponent(state.jobId)}`);
+        if (["completed", "needs-improvement"].includes(existing.status)) {
+          await pollJob(Date.now() + 1_000);
+          return;
+        }
+      }
       const observations = await observeProfiles();
       if (!state.jobId) {
         const available = observations.find((profile) => profile.available);
@@ -286,7 +522,7 @@ async function main() {
         await createJob(profileFor(available.id));
       } else {
         const current = await api(`/api/jobs/${encodeURIComponent(state.jobId)}`);
-        if (current.status === "completed") {
+        if (["completed", "needs-improvement"].includes(current.status)) {
           await pollJob(Date.now() + 1_000);
           return;
         }
@@ -302,7 +538,7 @@ async function main() {
         }
       }
       const result = await pollJob(Date.now() + jobPollWindowMs);
-      if (result.kind === "completed") return;
+      if (["completed", "review-needs-remediation", "review-reconciliation-required"].includes(result.kind)) return;
       if (result.kind === "failed") {
         if (state.attempts >= retryLimit) {
           const failedJobId = state.jobId;
@@ -344,4 +580,4 @@ async function main() {
   await persist("monitor_deadline", { status: "deadline-reached", lastError: "모니터링 최대 실행 시간이 만료되었습니다.", retryLimit });
 }
 
-await main();
+if (import.meta.main) await main();

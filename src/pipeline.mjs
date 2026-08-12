@@ -9,6 +9,7 @@ import { isIP } from "node:net";
 import { generateGeminiClips } from "./gemini-browser.mjs";
 import { generateLocalVideoClips } from "./local-video-provider.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
+import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
 
 export const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = join(ROOT, "data");
@@ -99,14 +100,23 @@ export async function createJob(input) {
   const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   let benchmarkDuration = { recommendedTargetSec: 78, recommendedRangeSec: [54, 91] };
   try {
-    benchmarkDuration = JSON.parse(await readFile(join(DATA_DIR, "shorts-metadata.json"), "utf8")).summary || benchmarkDuration;
+    const metadata = JSON.parse(await readFile(join(DATA_DIR, "shorts-metadata.json"), "utf8"));
+    benchmarkDuration = metadata.recentSummary || metadata.summary || benchmarkDuration;
   } catch {
     // Keep a deterministic fallback if the benchmark profile has not been refreshed.
   }
-  const targetDurationSec = Math.max(20, Math.min(180, Number(input.targetDurationSec) || benchmarkDuration.recommendedTargetSec || 78));
   const sources = Array.isArray(input.sources) ? input.sources.filter((source) => source && (source.url || source.title || typeof source === "string")) : [];
   const provider = input.provider === undefined ? "gemini-browser" : input.provider;
   if (!SUPPORTED_PROVIDERS.has(provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
+  const clipCount = Math.max(1, Math.min(12, Number(input.clipCount) || (provider === "gemini-browser" ? 2 : 6)));
+  const providerDefaultDuration = provider === "gemini-browser"
+    ? Math.min(Number(benchmarkDuration.recommendedTargetSec || 110), clipCount * 8)
+    : Number(benchmarkDuration.recommendedTargetSec || 78);
+  const targetDurationSec = Math.max(20, Math.min(180, Number(input.targetDurationSec) || providerDefaultDuration));
+  const benchmarkRange = benchmarkDuration.recommendedRangeSec || [benchmarkDuration.p10Sec || 43, benchmarkDuration.p90Sec || 104];
+  const targetDurationRangeSec = provider === "gemini-browser"
+    ? [Math.max(10, Math.floor(targetDurationSec * 0.8)), Math.min(180, Math.ceil(targetDurationSec * 1.2))]
+    : benchmarkRange;
   const geminiProfile = provider === "gemini-browser" ? normalizeGeminiProfile(input) : {};
   const job = {
     id,
@@ -114,12 +124,12 @@ export async function createJob(input) {
     format: input.format === "landscape" ? "landscape" : "vertical",
     provider,
     ...geminiProfile,
-    clipCount: Math.max(1, Math.min(12, Number(input.clipCount) || 6)),
+    clipCount,
     captions: input.captions !== false,
     voiceover: input.voiceover !== false,
     sources,
     targetDurationSec,
-    targetDurationRangeSec: benchmarkDuration.recommendedRangeSec || [benchmarkDuration.p10Sec || 43, benchmarkDuration.p90Sec || 104],
+    targetDurationRangeSec,
     status: "queued",
     stage: "대기",
     progress: 0,
@@ -161,16 +171,31 @@ async function runCommand(command, args, options = {}) {
     stdout: "pipe",
     stderr: "pipe"
   });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text()
-  ]);
+  const stdoutPromise = new Response(proc.stdout).text();
+  const stderrPromise = new Response(proc.stderr).text();
   const exitCode = await proc.exited;
+  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
   if (exitCode !== 0) {
     const detail = (stderr || stdout).trim().slice(-2400);
     throw new Error(`${command} 실행 실패 (${exitCode})${detail ? `: ${detail}` : ""}`);
   }
   return { stdout, stderr };
+}
+
+async function commandBytes(command, args, options = {}) {
+  const binary = commandPath(command);
+  if (!binary) throw new Error(`${command} 명령을 찾을 수 없습니다.`);
+  const proc = Bun.spawn([binary, ...args], {
+    cwd: options.cwd || ROOT,
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  const stdoutPromise = new Response(proc.stdout).arrayBuffer();
+  const stderrPromise = new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
+  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+  if (exitCode !== 0) throw new Error(`${command} 실행 실패 (${exitCode})${stderr.trim() ? `: ${stderr.trim().slice(-1200)}` : ""}`);
+  return new Uint8Array(stdout);
 }
 
 async function commandOutput(command, args) {
@@ -182,8 +207,10 @@ async function callGeminiText(topic, clipCount, targetDurationSec, sourceEntries
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
-  const sourceCatalog = JSON.stringify(sourceEntries.map((source) => ({ title: source.title || source.url, url: source.url })));
-  const prompt = `당신은 한국어 유튜브 다큐멘터리 쇼츠 작가다. 주제는 "${topic}"이다. ${clipCount}개의 생성형 영상 클립으로 평균 ${targetDurationSec}초(벤치마크 허용 범위 54~91초)의 세로 영상을 만든다. 실제 사실을 꾸며내지 말고 아래 제공된 출처만 사용한다. 각 장면은 sourceIds에 하나 이상의 출처 URL을 연결한다. 각 장면의 durationHint 합계가 전체 목표 길이에 가깝게 되도록 한다. 제공 출처: ${sourceCatalog}. 아래 JSON만 반환한다.\n{\n  "title": "짧고 강한 제목",\n  "hook": "첫 2초 내레이션",\n  "narration": "전체 내레이션",\n  "researchStatus": "verified",\n  "segments": [{"caption":"자막 한 덩어리", "narration":"해당 장면 내레이션", "visualPrompt":"영문 시네마틱 생성 프롬프트", "durationHint":13, "sourceIds":["https://..."]}]\n}\nsegments는 정확히 ${clipCount}개다.`;
+  const promptSources = evidenceForPrompt(sourceEntries);
+  if (!promptSources.length) throw new Error("대본 생성에 사용할 검증 출처 본문이 없습니다.");
+  const sourceCatalog = JSON.stringify(promptSources);
+  const prompt = `당신은 한국어 유튜브 다큐멘터리 쇼츠 작가다. 주제는 "${topic}"이다. 정확히 ${clipCount}개의 생성형 영상 클립으로 약 ${targetDurationSec}초의 세로 영상을 만든다. 아래 SOURCE_EVIDENCE에 실제로 적힌 사실만 사용하고, 일반 지식으로 빈칸을 채우거나 추측하지 않는다. 모든 장면에는 서로 다른 claimId와 정확히 하나의 evidenceRef를 넣는다. 각 장면의 claim·caption·narration·evidenceRef.quote는 선택한 evidence의 완전한 한 문장을 글자 하나 바꾸지 말고 동일하게 복사한다. title과 hook도 선택한 완전한 evidence 문장 하나를 그대로 복사한다. 전체 narration은 장면별 narration을 순서대로 공백 하나로 연결한다. visualPrompt는 반드시 'vertical cinematic documentary visualization depicting only this evidence: ' + JSON.stringify(선택한 완전한 문장) + '; consistent visual style, no added text or third-party logos; retain any provider-required provenance mark'의 고정 형식만 사용한다. evidenceRefs.sourceId/evidenceId는 제공값을 그대로 쓴다. 근거가 부족하면 JSON 대신 EVIDENCE_INSUFFICIENT만 반환한다. 장면별 durationHint 합계는 목표 길이에 가깝게 한다.\nSOURCE_EVIDENCE=${sourceCatalog}\n아래 JSON만 반환한다.\n{\n  "title": "선택한 완전한 evidence 문장",\n  "hook": "선택한 완전한 evidence 문장",\n  "narration": "장면별 narration을 순서대로 연결",\n  "researchStatus": "verified",\n  "segments": [{"claimId":"claim-1", "claim":"선택한 완전한 evidence 문장", "caption":"선택한 완전한 evidence 문장", "narration":"선택한 완전한 evidence 문장", "visualPrompt":"고정 extractive evidence template", "durationHint":13, "evidenceRefs":[{"sourceId":"https://...", "evidenceId":"excerpt-1", "quote":"선택한 완전한 evidence 문장"}]}]\n}\nsegments는 정확히 ${clipCount}개다.`;
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -194,99 +221,761 @@ async function callGeminiText(topic, clipCount, targetDurationSec, sourceEntries
     throw new Error(`Gemini 텍스트 API 오류 (${response.status}): ${detail.slice(-600)}`);
   }
   const payload = await response.json();
-  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+  const text = payload.candidates?.[0]?.content?.parts?.reduce((value, part) => value + (part.text || ""), "") || "";
+  if (/^EVIDENCE_INSUFFICIENT\b/i.test(text.trim())) throw new Error("Gemini가 출처 근거 부족을 보고했습니다.");
   const jsonText = text.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
   const parsed = JSON.parse(jsonText);
-  if (!Array.isArray(parsed.segments) || parsed.segments.length !== clipCount) {
-    throw new Error("Gemini가 요청한 클립 수의 대본을 반환하지 않았습니다.");
+  return validateEvidenceBoundScript(parsed, sourceEntries, clipCount, "gemini-api");
+}
+function evidenceForPrompt(sources, maxCharacters = 48000) {
+  const output = [];
+  let characters = 0;
+  for (const source of sources) {
+    if (!source || typeof source === "string" || source.fetchStatus !== "fetched" || !source.url) continue;
+    const evidence = [];
+    for (const item of source.evidence || []) {
+      const quote = String(item.quote || "").trim().slice(0, 1600);
+      if (!quote) continue;
+      const entry = { evidenceId: item.id, locator: item.locator, quote };
+      const size = JSON.stringify(entry).length;
+      if (characters + size > maxCharacters) break;
+      evidence.push(entry);
+      characters += size;
+    }
+    if (evidence.length) output.push({ sourceId: source.url, title: source.title || source.url, sha256: source.sha256 || null, evidence });
+    if (characters >= maxCharacters) break;
   }
-  const sources = sourceEntries.length ? sourceEntries : Array.isArray(parsed.sources) ? parsed.sources : [];
-  const sourceIds = sources.map((source) => typeof source === "string" ? source : source.url).filter(Boolean);
+  return output;
+}
+
+// This is deliberately an extractive binding check, not a factual-entailment verdict.
+export const EVIDENCE_TEXT_BINDING_ALGORITHM = "deterministic-extractive-binding/v3";
+const EXTRACTIVE_VISUAL_PREFIX = "vertical cinematic documentary visualization depicting only this evidence: ";
+const EXTRACTIVE_VISUAL_SUFFIX = "; consistent visual style, no added text or third-party logos; retain any provider-required provenance mark";
+
+const EVIDENCE_TEXT_STOPWORDS = new Set([
+  "그리고", "그러나", "하지만", "그래서", "또한", "바로", "실제로", "대한", "관한", "위한", "통한", "통해",
+  "이유", "역할", "모습", "장면", "영상", "화면", "설명", "기록", "검증", "사실", "정도", "관련", "부분",
+  "the", "a", "an", "and", "or", "but", "of", "to", "for", "from", "with", "by", "in", "on", "at", "as", "is", "are", "was", "were"
+]);
+const VISUAL_STYLE_STOPWORDS = new Set([
+  "vertical", "horizontal", "cinematic", "documentary", "visual", "visualization", "visualisation", "scene", "shot", "view", "close", "closeup", "up",
+  "macro", "wide", "angle", "camera", "lens", "dolly", "pan", "tilt", "slow", "motion", "lighting", "light", "color", "grade", "style",
+  "realistic", "photorealistic", "historical", "historically", "physical", "physically", "plausible", "consistent", "detailed", "detail", "show",
+  "depict", "depicting", "only", "supported", "korean", "mood", "text", "subtitle", "subtitles", "logo", "logos", "added", "third", "party", "provider",
+  "required", "provenance", "mark", "retain", "evidence", "quote", "no", "without", "scene", "subject", "identity", "pacing", "language",
+  "this", "any", "third-party", "provider-required",
+  "세로", "가로", "시네마틱", "다큐멘터리", "시각화", "장면", "카메라", "조명", "색감", "스타일", "사실적", "현실적", "역사적",
+  "물리적", "타당", "일관", "텍스트", "자막", "로고", "근거", "인용", "추가", "화면", "영상", "모습"
+]);
+const EVIDENCE_ASSERTION_ANCHORS = [
+  "완전히", "항상", "절대", "유일", "모든", "전혀", "반드시", "최초", "최대", "최소", "perfectly", "always", "never", "only", "all", "every", "first", "largest", "smallest"
+];
+const KOREAN_SINGLE_CONTENT = new Set(["돌", "빛", "물", "비", "틈", "눈", "땅", "흙", "길", "강", "산"]);
+const KOREAN_PROPER_SUFFIX = /(?:경복궁|창덕궁|덕수궁|궁|근정전|전|문|탑|왕조|시대|특별시|광역시|대학교|대학|학교|종묘|사찰|국|청|부)$/u;
+const LEXICAL_CONCEPTS = Object.freeze([
+  { target: ["빠지", "빠지는", "빠져나가", "빠져나가는", "배수"], evidence: ["빠지", "빠져나", "배수", "내보내"] },
+  { target: ["표면의"], evidence: ["표면"] },
+  { target: ["줍니다"], evidence: ["준다", "도움"] }
+]);
+const VISUAL_CONCEPTS = Object.freeze([
+  { prompt: ["palace", "royal", "gyeongbokgung", "geunjeongjeon", "궁궐", "경복궁", "근정전"], evidence: ["궁궐", "경복궁", "근정전", "왕실", "palace", "royal", "gyeongbokgung", "geunjeongjeon"] },
+  { prompt: ["courtyard", "yard", "paving", "pavement", "floor", "ground", "마당", "바닥", "포장"], evidence: ["마당", "바닥", "박석", "돌", "포장", "courtyard", "paving", "pavement"] },
+  { prompt: ["stone", "stones", "rock", "rocks", "granite", "slab", "slabs", "돌", "박석", "화강암"], evidence: ["돌", "박석", "화강암", "석재", "stone", "granite", "slab"] },
+  { prompt: ["rough", "uneven", "irregular", "texture", "textured", "거친", "울퉁불퉁", "표면"], evidence: ["거친", "울퉁불퉁", "표면", "rough", "uneven", "texture"] },
+  { prompt: ["surface"], evidence: ["표면", "surface"] },
+  { prompt: ["rain", "rainwater", "water", "drain", "drains", "drainage", "gap", "gaps", "channel", "carry", "carries", "carrying", "flow", "flows", "flowing", "비", "빗물", "배수", "틈", "통로"], evidence: ["비", "빗물", "물", "배수", "빠져나", "틈", "통로", "rain", "water", "drain", "gap", "channel"] },
+  { prompt: ["walk", "walking", "pedestrian", "foot", "slip", "slippery", "risk", "reduce", "reduces", "reducing", "보행", "걷", "미끄러"], evidence: ["보행", "걷", "발", "미끄러", "위험", "줄이", "도움", "walk", "pedestrian", "slip", "risk", "reduce"] },
+  { prompt: ["reflect", "reflection", "glare", "sunlight", "빛", "반사", "눈부심"], evidence: ["빛", "반사", "눈부", "햇빛", "reflect", "glare", "sunlight"] },
+  { prompt: ["soil", "sand", "earth", "masato", "마사토", "흙", "모래"], evidence: ["마사토", "흙", "모래", "토", "soil", "sand", "earth"] },
+  { prompt: ["architecture", "building", "structure", "건축", "건물", "구조"], evidence: ["건축", "건물", "구조", "궁궐", "architecture", "building", "structure"] }
+]);
+
+function normalizeBindingText(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[’‘`]/gu, "'").replace(/[^가-힣a-z0-9.%]+/giu, " ").trim();
+}
+
+function compactBindingText(value) {
+  return normalizeBindingText(value).replace(/\s+/gu, "");
+}
+
+function koreanTokenStem(value) {
+  let token = value;
+  const endings = [
+    "하였습니다", "되었습니다", "했습니다", "됩니다", "합니다", "입니다", "있습니다", "없습니다", "줍니다", "보입니다", "만듭니다",
+    "이어집니다", "하였고", "하였으며", "했으며", "했지만", "하면서", "하도록", "하는", "하며", "하여", "해서", "하고", "된다", "되는",
+    "되어", "되고", "이다", "이며", "인", "있다", "있는", "없다", "없는", "준다", "주는", "였다", "했다", "한다", "된다", "된다", "다"
+  ];
+  const particles = ["으로부터", "에게서", "에서부터", "으로써", "으로서", "에서는", "이라도", "에게", "에서", "까지", "부터", "처럼", "보다", "으로", "와", "과", "이", "가", "은", "는", "을", "를", "의", "에", "도", "만"];
+  for (const suffix of [...endings, ...particles]) {
+    if (token.endsWith(suffix) && token.length - suffix.length >= 2) {
+      token = token.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return token;
+}
+
+function bindingTokens(value, { visual = false } = {}) {
+  const normalized = normalizeBindingText(value);
+  const matches = normalized.match(/[가-힣]+|[a-z][a-z0-9'-]*|\d+(?:[.,]\d+)*(?:%|년|월|일|개|명|초|분|시간|mm|cm|km|m)?/giu) || [];
+  const tokens = [];
+  for (const rawValue of matches) {
+    const raw = rawValue.toLocaleLowerCase("ko-KR");
+    const korean = /^[가-힣]+$/u.test(raw);
+    const stem = korean ? koreanTokenStem(raw) : raw.replace(/(?:'s|s)$/u, "");
+    if (/^\d/u.test(raw)) continue;
+    if (EVIDENCE_TEXT_STOPWORDS.has(raw) || EVIDENCE_TEXT_STOPWORDS.has(stem)) continue;
+    if (visual && (VISUAL_STYLE_STOPWORDS.has(raw) || VISUAL_STYLE_STOPWORDS.has(stem))) continue;
+    if (korean && stem.length < 2 && !KOREAN_SINGLE_CONTENT.has(stem)) continue;
+    if (!korean && stem.length < 2) continue;
+    tokens.push({ raw, stem, korean });
+  }
+  return [...new Map(tokens.map((token) => [`${token.korean ? "ko" : "en"}:${token.stem}`, token])).values()];
+}
+
+function unsupportedBindingTokens(targetTokens, supportedTokens, evidenceText, { visual = false } = {}) {
+  const supportedKeys = new Set(supportedTokens.map((token) => `${token.korean ? "ko" : "en"}:${token.stem}`));
+  const compactEvidence = compactBindingText(evidenceText);
+  return targetTokens.filter((token) => {
+    if (supportedKeys.has(`${token.korean ? "ko" : "en"}:${token.stem}`)) return false;
+    if (token.korean && token.stem.length === 1 && compactEvidence.includes(token.stem)) return false;
+    if (visual && /^(?:it|its|into)$/u.test(token.stem)) return false;
+    return true;
+  });
+}
+
+function embeddedQuotedEvidence(value, evidenceTexts) {
+  const text = String(value || "");
+  for (const match of text.matchAll(/"((?:\\.|[^"\\])*)"/gu)) {
+    try {
+      const decoded = JSON.parse(`"${match[1]}"`);
+      if (evidenceTexts.includes(decoded)) return decoded;
+    } catch {
+      // Malformed quoted text is handled by the normal lexical checks.
+    }
+  }
+  return null;
+}
+
+function bindingNumbers(value) {
+  return [...new Set((normalizeBindingText(value).match(/\d+(?:[.,]\d+)*(?:%|년|월|일|개|명|초|분|시간|mm|cm|km|m)?/giu) || []).map((number) => number.replaceAll(",", "")))];
+}
+
+function tokenSimilarity(left, right) {
+  if (left.stem === right.stem || left.raw === right.raw) return true;
+  if (left.korean !== right.korean) return false;
+  if (!left.korean) return left.stem.length >= 4 && right.stem.length >= 4 && (left.stem.startsWith(right.stem) || right.stem.startsWith(left.stem));
+  const shorter = Math.min(left.stem.length, right.stem.length);
+  if (shorter >= 3) {
+    let commonPrefix = 0;
+    while (commonPrefix < shorter && left.stem[commonPrefix] === right.stem[commonPrefix]) commonPrefix += 1;
+    if (commonPrefix >= Math.max(2, Math.ceil(shorter * 0.6))) return true;
+  }
+  return false;
+}
+
+function tokenSupported(token, evidenceTokens, evidenceText, { visual = false } = {}) {
+  if (evidenceTokens.some((candidate) => tokenSimilarity(token, candidate))) return true;
+  const conceptSet = visual ? VISUAL_CONCEPTS : LEXICAL_CONCEPTS;
+  const concept = conceptSet.find((entry) => (entry.prompt || entry.target).includes(token.raw) || (entry.prompt || entry.target).includes(token.stem));
+  if (!concept) return false;
+  const compactEvidence = compactBindingText(evidenceText);
+  const normalizedEvidence = normalizeBindingText(evidenceText);
+  return concept.evidence.some((term) => compactEvidence.includes(compactBindingText(term)) || normalizedEvidence.split(/\s+/u).includes(normalizeBindingText(term)));
+}
+
+function negativePolarity(value) {
+  return /(?:[가-힣]+지\s*않|않(?:다|는|은|고|게)?|아니(?:다|며|고|라)?|없(?:다|는|고|이)?|못(?:하|한|했|해)|불가능|금지|\b(?:no|not|never|without|cannot|can't)\b)/iu.test(String(value || ""));
+}
+
+function visualNegativePolarity(value) {
+  const withoutSafeProductionConstraints = String(value || "")
+    .replace(/\b(?:no|without)\s+(?:added\s+)?(?:text|subtitles?|logos?)\b/giu, " ")
+    .replace(/\b(?:or|and)\s+(?:third[- ]party\s+)?logos?\b/giu, " ");
+  return negativePolarity(withoutSafeProductionConstraints);
+}
+
+function normalizeExtractiveProposition(value) {
+  return normalizeBindingText(value).replace(/[.!?。！？]+$/u, "").trim();
+}
+
+function assertExtractiveTextBinding({ claimId, field, text, evidenceTexts, allowTerminalPunctuation = false }) {
+  const target = String(text || "").trim();
+  if (!target) throw new Error(`${claimId}의 ${field}가 비어 있습니다.`);
+  const normalizedTarget = normalizeExtractiveProposition(target);
+  const matchedIndex = evidenceTexts.findIndex((evidenceText) => {
+    const normalizedEvidence = normalizeExtractiveProposition(evidenceText);
+    return allowTerminalPunctuation ? normalizedTarget === normalizedEvidence : normalizeBindingText(target) === normalizeBindingText(evidenceText);
+  });
+  if (matchedIndex < 0) throw new Error(`${claimId}의 ${field}가 단일 인용 근거의 extractive 문장과 일치하지 않습니다.`);
+  return {
+    field,
+    mode: "exact-extractive",
+    targetHash: hashJson({ field, text: target }),
+    supportEvidenceHash: hashJson(evidenceTexts[matchedIndex]),
+    evidenceIndex: matchedIndex
+  };
+}
+
+function assertExtractiveVisualBinding({ claimId, text, evidenceTexts }) {
+  const target = String(text || "").trim();
+  const matchedIndex = evidenceTexts.findIndex((quote) => target === `${EXTRACTIVE_VISUAL_PREFIX}${JSON.stringify(quote)}${EXTRACTIVE_VISUAL_SUFFIX}`);
+  if (matchedIndex < 0) throw new Error(`${claimId}의 영상 프롬프트가 고정 extractive evidence template과 일치하지 않습니다.`);
+  return {
+    field: "영상 프롬프트",
+    mode: "fixed-extractive-template",
+    targetHash: hashJson({ field: "영상 프롬프트", text: target }),
+    supportEvidenceHash: hashJson(evidenceTexts[matchedIndex]),
+    evidenceIndex: matchedIndex
+  };
+}
+
+function properNameAnchors(value, { visual = false } = {}) {
+  const anchors = [];
+  for (const token of String(value || "").normalize("NFKC").match(/[가-힣]{3,}|\b[A-Z][A-Za-z0-9-]{2,}\b|\b[A-Z]{2,}\b/gu) || []) {
+    const normalized = token.toLocaleLowerCase("ko-KR");
+    if (visual && VISUAL_STYLE_STOPWORDS.has(normalized)) continue;
+    if (visual && VISUAL_CONCEPTS.some((concept) => concept.prompt.includes(normalized))) continue;
+    if (/^[가-힣]+$/u.test(token)) {
+      const stem = koreanTokenStem(normalized);
+      if (KOREAN_PROPER_SUFFIX.test(stem)) anchors.push(stem);
+    } else {
+      anchors.push(normalized);
+    }
+  }
+  return [...new Set(anchors)];
+}
+
+function assertEvidenceTextBinding({ claimId, field, text, evidenceTexts, anchorTexts = evidenceTexts, threshold, minMatches = 1, visual = false, requireAllTokens = false, singleEvidence = false, strictPolarity = false }) {
+  const target = String(text || "").trim();
+  if (!target) throw new Error(`${claimId}의 ${field}가 비어 있습니다.`);
+  const embeddedEvidence = visual ? embeddedQuotedEvidence(target, evidenceTexts) : null;
+  const textForLexicalCheck = embeddedEvidence
+    ? target.replace(JSON.stringify(embeddedEvidence), " ")
+    : target;
+  const targetTokens = bindingTokens(textForLexicalCheck, { visual });
+  const requiredMatches = Math.min(minMatches, targetTokens.length || 1);
+  const numbers = bindingNumbers(target);
+  const anchors = properNameAnchors(target, { visual });
+  const assertionAnchors = visual ? [] : EVIDENCE_ASSERTION_ANCHORS.filter((anchor) => normalizeBindingText(target).split(/\s+/u).includes(normalizeBindingText(anchor)));
+  const targetNegative = visual ? visualNegativePolarity(target) : negativePolarity(target);
+  const candidates = singleEvidence
+    ? evidenceTexts.map((evidenceText, index) => ({ evidenceText, anchorText: anchorTexts[index] || evidenceText }))
+    : [{ evidenceText: evidenceTexts.join(" "), anchorText: anchorTexts.join(" ") }];
+  const evaluations = candidates.map(({ evidenceText, anchorText }) => {
+    const supportText = visual ? anchorText : evidenceText;
+    const evidenceTokens = bindingTokens(supportText);
+    const supported = targetTokens.filter((token) => tokenSupported(token, evidenceTokens, supportText, { visual }));
+    const directSubstring = compactBindingText(target).length >= 2 && compactBindingText(evidenceText).includes(compactBindingText(target));
+    const unsupportedTokens = unsupportedBindingTokens(targetTokens, supported, supportText, { visual });
+    const unsupportedTokenCount = unsupportedTokens.length;
+    const coverage = embeddedEvidence && unsupportedTokenCount === 0
+      ? 1
+      : targetTokens.length ? (targetTokens.length - unsupportedTokenCount) / targetTokens.length : directSubstring ? 1 : 0;
+    const evidenceNumbers = new Set(bindingNumbers(anchorText));
+    const unmatchedNumbers = numbers.filter((number) => !evidenceNumbers.has(number));
+    const compactAnchors = compactBindingText(anchorText);
+    const unmatchedAnchors = anchors.filter((anchor) => !compactAnchors.includes(compactBindingText(anchor)));
+    const unmatchedAssertions = assertionAnchors.filter((anchor) => !normalizeBindingText(anchorText).split(/\s+/u).includes(normalizeBindingText(anchor)));
+    const referenceNegative = negativePolarity(anchorText);
+    const polarityMatched = !strictPolarity || targetNegative === referenceNegative;
+    const effectiveSupportedCount = targetTokens.length - unsupportedTokenCount;
+    const valid = (embeddedEvidence ? true : effectiveSupportedCount >= requiredMatches)
+      && coverage >= threshold
+      && (!requireAllTokens || unsupportedTokenCount === 0)
+      && unmatchedNumbers.length === 0
+      && unmatchedAnchors.length === 0
+      && unmatchedAssertions.length === 0
+      && polarityMatched;
+    return { evidenceText, directSubstring, supported, effectiveSupportedCount, coverage, unsupportedTokenCount, unsupportedTokens, unmatchedNumbers, unmatchedAnchors, unmatchedAssertions, polarityMatched, valid };
+  });
+  const evaluation = evaluations.find((candidate) => candidate.valid)
+    || evaluations.sort((left, right) => right.supported.length - left.supported.length || right.coverage - left.coverage)[0]
+    || { evidenceText: "", directSubstring: false, supported: [], coverage: 0, unsupportedTokenCount: targetTokens.length, unmatchedNumbers: numbers, unmatchedAnchors: anchors, unmatchedAssertions: assertionAnchors, polarityMatched: false, valid: false };
+  if (!evaluation.valid) {
+    const reasons = [
+      evaluation.effectiveSupportedCount < requiredMatches ? "핵심어 부족" : null,
+      evaluation.coverage < threshold ? `토큰 커버리지 ${evaluation.coverage.toFixed(2)}` : null,
+      requireAllTokens && evaluation.unsupportedTokenCount > 0 ? `미지원 내용어 ${evaluation.unsupportedTokens.map((token) => token.raw).join(", ")}` : null,
+      evaluation.unmatchedNumbers.length ? "숫자 불일치" : null,
+      evaluation.unmatchedAnchors.length ? "고유명사 불일치" : null,
+      evaluation.unmatchedAssertions.length ? "절대 표현 불일치" : null,
+      !evaluation.polarityMatched ? "부정 극성 불일치" : null
+    ].filter(Boolean);
+    throw new Error(`${claimId}의 ${field}가 인용 근거의 내용과 보수적으로 결속되지 않았습니다: ${reasons.join(", ")}.`);
+  }
+  return {
+    field,
+    targetHash: hashJson({ field, text: target }),
+    supportEvidenceHash: hashJson(evaluation.evidenceText),
+    directSubstring: evaluation.directSubstring,
+    tokenCount: targetTokens.length,
+    supportedTokenCount: evaluation.effectiveSupportedCount,
+    coverage: Number(evaluation.coverage.toFixed(4)),
+    numberCount: numbers.length,
+    properNameCount: anchors.length,
+    polarity: targetNegative ? "negative" : "non-negative"
+  };
+}
+
+function buildEvidenceTextBinding(parsed, segments, sourceMap) {
+  const segmentBindings = segments.map((segment) => {
+    const evidenceRecords = segment.sourceEvidence.map((item) => ({
+      sourceId: item.sourceId,
+      sourceSha256: item.sourceSha256,
+      evidenceId: item.evidenceId,
+      locator: item.locator,
+      quote: item.quote,
+      parentEvidenceHash: item.parentEvidenceHash,
+      contextHash: hashJson(item.context || item.quote)
+    }));
+    const evidenceTexts = evidenceRecords.map((item) => item.quote);
+    const bindings = [];
+    const explicitClaims = [
+      typeof segment.claim === "string" ? segment.claim : null,
+      typeof segment.claimText === "string" ? segment.claimText : null,
+      ...(Array.isArray(segment.claims) ? segment.claims.map((claim) => typeof claim === "string" ? claim : claim?.claimText || claim?.text || null) : [])
+    ].filter(Boolean);
+    for (const claim of explicitClaims.length ? explicitClaims : [segment.narration]) {
+      bindings.push(assertExtractiveTextBinding({ claimId: segment.claimId, field: "주장", text: claim, evidenceTexts, allowTerminalPunctuation: true }));
+    }
+    bindings.push(assertExtractiveTextBinding({ claimId: segment.claimId, field: "내레이션", text: segment.narration, evidenceTexts, allowTerminalPunctuation: true }));
+    bindings.push(assertExtractiveTextBinding({ claimId: segment.claimId, field: "자막", text: segment.caption, evidenceTexts, allowTerminalPunctuation: true }));
+    bindings.push(assertExtractiveVisualBinding({ claimId: segment.claimId, text: segment.visualPrompt, evidenceTexts }));
+    return {
+      claimId: segment.claimId,
+      evidenceHash: hashJson(evidenceRecords),
+      bindings
+    };
+  });
+  const allEvidence = segments.flatMap((segment) => segment.sourceEvidence.map((item) => item.quote));
+  const expectedNarration = segments.map((segment) => String(segment.narration || "").trim()).join(" ");
+  if (normalizeBindingText(parsed.narration) !== normalizeBindingText(expectedNarration)) {
+    throw new Error("script의 전체 내레이션이 장면별 extractive 내레이션의 순서와 일치하지 않습니다.");
+  }
+  const globalBindings = [
+    assertExtractiveTextBinding({ claimId: "script", field: "제목", text: parsed.title, evidenceTexts: allEvidence, allowTerminalPunctuation: true }),
+    assertExtractiveTextBinding({ claimId: "script", field: "훅", text: parsed.hook, evidenceTexts: allEvidence, allowTerminalPunctuation: true }),
+    {
+      field: "전체 내레이션",
+      mode: "ordered-extractive-concatenation",
+      targetHash: hashJson({ field: "전체 내레이션", text: String(parsed.narration || "").trim() }),
+      supportEvidenceHash: hashJson(allEvidence)
+    }
+  ];
+  const globalEvidenceHash = hashJson({
+    segmentEvidence: segments.map((segment) => segment.sourceEvidence.map((item) => ({
+      sourceId: item.sourceId,
+      sourceSha256: item.sourceSha256,
+      evidenceId: item.evidenceId,
+      locator: item.locator,
+      quote: item.quote,
+      parentEvidenceHash: item.parentEvidenceHash,
+      contextHash: hashJson(item.context || item.quote)
+    }))),
+    sourceCatalog: [...sourceMap.values()].map((source) => ({ sourceId: source.url, title: source.title || source.url, sha256: source.sha256 || null }))
+  });
+  const receipt = {
+    schemaVersion: 3,
+    algorithm: EVIDENCE_TEXT_BINDING_ALGORITHM,
+    status: "extractively-bound",
+    segmentCount: segments.length,
+    evidenceSetHash: hashJson(segmentBindings.map(({ claimId, evidenceHash }) => ({ claimId, evidenceHash }))),
+    globalEvidenceHash,
+    globalBindings,
+    segmentBindings
+  };
+  return { ...receipt, bindingHash: hashJson(receipt) };
+}
+
+function containingEvidenceSentence(parentQuote, selectedQuote) {
+  const parent = String(parentQuote || "");
+  const selected = String(selectedQuote || "");
+  if (!parent.includes(selected)) return selected;
+  return sentenceSpans(parent).find((span) => span.quote.includes(selected))?.quote || selected;
+}
+
+export function validateEvidenceBoundScript(parsed, sources, clipCount, generatedBy = "unknown") {
+  if (parsed?.researchStatus !== "verified") throw new Error("근거 결속 대본은 researchStatus: verified를 명시해야 합니다.");
+  if (!Array.isArray(parsed?.segments) || parsed.segments.length !== clipCount) throw new Error("요청한 클립 수의 대본을 반환하지 않았습니다.");
+  const sourceMap = new Map((sources || []).filter((source) => source && typeof source !== "string" && source.fetchStatus === "fetched" && source.url).map((source) => [source.url, source]));
+  if (!sourceMap.size) throw new Error("검증 가능한 출처 본문이 없어 대본 생성을 중단했습니다.");
+  const claimIds = new Set();
+  const segments = parsed.segments.map((segment, index) => {
+    const claimId = String(segment.claimId || "").trim();
+    if (!claimId || claimIds.has(claimId)) throw new Error(`${index + 1}번 장면의 claimId가 비어 있거나 중복됩니다.`);
+    claimIds.add(claimId);
+    if (!String(segment.caption || "").trim() || !String(segment.narration || "").trim() || !String(segment.visualPrompt || "").trim()) throw new Error(`${claimId}의 자막·내레이션·영상 프롬프트가 모두 필요합니다.`);
+    if (!Array.isArray(segment.evidenceRefs) || segment.evidenceRefs.length !== 1) throw new Error(`${claimId}에는 정확히 하나의 extractive 주장 근거가 필요합니다.`);
+    const sourceEvidence = segment.evidenceRefs.map((reference) => {
+      const sourceId = String(reference?.sourceId || "").trim();
+      const evidenceId = String(reference?.evidenceId || "").trim();
+      const quote = String(reference?.quote || "").trim();
+      const source = sourceMap.get(sourceId);
+      const evidence = source?.evidence?.find((item) => item.id === evidenceId);
+      if (!source || !evidence || !quote || !String(evidence.quote || "").includes(quote)) throw new Error(`${claimId}의 인용문이 캡처된 출처 원문과 일치하지 않습니다.`);
+      const parentQuote = String(evidence.quote || "");
+      const parentLocator = /^text-offset:(\d+)-(\d+)$/.exec(String(evidence.locator || ""));
+      const relativeOffset = parentQuote.indexOf(quote);
+      const context = containingEvidenceSentence(parentQuote, quote);
+      if (normalizeBindingText(quote) !== normalizeBindingText(context)) {
+        throw new Error(`${claimId}의 인용문은 캡처된 근거의 완전한 한 문장이어야 합니다.`);
+      }
+      const locator = parentLocator && relativeOffset >= 0
+        ? `text-offset:${Number(parentLocator[1]) + relativeOffset}-${Number(parentLocator[1]) + relativeOffset + quote.length}`
+        : evidence.locator;
+      return {
+        claimId,
+        sourceId,
+        title: source.title || sourceId,
+        evidenceId,
+        locator,
+        quote,
+        context,
+        parentEvidenceHash: hashJson({ evidenceId, locator: evidence.locator, quote: parentQuote }),
+        sourceSha256: source.sha256 || null
+      };
+    });
+    return {
+      ...segment,
+      claimId,
+      sourceIds: [...new Set(sourceEvidence.map((item) => item.sourceId))],
+      evidenceRefs: sourceEvidence.map(({ claimId: _claimId, title: _title, sourceSha256: _sha256, ...reference }) => reference),
+      sourceEvidence
+    };
+  });
+  const evidenceTextBinding = buildEvidenceTextBinding(parsed, segments, sourceMap);
   return {
     ...parsed,
     sources,
-    researchStatus: sourceEntries.length ? "verified" : parsed.researchStatus || "missing",
-    sourceEvidence: sources.map((source) => ({ sourceId: typeof source === "string" ? source : source.url, title: typeof source === "string" ? source : source.title, fetchStatus: source.fetchStatus || "provided", sha256: source.sha256 || null, excerpt: source.excerpt || "", evidence: source.evidence || [] })),
-    segments: parsed.segments.map((segment) => {
-      const sourceIdsForSegment = Array.isArray(segment.sourceIds) && segment.sourceIds.length ? segment.sourceIds : sourceIds;
-      return { ...segment, sourceIds: sourceIdsForSegment, sourceEvidence: sourceEvidenceFor(sources, sourceIdsForSegment, `${segment.caption || ""} ${segment.narration || ""}`) };
-    }),
-    generatedBy: "gemini-api"
+    researchStatus: "verified",
+    evidenceTextBinding,
+    evidenceTextBindingHash: evidenceTextBinding.bindingHash,
+    sourceEvidence: [...sourceMap.values()].map((source) => ({ sourceId: source.url, title: source.title || source.url, fetchStatus: source.fetchStatus, sha256: source.sha256 || null, evidence: source.evidence || [] })),
+    segments,
+    generatedBy
   };
 }
-function sourceEvidenceFor(sources, sourceIds, context = "") {
-  const ids = new Set((sourceIds || []).map((value) => typeof value === "string" ? value : value?.url).filter(Boolean));
-  const terms = [...new Set(String(context).match(/박석|경복궁|근정전|배수|마사토|눈부시|미끄|석영|운모|화강암|난반사|흙먼지/giu) || [])];
-  const evidence = sources
-    .filter((source) => ids.has(typeof source === "string" ? source : source.url))
-    .flatMap((source) => (typeof source === "string" ? [] : source.evidence || []).map((item) => ({ ...item, sourceId: source.url, title: source.title || source.url })));
-  return evidence
-    .map((item) => ({ item, score: terms.reduce((sum, term) => sum + (item.quote.match(new RegExp(term, "giu")) || []).length, 0) }))
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 3)
-    .map(({ item }) => item);
 
+export function verifyEvidenceBoundScript(parsed, sources, clipCount) {
+  try {
+    const validated = validateEvidenceBoundScript(parsed, sources, clipCount, parsed?.generatedBy || "verification");
+    const declared = parsed?.evidenceTextBinding;
+    const declaredHash = String(parsed?.evidenceTextBindingHash || "");
+    const recomputed = validated.evidenceTextBinding;
+    const { bindingHash: _declaredEmbeddedHash, ...declaredPayload } = declared || {};
+    const verified = Boolean(
+      parsed?.researchStatus === "verified"
+      && declared
+      && declaredHash === declared?.bindingHash
+      && declaredHash === hashJson(declaredPayload)
+      && declaredHash === recomputed.bindingHash
+      && hashJson(declared) === hashJson(recomputed)
+    );
+    return { verified, bindingHash: recomputed.bindingHash, binding: recomputed, error: verified ? null : "저장된 evidence text binding 영수증이 재계산 결과와 일치하지 않습니다." };
+  } catch (error) {
+    return { verified: false, bindingHash: null, binding: null, error: error.message };
+  }
 }
-function fallbackScript(topic, clipCount, sourceEntries = [], targetDurationSec = 78) {
-  const seed = topic || "도시의 숨은 건축 원리";
-  const subject = /경복궁|궁궐/.test(seed) ? "Gyeongbokgung palace courtyard, irregular stone palseok paving, palace architecture, visible drainage detail" : `${seed}, real architecture or infrastructure subject`;
-  const title = /경복궁|궁궐/.test(seed) ? "경복궁 마당이 평평해 보여도 울퉁불퉁한 이유" : seed;
-  const templates = [
-    { caption: "평평해 보여도 박석입니다", narration: "평평해 보이지만, 경복궁 근정전 앞마당은 박석으로 울퉁불퉁합니다. 왜 멀리서는 한 장의 면처럼 보일까요? 가까이 다가가면 얇고 넓적한 돌과 그 틈이 보입니다. 이 영상은 그 표면과 틈을 따라가 보겠습니다.", visualPrompt: `vertical cinematic documentary establishing shot of ${subject}, real location, slow push-in, overcast natural light, no text, no logo` },
-    { caption: "박석은 화강암으로 만듭니다", narration: "박석은 조선시대 궁궐과 종묘, 왕릉 같은 주요 건물의 바닥에 쓰인 건축재료입니다. 재질은 화강암이고, 석영과 운모가 많아 밝고 투명하게 보입니다. 그래서 한낮의 마당은 먼저 눈에 들어올 만큼 환하게 보입니다.", visualPrompt: `vertical documentary close-up of ${subject}, low camera angle, detailed granite and palseok surface texture, gentle handheld motion, no text, no logo` },
-    { caption: "거친 표면이 빛을 흩습니다", narration: "그런데 화강암 마당은 환하면서도 눈이 부시지는 않습니다. 매끈한 표면은 빛을 한 방향으로 반사하지만, 울퉁불퉁한 표면은 반사 방향을 여러 갈래로 흩습니다. 빛이 눈에 직접 닿지 않게 되는 난반사의 원리입니다.", visualPrompt: `vertical cinematic explanatory shot of ${subject}, macro stone surface with physically plausible diffuse light, slow lateral camera move, realistic documentary color, no text` },
-    { caption: "틈 아래에는 마사토가 있습니다", narration: "박석의 또 다른 비밀은 돌 사이의 틈과 그 아래에 깔린 마사토입니다. 마사토는 알갱이 크기가 커 물을 내보내는 능력이 뛰어납니다. 그래서 여름 장대비에도 박석마당에 빗물이 쉽게 차오르지 않도록 돕습니다.", visualPrompt: `vertical scientific documentary cutaway of ${subject}, physically plausible rainwater flowing through palseok gaps into coarse sand, clean diagram integrated into real scene, no text` },
-    { caption: "박석과 마사토가 서로 보완합니다", narration: "마사토는 배수가 잘되지만 비에 씻겨 내려가거나 마르면 흙먼지가 생길 수 있습니다. 그 단점을 눌러 보완하는 것이 박석입니다. 돌과 마사토는 따로 놓인 재료가 아니라, 서로의 약점을 보완하는 한 조합으로 작동합니다.", visualPrompt: `vertical documentary cutaway transition from historical ${subject} to layered palseok and sand, matched camera movement and color grade, realistic, no text` },
-    { caption: "과학과 미학이 함께 남았습니다", narration: "다시 처음의 마당을 보겠습니다. 박석과 마사토가 어울려 만드는 무늬는 무거운 궁궐 마당을 한결 편안하게 보이게 합니다. 빛과 물, 재료와 풍경이 함께 작동하는 모습이 오늘 남은 박석의 건축적 기록입니다.", visualPrompt: `vertical cinematic closing return to ${subject}, slow pull-back revealing the full courtyard and paving pattern, warm natural light, documentary realism, no text, no logo` }
-  ];
-  const segmentDuration = Math.max(3, Math.round(targetDurationSec / Math.max(1, clipCount)));
-  const segments = Array.from({ length: clipCount }, (_, index) => ({
-    ...templates[index % templates.length],
-    durationHint: segmentDuration,
-    claimId: `claim-${index + 1}`,
-    sourceIds: sourceEntries.map((source) => typeof source === "string" ? source : source.url).filter(Boolean),
-    sourceEvidence: sourceEvidenceFor(sourceEntries, sourceEntries.map((source) => typeof source === "string" ? source : source.url).filter(Boolean), templates[index % templates.length].narration)
-  }));
-  return {
-    title,
-    hook: segments[0].narration,
-    narration: segments.map((segment) => segment.narration).join(" "),
-    sources: sourceEntries,
-    sourceEvidence: sourceEntries.map((source) => ({ sourceId: typeof source === "string" ? source : source.url, title: typeof source === "string" ? source : source.title, fetchStatus: source.fetchStatus || "provided", sha256: source.sha256 || null, excerpt: source.excerpt || "", evidence: source.evidence || [] })),
-    researchStatus: sourceEntries.some((source) => source?.fetchStatus === "fetched") ? "verified" : sourceEntries.length ? "provided" : "missing",
-    generatedBy: "local-editorial-template",
-    segments
-  };
+
+const SOURCE_BOILERPLATE_PATTERN = /(?:본문\s*바로가기|주메뉴\s*바로가기|전체\s*메뉴|메뉴\s*(?:추가|삭제|닫기)|누리집\s*(?:안내|이용)|화면\s*크기|현재\s*언어|로그인|회원\s*가입|통합\s*검색|페이지\s*(?:인쇄|구성)|만족도\s*조사|의견\s*(?:등록|처리)|개인정보|저작권|고객지원센터|찾아오시는\s*길|인기\s*검색어|최근\s*검색어|목록으로\s*이동|QR\s*코드|관련\s*홈페이지|연락처|파일명|파일\s*크기|다운로드|소스\s*코드|콘텐츠\s*기본\s*정보|생산자\s*정보|기여자\s*정보|기술\s*정보|상업적\s*이용|이용\s*금지|변경\s*금지|라이선스|\bCCL\b|All\s+Rights\s+Reserved|Copyright)/iu;
+const SOURCE_TECHNICAL_PATTERN = /(?:https?:\/\/|www\.|\b(?:UCI|N2[CR]|iframe)\b|\.(?:mp4|mov|webm|m4v|mkv|pdf|zip)\b|\b\d{3,4}\s*[x×]\s*\d{3,4}\b|\b\d+(?:\.\d+)?\s*(?:KB|MB|GB|px)\b|\b[A-Z]\d{2,}(?:[-_:][A-Z0-9]+){1,}\b|(?:[a-z0-9-]+\.)+(?:com|org|net|go\.kr|or\.kr|co\.kr)\b)/iu;
+const SOURCE_STAGE_DIRECTION_PATTERN = /(?:\((?:[^)]{0,24})(?:컷|초\s*후|씬|보고|전환|빠르게|남자|여자)(?:[^)]{0,24})\)|(?:조금\s+)?빠르게\))/iu;
+const SOURCE_EXPLANATORY_PATTERN = /(?:때문|따라|통해|원리|기능|역할|재료|사용|구성|형성|반사|배수|보완|표면|구조|특징|만들|깔리|보이|작동|이루|도움|능력|이유)/u;
+const SOURCE_PROMOTIONAL_PATTERN = /(?:소중한|아름다운|조화로운|지혜가\s*담긴|비밀|진가를\s*발휘|한결\s*편안)/u;
+
+function normalizeEvidenceTerms(terms = []) {
+  return [...new Set(terms.map((term) => String(term || "").normalize("NFKC").toLocaleLowerCase("ko-KR").trim()).filter((term) => term.length >= 2))];
 }
-function sourceExcerpt(bytes, contentType) {
-  if (!/text\/|json|xml/i.test(contentType)) return { excerpt: "", evidence: [] };
-  const raw = new TextDecoder().decode(bytes);
-  const clean = raw
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/\s+/g, " ")
-    .trim();
-  const terms = ["박석", "경복궁", "근정전", "배수", "마사토", "눈부시", "미끄", "석영", "운모"];
-  const windows = [];
+
+function sentenceSpans(text) {
+  const spans = [];
+  for (const match of String(text || "").matchAll(/[^.!?。！？\n]+(?:[.!?。！？]+|$)/gu)) {
+    let start = match.index;
+    let end = start + match[0].length;
+    while (start < end && /\s/u.test(text[start])) start += 1;
+    while (end > start && /\s/u.test(text[end - 1])) end -= 1;
+    const leadingDirection = /^(?:(?:\([^)]{1,64}\)|(?:조금\s+)?빠르게\))\s*)+/u.exec(text.slice(start, end));
+    if (leadingDirection) start += leadingDirection[0].length;
+    while (start < end && /\s/u.test(text[start])) start += 1;
+    if (start < end) spans.push({ start, end, quote: text.slice(start, end) });
+  }
+  return spans;
+}
+
+function termPositions(text, terms) {
+  const normalized = String(text || "").normalize("NFKC").toLocaleLowerCase("ko-KR");
+  const positions = [];
   for (const term of terms) {
-    for (const match of clean.matchAll(new RegExp(term, "gi"))) {
-      const start = Math.max(0, match.index - 260);
-      const end = Math.min(clean.length, match.index + term.length + 620);
-      if (!windows.some((window) => start <= window.end && end >= window.start)) windows.push({ start, end });
+    let offset = 0;
+    while (offset < normalized.length) {
+      const found = normalized.indexOf(term, offset);
+      if (found < 0) break;
+      positions.push(found);
+      offset = found + Math.max(1, term.length);
+      if (positions.length >= 20000) break;
+    }
+    if (positions.length >= 20000) break;
+  }
+  return positions.sort((left, right) => left - right);
+}
+
+function nearestPositionDistance(positions, target) {
+  if (!positions.length) return Number.POSITIVE_INFINITY;
+  let low = 0;
+  let high = positions.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (positions[middle] < target) low = middle + 1;
+    else high = middle;
+  }
+  return Math.min(
+    low < positions.length ? Math.abs(positions[low] - target) : Number.POSITIVE_INFINITY,
+    low > 0 ? Math.abs(positions[low - 1] - target) : Number.POSITIVE_INFINITY
+  );
+}
+
+function repeatedTokenCount(quote) {
+  const counts = new Map();
+  let maximum = 0;
+  for (const token of quote.match(/[가-힣A-Za-z]{2,}/gu) || []) {
+    const normalized = token.toLocaleLowerCase("ko-KR");
+    const count = (counts.get(normalized) || 0) + 1;
+    counts.set(normalized, count);
+    maximum = Math.max(maximum, count);
+  }
+  return maximum;
+}
+
+function rankEvidenceSpans(text, terms = [], options = {}) {
+  const normalizedTerms = normalizeEvidenceTerms(terms);
+  const priorityTerms = normalizeEvidenceTerms(options.priorityTerms || []);
+  const positions = termPositions(text, normalizedTerms);
+  const allowContextOnly = options.allowContextOnly === true;
+  return sentenceSpans(text).flatMap((span) => {
+    const quote = span.quote;
+    const length = [...quote].length;
+    if (length < 18 || length > 220) return [];
+    if (!/다[.!。]+$/u.test(quote)) return [];
+    if (/[!?！？]/u.test(quote) || SOURCE_BOILERPLATE_PATTERN.test(quote) || SOURCE_TECHNICAL_PATTERN.test(quote) || SOURCE_STAGE_DIRECTION_PATTERN.test(quote) || SOURCE_PROMOTIONAL_PATTERN.test(quote)) return [];
+    if (/[|{}<>_=]/u.test(quote) || repeatedTokenCount(quote) >= 4) return [];
+    const koreanCount = (quote.match(/[가-힣]/gu) || []).length;
+    const letterCount = (quote.match(/[가-힣A-Za-z]/gu) || []).length;
+    const digitCount = (quote.match(/[0-9]/gu) || []).length;
+    if (koreanCount < 12 || koreanCount / Math.max(1, letterCount) < 0.68 || digitCount / Math.max(1, length) > 0.12) return [];
+    const normalizedQuote = quote.normalize("NFKC").toLocaleLowerCase("ko-KR");
+    const matchedTerms = normalizedTerms.filter((term) => normalizedQuote.includes(term));
+    const matchedPriorityTerms = priorityTerms.filter((term) => normalizedQuote.includes(term));
+    const matchedSecondaryTerms = matchedTerms.filter((term) => !matchedPriorityTerms.includes(term));
+    const proximity = nearestPositionDistance(positions, Math.round((span.start + span.end) / 2));
+    const contextRelevant = proximity <= 320;
+    const explanatory = SOURCE_EXPLANATORY_PATTERN.test(quote);
+    if (normalizedTerms.length && !matchedTerms.length && ((!contextRelevant && !allowContextOnly) || !explanatory)) return [];
+    const score = matchedPriorityTerms.length * 40
+      + matchedSecondaryTerms.length * 5
+      + (contextRelevant ? Math.max(0, 14 - Math.floor(proximity / 32)) : 0)
+      + (explanatory ? 14 : 0)
+      + Math.round(koreanCount / Math.max(1, letterCount) * 10)
+      + (length >= 28 && length <= 120 ? 12 : length <= 160 ? 6 : 0);
+    return [{ ...span, score, matchedTerms, proximity }];
+  }).sort((left, right) => right.score - left.score || left.start - right.start || left.quote.localeCompare(right.quote, "ko"));
+}
+
+function comparisonText(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase("ko-KR").replace(/[^가-힣a-z0-9]+/gu, "");
+}
+
+function characterShingles(value, size = 3) {
+  const normalized = comparisonText(value);
+  const shingles = new Set();
+  for (let index = 0; index <= normalized.length - size; index += 1) shingles.add(normalized.slice(index, index + size));
+  return { normalized, shingles };
+}
+
+function nearDuplicateEvidence(left, right) {
+  const a = characterShingles(left);
+  const b = characterShingles(right);
+  if (!a.normalized || !b.normalized) return false;
+  if (a.normalized === b.normalized) return true;
+  if (Math.min(a.normalized.length, b.normalized.length) >= 18 && (a.normalized.includes(b.normalized) || b.normalized.includes(a.normalized))) return true;
+  if (!a.shingles.size || !b.shingles.size) return false;
+  let intersection = 0;
+  for (const shingle of a.shingles) if (b.shingles.has(shingle)) intersection += 1;
+  const union = a.shingles.size + b.shingles.size - intersection;
+  const shingleSimilarity = union > 0 ? intersection / union : 0;
+  if (shingleSimilarity >= 0.78) return true;
+  if (shingleSimilarity < 0.32 || a.normalized.length > 220 || b.normalized.length > 220) return false;
+  const shorter = a.normalized.length <= b.normalized.length ? a.normalized : b.normalized;
+  const longer = a.normalized.length <= b.normalized.length ? b.normalized : a.normalized;
+  let previous = new Uint16Array(shorter.length + 1);
+  for (const character of longer) {
+    const current = new Uint16Array(shorter.length + 1);
+    for (let index = 1; index <= shorter.length; index += 1) {
+      current[index] = character === shorter[index - 1]
+        ? previous[index - 1] + 1
+        : Math.max(previous[index], current[index - 1]);
+    }
+    previous = current;
+  }
+  return (2 * previous[shorter.length]) / (a.normalized.length + b.normalized.length) >= 0.74;
+}
+
+function fallbackEvidenceCandidates(topic, sourceEntries) {
+  const topicTerms = sourceTerms(topic);
+  const candidates = [];
+  let capturedCharacters = 0;
+  for (let sourceIndex = 0; sourceIndex < sourceEntries.length; sourceIndex += 1) {
+    const source = sourceEntries[sourceIndex];
+    if (!source || typeof source === "string" || source.fetchStatus !== "fetched" || !source.url) continue;
+    const terms = sourceTerms(topic, source.title || "");
+    for (let evidenceIndex = 0; evidenceIndex < (source.evidence || []).length; evidenceIndex += 1) {
+      const item = source.evidence[evidenceIndex];
+      const quote = String(item?.quote || "");
+      if (!quote || capturedCharacters >= 128000) continue;
+      capturedCharacters += quote.length;
+      const capturedContextDistance = Number(item?.relevance?.contextDistance);
+      const capturedAsRelevant = Number.isFinite(capturedContextDistance) && capturedContextDistance <= 320;
+      for (const span of rankEvidenceSpans(quote, terms, { allowContextOnly: capturedAsRelevant, priorityTerms: topicTerms })) {
+        candidates.push({
+          ...span,
+          sourceId: source.url,
+          title: source.title || source.url,
+          sourceSha256: source.sha256 || null,
+          evidenceId: item.id,
+          evidenceLocator: item.locator,
+          sourceIndex,
+          evidenceIndex
+        });
+      }
     }
   }
-  if (!windows.length) windows.push({ start: 0, end: Math.min(clean.length, 1600) });
-  windows.sort((left, right) => left.start - right.start);
-  const evidence = windows.slice(0, 8).map((window, index) => ({
+  const ranked = candidates.sort((left, right) => right.score - left.score
+    || left.sourceIndex - right.sourceIndex
+    || left.evidenceIndex - right.evidenceIndex
+    || left.start - right.start
+    || left.quote.localeCompare(right.quote, "ko"));
+  const unique = [];
+  for (const candidate of ranked) {
+    if (unique.some((selected) => nearDuplicateEvidence(candidate.quote, selected.quote))) continue;
+    unique.push(candidate);
+    if (unique.length >= 96) break;
+  }
+  return unique;
+}
+
+function captionFromEvidence(quote) {
+  // Keep the complete extractive proposition. Presentation wrapping happens in
+  // the caption renderer; truncating here can remove a negation or predicate.
+  return String(quote || "").trim().replace(/[.!。]+$/u, "");
+}
+
+export function evidenceFallbackScript(topic, clipCount, sourceEntries = [], targetDurationSec = 78) {
+  const candidates = fallbackEvidenceCandidates(topic, sourceEntries);
+  if (candidates.length < clipCount) throw new Error(`유효한 검증 근거 문장이 부족합니다: ${candidates.length}/${clipCount}. 메뉴·식별자가 아닌 주제 관련 설명문이 있는 출처를 추가하거나 Gemini 텍스트 API를 설정하세요.`);
+  const durationHint = Math.max(3, Number((targetDurationSec / clipCount).toFixed(2)));
+  const selected = candidates.slice(0, clipCount);
+  const parsed = {
+    title: selected[0].quote,
+    hook: selected[0].quote,
+    narration: selected.map((item) => item.quote).join(" "),
+    researchStatus: "verified",
+    segments: selected.map((item, index) => {
+      const narration = item.quote;
+      return {
+        claimId: `claim-${index + 1}`,
+        claim: narration,
+        caption: captionFromEvidence(narration),
+        narration,
+        visualPrompt: `${EXTRACTIVE_VISUAL_PREFIX}${JSON.stringify(narration)}${EXTRACTIVE_VISUAL_SUFFIX}`,
+        durationHint,
+        evidenceRefs: [{ sourceId: item.sourceId, evidenceId: item.evidenceId, quote: narration }]
+      };
+    })
+  };
+  return validateEvidenceBoundScript(parsed, sourceEntries, clipCount, "evidence-extract-fallback");
+}
+
+function sourceTerms(topic, sourceTitle = "") {
+  const stop = new Set(["대한", "관한", "이유", "방법", "사실", "영상", "공식", "홈페이지", "그리고", "에서", "으로", "하는", "있는", "보여도", "같은", "무엇", "어떻게", "왜냐하면", "http", "https", "www", "resolver", "source", "openai", "heritage"]);
+  const particles = /(?:에게서|으로서|으로써|까지|부터|처럼|보다|이나|거나|에서|에게|께서|으로|로서|[이가은는을를의와과도만])$/u;
+  const terms = [];
+  for (const token of `${topic || ""} ${sourceTitle || ""}`.match(/[가-힣A-Za-z0-9]{2,}/gu) || []) {
+    const normalized = token.toLocaleLowerCase("ko-KR");
+    if (stop.has(normalized) || /\d/u.test(normalized)) continue;
+    if (/^[가-힣]{3,}$/u.test(normalized)) {
+      const stem = normalized.replace(particles, "");
+      if (stem.length >= 2 && stem !== normalized && !stop.has(stem)) {
+        terms.push(stem);
+        continue;
+      }
+    }
+    terms.push(normalized);
+  }
+  return [...new Set(terms)].slice(0, 20);
+}
+
+function decodeSourceEntities(value) {
+  const named = new Map([["nbsp", " "], ["amp", "&"], ["quot", "\""], ["apos", "'"], ["lt", "<"], ["gt", ">"]]);
+  return value.replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z]+);/giu, (entity, code) => {
+    if (code.startsWith("#")) {
+      const numeric = code[1]?.toLowerCase() === "x" ? Number.parseInt(code.slice(2), 16) : Number.parseInt(code.slice(1), 10);
+      return Number.isInteger(numeric) && numeric >= 0 && numeric <= 0x10ffff ? String.fromCodePoint(numeric) : entity;
+    }
+    return named.get(code.toLowerCase()) ?? entity;
+  });
+}
+
+function canonicalSourceText(raw, contentType) {
+  if (/json/i.test(contentType)) {
+    try {
+      const strings = [];
+      const visit = (value) => {
+        if (typeof value === "string") strings.push(value);
+        else if (Array.isArray(value)) value.forEach(visit);
+        else if (value && typeof value === "object") Object.values(value).forEach(visit);
+      };
+      visit(JSON.parse(raw));
+      return strings.map((value) => value.replace(/\s+/gu, " ").trim()).filter(Boolean).join("\n");
+    } catch {
+      // Invalid JSON is still handled as visible text below.
+    }
+  }
+  const decoded = decodeSourceEntities(raw);
+  const visible = decoded
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<(nav|header|footer|form)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|figcaption|figure|h[1-6]|hr|li|main|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\t\f\v\u00a0 ]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+  return visible;
+}
+
+export function sourceExcerpt(bytes, contentType, terms = []) {
+  if (!/text\/|json|xml/i.test(contentType)) return { excerpt: "", evidence: [] };
+  const raw = new TextDecoder().decode(bytes);
+  const clean = canonicalSourceText(raw, contentType);
+  const ranked = rankEvidenceSpans(clean, terms);
+  const selected = [];
+  for (const candidate of ranked) {
+    if (selected.some((existing) => nearDuplicateEvidence(candidate.quote, existing.quote))) continue;
+    selected.push(candidate);
+    if (selected.length >= 32) break;
+  }
+  selected.sort((left, right) => left.start - right.start || right.score - left.score);
+  const evidence = selected.map((candidate, index) => ({
     id: `excerpt-${index + 1}`,
-    locator: `text-offset:${window.start}-${window.end}`,
-    quote: clean.slice(window.start, window.end)
+    locator: `text-offset:${candidate.start}-${candidate.end}`,
+    quote: candidate.quote,
+    relevance: {
+      matchedTerms: candidate.matchedTerms,
+      contextDistance: Number.isFinite(candidate.proximity) ? candidate.proximity : null
+    }
   }));
   return { excerpt: evidence.map((item) => item.quote).join(" … ").slice(0, 4000), evidence };
 }
@@ -294,37 +983,143 @@ const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const MAX_SOURCE_COUNT = 12;
 const MAX_SOURCE_CONCURRENCY = 3;
 
-function isPrivateSourceAddress(value) {
-  let host = String(value || "").toLowerCase().replace(/^\[|\]$/g, "");
-  if (host.startsWith("::ffff:")) host = host.slice("::ffff:".length);
-  if (isIP(host) === 4) {
-    const parts = host.split(".").map(Number);
-    return parts[0] === 0
-      || parts[0] === 10
-      || parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127
-      || parts[0] === 127
-      || parts[0] === 169 && parts[1] === 254
-      || parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31
-      || parts[0] === 192 && (parts[1] === 0 || parts[1] === 168)
-      || parts[0] === 192 && parts[1] === 2
-      || parts[0] === 198 && (parts[1] === 18 || parts[1] === 19 || parts[1] === 51)
-      || parts[0] === 203 && parts[1] === 0 && parts[2] === 113
-      || parts[0] >= 224;
-  }
-  if (isIP(host) === 6) return host === "::" || host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:") || host.startsWith("2001:db8:");
-  return false;
+// Conservatively exclude RFC 6890/IANA non-public, reserved, documentation,
+// transition, multicast, and local-use ranges from source-fetch targets. Keep
+// these as byte-level CIDRs: equivalent IPv6 addresses have many spellings and
+// fe80::/10 spans fe80:: through febf::.
+const NON_PUBLIC_IPV4_CIDRS = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4]
+];
+
+const NON_PUBLIC_IPV6_CIDRS = [
+  ["::", 8], // unspecified, loopback, IPv4-compatible, translation and other reserved forms
+  ["100::", 64], // discard-only
+  ["2001::", 23], // IETF protocol assignments, benchmarking and ORCHID
+  ["2001:db8::", 32], // documentation
+  ["2002::", 16], // 6to4 (can embed a non-public IPv4 destination)
+  ["3ffe::", 16], // former 6bone allocation, returned to IANA
+  ["3fff::", 20], // documentation prefix
+  ["fc00::", 7], // unique-local
+  ["fe80::", 10], // link-local, including fe80:: through febf::
+  ["fec0::", 10], // deprecated site-local
+  ["ff00::", 8] // multicast
+];
+
+function normalizedSourceHost(value) {
+  let host = String(value || "").trim().toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  return host.replace(/\.$/, "");
 }
+
+function parseIpv4Bytes(value) {
+  const input = normalizedSourceHost(value);
+  if (isIP(input) !== 4) return null;
+  return Uint8Array.from(input.split(".").map(Number));
+}
+
+function parseIpv6Bytes(value) {
+  let input = normalizedSourceHost(value);
+  // Scoped addresses are link-local in practice, and a scope identifier must
+  // never be accepted from either a URL literal or a resolver response.
+  if (input.includes("%") || isIP(input) !== 6) return null;
+  if (input.includes(".")) {
+    const colon = input.lastIndexOf(":");
+    const ipv4 = parseIpv4Bytes(input.slice(colon + 1));
+    if (!ipv4) return null;
+    input = `${input.slice(0, colon)}:${(ipv4[0] << 8 | ipv4[1]).toString(16)}:${(ipv4[2] << 8 | ipv4[3]).toString(16)}`;
+  }
+  const halves = input.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const omitted = 8 - left.length - right.length;
+  if (halves.length === 1 ? omitted !== 0 : omitted < 1) return null;
+  const words = [...left, ...Array(omitted).fill("0"), ...right].map((word) => Number.parseInt(word, 16));
+  if (words.length !== 8 || words.some((word) => !Number.isInteger(word) || word < 0 || word > 0xffff)) return null;
+  return Uint8Array.from(words.flatMap((word) => [word >>> 8, word & 0xff]));
+}
+
+function addressMatchesCidr(address, network, prefixLength) {
+  if (!address || !network || address.length !== network.length || prefixLength < 0 || prefixLength > address.length * 8) return false;
+  const wholeBytes = Math.floor(prefixLength / 8);
+  for (let index = 0; index < wholeBytes; index += 1) {
+    if (address[index] !== network[index]) return false;
+  }
+  const remainder = prefixLength % 8;
+  if (!remainder) return true;
+  const mask = (0xff << (8 - remainder)) & 0xff;
+  return (address[wholeBytes] & mask) === (network[wholeBytes] & mask);
+}
+
+function matchesAnyCidr(address, family, cidrs) {
+  return cidrs.some(([network, prefixLength]) => addressMatchesCidr(address, family === 4 ? parseIpv4Bytes(network) : parseIpv6Bytes(network), prefixLength));
+}
+
+function mappedIpv4Bytes(address) {
+  if (address.length !== 16) return null;
+  if (address.slice(0, 10).some((byte) => byte !== 0) || address[10] !== 0xff || address[11] !== 0xff) return null;
+  return address.slice(12);
+}
+
+function isPublicIpv4Bytes(address) {
+  return !matchesAnyCidr(address, 4, NON_PUBLIC_IPV4_CIDRS);
+}
+
+/** Fail-closed source-fetch address policy, shared by URL literals and DNS results. */
+export function isPublicSourceAddress(value) {
+  const host = normalizedSourceHost(value);
+  const family = isIP(host);
+  if (family === 4) {
+    const address = parseIpv4Bytes(host);
+    return Boolean(address && isPublicIpv4Bytes(address));
+  }
+  if (family !== 6) return false;
+  const address = parseIpv6Bytes(host);
+  if (!address) return false;
+  const mapped = mappedIpv4Bytes(address);
+  if (mapped) return isPublicIpv4Bytes(mapped);
+  const globalUnicast = addressMatchesCidr(address, parseIpv6Bytes("2000::"), 3);
+  return globalUnicast && !matchesAnyCidr(address, 6, NON_PUBLIC_IPV6_CIDRS);
+}
+
+export function validatePublicSourceAddresses(addresses) {
+  if (!Array.isArray(addresses) || !addresses.length) throw new Error("출처 호스트가 공용 네트워크 주소로만 확인되지 않았습니다.");
+  const normalized = addresses.map((entry) => {
+    const address = typeof entry === "string" ? entry : entry?.address;
+    const family = isIP(normalizedSourceHost(address));
+    const declaredFamily = typeof entry === "object" && entry ? Number(entry.family) : family;
+    if (!family || declaredFamily !== family || !isPublicSourceAddress(address)) throw new Error("출처 호스트가 공용 네트워크 주소로만 확인되지 않았습니다.");
+    return { address: normalizedSourceHost(address), family };
+  });
+  return normalized;
+}
+
 function isPrivateSourceHost(hostname) {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  return host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "metadata.google.internal" || isPrivateSourceAddress(host);
+  const host = normalizedSourceHost(hostname);
+  return host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "metadata.google.internal" || Boolean(isIP(host) && !isPublicSourceAddress(host));
 }
 
 function requestPinnedSource(url, address, signal) {
   return new Promise((resolveRequest, rejectRequest) => {
     const requestModule = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const requestHostname = normalizedSourceHost(url.hostname);
     const request = requestModule({
       protocol: url.protocol,
-      hostname: url.hostname,
+      hostname: requestHostname,
       port: url.port || undefined,
       path: `${url.pathname}${url.search}`,
       method: "GET",
@@ -334,7 +1129,7 @@ function requestPinnedSource(url, address, signal) {
         if (options?.all) callback(null, [{ address, family }]);
         else callback(null, address, family);
       },
-      ...(url.protocol === "https:" ? { servername: url.hostname } : {})
+      ...(url.protocol === "https:" && !isIP(requestHostname) ? { servername: requestHostname } : {})
     }, (response) => {
       const chunks = [];
       let total = 0;
@@ -344,7 +1139,7 @@ function requestPinnedSource(url, address, signal) {
           request.destroy(new Error(`출처 응답이 ${MAX_SOURCE_BYTES}바이트 제한을 초과했습니다.`));
           return;
         }
-        chunks.push(Buffer.from(chunk));
+        chunks.push(chunk);
       });
       response.on("end", () => resolveRequest({
         status: response.statusCode || 0,
@@ -366,7 +1161,7 @@ function requestPinnedSource(url, address, signal) {
   });
 }
 
-async function captureSource(source) {
+async function captureSource(source, topic = "") {
   const normalized = typeof source === "string" ? { title: source, url: source } : { ...source };
   if (!normalized.url || !/^https?:\/\//i.test(normalized.url)) return { ...normalized, fetchStatus: "invalid" };
   const controller = new AbortController();
@@ -376,15 +1171,18 @@ async function captureSource(source) {
     if (parsedUrl.username || parsedUrl.password) throw new Error("출처 URL 인증 정보는 허용되지 않습니다.");
     if (parsedUrl.port && !["80", "443"].includes(parsedUrl.port)) throw new Error("출처 URL 포트는 80 또는 443만 허용합니다.");
     if (isPrivateSourceHost(parsedUrl.hostname)) throw new Error("비공개 네트워크 출처는 허용되지 않습니다.");
-    const addresses = await lookup(parsedUrl.hostname, { all: true, verbatim: true });
-    if (!addresses.length || addresses.some(({ address }) => isPrivateSourceAddress(address))) throw new Error("출처 호스트가 공용 네트워크 주소로만 확인되지 않았습니다.");
-    const publicAddress = addresses[0];
+    const hostname = normalizedSourceHost(parsedUrl.hostname);
+    const addresses = isIP(hostname)
+      ? [{ address: hostname, family: isIP(hostname) }]
+      : await lookup(hostname, { all: true, verbatim: true });
+    const publicAddresses = validatePublicSourceAddresses(addresses);
+    const publicAddress = publicAddresses[0];
     const response = await requestPinnedSource(parsedUrl, publicAddress.address, controller.signal);
     if (response.status >= 300 && response.status < 400) return { ...normalized, fetchStatus: "redirect-blocked", httpStatus: response.status, error: "출처 리디렉션은 안전 검증을 위해 차단되었습니다.", fetchedAt: new Date().toISOString() };
     const digest = createHash("sha256").update(response.bytes).digest("hex");
     const contentTypeHeader = response.headers["content-type"];
     const contentType = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader || "application/octet-stream";
-    const extracted = sourceExcerpt(response.bytes, contentType);
+    const extracted = sourceExcerpt(response.bytes, contentType, sourceTerms(topic, normalized.title));
     return { ...normalized, fetchStatus: response.status >= 200 && response.status < 300 ? "fetched" : "http-error", httpStatus: response.status, contentType, byteLength: response.bytes.length, sha256: `sha256:${digest}`, resolvedAddress: publicAddress.address, resolvedFamily: publicAddress.family, excerpt: extracted.excerpt, evidence: extracted.evidence, fetchedAt: new Date().toISOString() };
   } catch (error) {
     return { ...normalized, fetchStatus: error.message.includes("허용되지") || error.message.includes("제한을 초과") || error.message.includes("공용 네트워크") || error.message.includes("인증 정보") || error.message.includes("포트") ? "blocked" : "error", error: error.message, fetchedAt: new Date().toISOString() };
@@ -399,7 +1197,7 @@ async function captureSources(job) {
   const records = [];
   for (let index = 0; index < sources.length; index += MAX_SOURCE_CONCURRENCY) {
     const batch = sources.slice(index, index + MAX_SOURCE_CONCURRENCY);
-    records.push(...await Promise.all(batch.map(captureSource)));
+    records.push(...await Promise.all(batch.map((source) => captureSource(source, job.topic))));
   }
   const fetchedCount = records.filter((source) => source.fetchStatus === "fetched").length;
   const evidenceCount = records.reduce((sum, source) => sum + (source.evidence?.length || 0), 0);
@@ -416,12 +1214,12 @@ async function captureSources(job) {
 export async function buildScript(job) {
   try {
     const generated = await callGeminiText(job.topic, job.clipCount, job.targetDurationSec, job.sources);
-    return generated || fallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec);
+    return generated || evidenceFallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec);
   } catch (error) {
     if (process.env.GEMINI_API_KEY) {
       throw error;
     }
-    return fallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec);
+    return evidenceFallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec);
   }
 }
 
@@ -454,8 +1252,11 @@ function splitCaptionText(text, maxChars = 8) {
   }
   return chunks.flatMap((chunk) => {
     if ([...chunk].length <= maxChars) return [chunk];
+    if (!/\s/u.test(chunk) && [...chunk].length <= Math.max(16, maxChars + 4)) return [chunk];
     const parts = [];
-    for (let index = 0; index < [...chunk].length; index += maxChars) parts.push([...chunk].slice(index, index + maxChars).join(""));
+    const characters = [...chunk];
+    const safeLimit = Math.max(maxChars, 12);
+    for (let index = 0; index < characters.length; index += safeLimit) parts.push(characters.slice(index, index + safeLimit).join(""));
     return parts;
   });
 }
@@ -615,6 +1416,50 @@ function inputClipPath(jobDir, name) {
   return absolutePath;
 }
 
+function averageHash(frame) {
+  const average = frame.reduce((sum, value) => sum + value, 0) / frame.length;
+  let bits = 0n;
+  for (const value of frame) bits = (bits << 1n) | (value >= average ? 1n : 0n);
+  return bits.toString(16).padStart(16, "0");
+}
+
+function hammingHex(left, right) {
+  let value = BigInt(`0x${left}`) ^ BigInt(`0x${right}`);
+  let count = 0;
+  while (value) {
+    value &= value - 1n;
+    count += 1;
+  }
+  return count;
+}
+
+export function perceptualFingerprintDistance(left = [], right = []) {
+  if (!left.length || !right.length) return Number.POSITIVE_INFINITY;
+  const samples = Math.min(left.length, right.length);
+  let distance = 0;
+  for (let index = 0; index < samples; index += 1) {
+    const leftIndex = samples === 1 ? 0 : Math.round(index * (left.length - 1) / (samples - 1));
+    const rightIndex = samples === 1 ? 0 : Math.round(index * (right.length - 1) / (samples - 1));
+    distance += hammingHex(left[leftIndex], right[rightIndex]);
+  }
+  return Number((distance / samples).toFixed(3));
+}
+
+async function perceptualFingerprint(path) {
+  const duration = await probeDuration(path);
+  const sampleCount = 8;
+  const fps = Math.max(0.05, sampleCount / Math.max(duration, 0.1));
+  const bytes = await commandBytes("ffmpeg", [
+    "-v", "error", "-i", path,
+    "-vf", `fps=${fps.toFixed(6)},scale=8:8:flags=area,format=gray`,
+    "-frames:v", String(sampleCount), "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"
+  ]);
+  const hashes = [];
+  for (let offset = 0; offset + 64 <= bytes.length; offset += 64) hashes.push(averageHash(bytes.subarray(offset, offset + 64)));
+  if (!hashes.length) throw new Error(`영상 지문을 만들 수 없습니다: ${path}`);
+  return { algorithm: "temporal-ahash-8x8-v1", durationSec: Number(duration.toFixed(3)), frames: hashes };
+}
+
 async function createInputManifest(jobDir, runDir, jobId, runId, requestedNames = null, expectedCount = null) {
   const clipsDir = join(jobDir, "clips");
   const names = [...new Set((requestedNames || (await readdir(clipsDir).catch(() => [])))
@@ -630,13 +1475,28 @@ async function createInputManifest(jobDir, runDir, jobId, runId, requestedNames 
     const fileStat = await stat(absolutePath);
     if (!fileStat.isFile()) throw new Error(`영상 클립 파일이 아닙니다: ${name}`);
     const sha256 = await hashFile(absolutePath);
-    selected.push({ name, relativePath: `clips/${name}`, bytes: fileStat.size, sha256, absolutePath });
+    const perceptual = await perceptualFingerprint(absolutePath);
+    selected.push({ name, relativePath: `clips/${name}`, bytes: fileStat.size, sha256, perceptual, absolutePath });
+  }
+  const exactHashes = new Map();
+  for (const entry of selected) {
+    if (exactHashes.has(entry.sha256)) throw new Error(`서로 다른 생성 클립이 필요합니다. ${exactHashes.get(entry.sha256)}와 ${entry.name}의 SHA-256이 같습니다.`);
+    exactHashes.set(entry.sha256, entry.name);
+  }
+  const perceptualComparisons = [];
+  for (let left = 0; left < selected.length; left += 1) {
+    for (let right = left + 1; right < selected.length; right += 1) {
+      const distance = perceptualFingerprintDistance(selected[left].perceptual.frames, selected[right].perceptual.frames);
+      perceptualComparisons.push({ left: selected[left].name, right: selected[right].name, distance });
+      if (distance <= 3) throw new Error(`서로 다른 장면이 필요합니다. ${selected[left].name}와 ${selected[right].name}의 지각 지문 거리가 ${distance}로 너무 가깝습니다.`);
+    }
   }
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     jobId,
     capturedAt: new Date().toISOString(),
+    diversityGate: { exactSha256Unique: true, perceptualAlgorithm: "temporal-ahash-8x8-v1", minimumDistanceExclusive: 3, comparisons: perceptualComparisons },
     entries: selected.map(({ absolutePath: _absolutePath, ...entry }) => entry)
   };
   const manifestPath = join(runDir, "input-manifest.json");
@@ -684,21 +1544,36 @@ async function snapshotBenchmarkFiles(runDir, runId) {
   const snapshotRoot = join(runDir, "benchmarks");
   await mkdir(snapshotRoot, { recursive: true });
   const specs = [
-    { key: "channel", source: ANALYSIS_PATH, name: "channel-analysis.json", meta: { expectedVideos: 244, population: "channel-all-videos" } },
-    { key: "duration", source: join(DATA_DIR, "shorts-metadata.json"), name: "shorts-metadata.json", meta: { shortsCount: 242 } },
-    { key: "rlm", source: join(DATA_DIR, "rlm-benchmark-analysis.json"), name: "rlm-benchmark-analysis.json", meta: { sampleCount: 3 } }
+    { key: "channel", source: ANALYSIS_PATH, name: "channel-analysis.json" },
+    { key: "duration", source: join(DATA_DIR, "shorts-metadata.json"), name: "shorts-metadata.json" },
+    { key: "rlm", source: join(DATA_DIR, "rlm-benchmark-analysis.json"), name: "rlm-benchmark-analysis.json" }
   ];
   const snapshots = {};
   for (const spec of specs) {
     const target = join(snapshotRoot, spec.name);
     const relativePath = `runs/${runId}/benchmarks/${spec.name}`;
     try {
+      const payload = JSON.parse(await readFile(spec.source, "utf8"));
       await copyFile(spec.source, target);
-      snapshots[spec.key] = { ...spec.meta, path: relativePath, sha256: await hashFile(target) };
+      const meta = spec.key === "channel"
+        ? { expectedVideos: payload.snapshot?.totalVideos ?? payload.provenance?.completeness?.expectedVideos ?? null, shortsCount: payload.snapshot?.shorts ?? null, longVideosCount: payload.snapshot?.longVideos ?? null, sourceSnapshotAt: payload.snapshot?.capturedAt ?? null, population: "channel-all-videos" }
+        : spec.key === "duration"
+          ? { shortsCount: payload.snapshotVideoCount ?? payload.metadataCount ?? null, sourceSnapshotAt: payload.sourceSnapshotAt ?? null }
+          : { shortsCount: payload.reduction?.inputCount ?? payload.sourceSnapshot?.shortsCount ?? null, sampleCount: payload.mediaEvidence?.sampleCount ?? 0, analyzedAt: payload.analyzedAt ?? null };
+      snapshots[spec.key] = { ...meta, path: relativePath, sha256: await hashFile(target) };
     } catch {
-      snapshots[spec.key] = { ...spec.meta, path: relativePath, sha256: null, missing: true };
+      snapshots[spec.key] = { path: relativePath, sha256: null, missing: true };
     }
   }
+  if (Object.values(snapshots).some((snapshot) => snapshot.missing)) throw new Error("벤치마크 스냅샷 파일이 없습니다. bun run benchmark:refresh를 먼저 실행하세요.");
+  const populationCounts = [snapshots.channel.shortsCount, snapshots.duration.shortsCount, snapshots.rlm.shortsCount];
+  if (populationCounts.some((count) => !Number.isInteger(count) || count <= 0) || new Set(populationCounts).size !== 1) {
+    throw new Error(`벤치마크 세대가 일치하지 않습니다: channel/duration/RLM Shorts=${populationCounts.join("/")}`);
+  }
+  if (!snapshots.channel.expectedVideos || snapshots.channel.expectedVideos !== snapshots.channel.shortsCount + snapshots.channel.longVideosCount) {
+    throw new Error("채널 벤치마크의 전체·Shorts·롱폼 개수가 일치하지 않습니다.");
+  }
+  if (snapshots.channel.sourceSnapshotAt !== snapshots.duration.sourceSnapshotAt) throw new Error("채널 분석과 길이 분석의 원본 캡처 시각이 다릅니다.");
   return {
     path: snapshots.channel.path,
     sha256: snapshots.channel.sha256,
@@ -996,6 +1871,9 @@ export async function runJob(jobId, options = {}) {
     policy: providerPolicy(job.provider)
   };
   const providerDecisionHash = hashJson(providerDecision);
+  const geminiSessionBinding = job.provider === "gemini-browser" ? canonicalGeminiSessionBinding(job) : null;
+  const geminiSessionBindingDigest = job.provider === "gemini-browser" ? geminiSessionBindingHash(job) : null;
+  if (job.provider === "gemini-browser" && (!geminiSessionBinding || !geminiSessionBindingDigest)) throw new Error("Gemini 실행 세션을 안전하게 결속할 수 없습니다.");
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   const runDir = join(jobDir, "runs", runId);
   const ledgerErrors = [];
@@ -1010,7 +1888,18 @@ export async function runJob(jobId, options = {}) {
     startedAt: new Date().toISOString(),
     status: "running",
     benchmarkSnapshot: null,
-    request: { topic: job.topic, provider: job.provider, format: job.format, clipCount: job.clipCount, targetDurationSec: job.targetDurationSec, targetDurationRangeSec: job.targetDurationRangeSec, captions: job.captions, voiceover: job.voiceover, fallbackPolicy: providerPolicy(job.provider) },
+    request: {
+      topic: job.topic,
+      provider: job.provider,
+      format: job.format,
+      clipCount: job.clipCount,
+      targetDurationSec: job.targetDurationSec,
+      targetDurationRangeSec: job.targetDurationRangeSec,
+      captions: job.captions,
+      voiceover: job.voiceover,
+      fallbackPolicy: providerPolicy(job.provider),
+      ...(geminiSessionBinding ? { geminiSessionBinding, geminiSessionBindingHash: geminiSessionBindingDigest } : {})
+    },
     providerDecision,
     providerDecisionHash,
     eventsPath: `runs/${runId}/events.jsonl`,
@@ -1189,12 +2078,13 @@ export async function runJob(jobId, options = {}) {
         status: quality.status,
         totalScore: quality.totalScore,
         threshold: quality.threshold,
+        technicalEvidenceGate: quality.technicalEvidenceGate,
         semanticGate: quality.semanticGate,
         runId: quality.runId,
         blockers: quality.blockers,
         inputManifest: inputManifest.receipt
       };
-      await progress(98, "검수", quality.semanticGate ? `AHP ${quality.totalScore}점 · ${quality.status === "passed" ? "통과" : "개선 필요"}` : `기계 검사 ${quality.totalScore}점 · 의미론 판정 보류`, { qualitySummary });
+      await progress(98, "검수", quality.technicalEvidenceGate ? `기술 증거 검사 ${quality.totalScore}점 · 콘텐츠 판정 보류` : `기술 증거 검사 ${quality.totalScore}점 · 개선 필요`, { qualitySummary });
     } catch (qualityError) {
       await record({ type: "quality_failed", error: qualityError.message });
       throw new Error(`AHP 품질 검사 실패: ${qualityError.message}`);
@@ -1292,12 +2182,15 @@ export async function runJob(jobId, options = {}) {
       status: finalizedQuality.status,
       totalScore: finalizedQuality.totalScore,
       threshold: finalizedQuality.threshold,
+      technicalEvidenceGate: finalizedQuality.technicalEvidenceGate,
       semanticGate: finalizedQuality.semanticGate,
       runId: finalizedQuality.runId,
       blockers: finalizedQuality.blockers,
       inputManifest: inputManifest.receipt
     };
-    const finalizedRunStatus = finalizedQuality.status === "passed" ? "verified" : "needs-improvement";
+    const semanticSuccess = finalizedQuality.status === "passed" && finalizedQuality.semanticGate === true;
+    const finalizedRunStatus = semanticSuccess ? "verified" : "needs-improvement";
+    const finalizedManifestStatus = semanticSuccess ? "completed" : "needs-improvement";
     const qualitySnapshotInputs = [
       { name: "quality.json", kind: "quality-post-publication", url: mediaPath(job.id, "quality.json") },
       { name: "quality/iteration-01.json", kind: "quality-iteration", url: mediaPath(job.id, "quality/iteration-01.json") },
@@ -1330,7 +2223,7 @@ export async function runJob(jobId, options = {}) {
     ];
     runManifest = {
       ...runManifest,
-      status: "completed",
+      status: finalizedManifestStatus,
       completedAt: new Date().toISOString(),
       runStatus: finalizedRunStatus,
       qualitySummary: finalizedQualitySummary,
@@ -1346,10 +2239,12 @@ export async function runJob(jobId, options = {}) {
       { name: `runs/${runId}/manifest.json`, kind: "run-manifest", url: mediaPath(job.id, `runs/${runId}/manifest.json`) }
     ];
     job = await updateJob(jobId, {
-      status: "completed",
-      stage: "완료",
+      status: semanticSuccess ? "completed" : "needs-improvement",
+      stage: semanticSuccess ? "완료" : "개선 필요",
       progress: 100,
-      message: finalizedQualitySummary.semanticGate ? `영상 제작과 AHP 검사가 완료되었습니다. (${finalizedQualitySummary.totalScore}점)` : `영상 제작 완료 · 기계 검사 ${finalizedQualitySummary.totalScore}점 · 의미론 판정 보류`,
+      message: semanticSuccess
+        ? `영상 제작과 AHP 검사가 완료되었습니다. (${finalizedQualitySummary.totalScore}점)`
+        : `영상 파일과 기술 증거 검사만 봉인되었습니다 · 콘텐츠 의미 검토 전이므로 개선 필요 상태를 유지합니다. (${finalizedQualitySummary.totalScore}점)`,
       warnings: [...rendered.warnings, ...qualityWarnings],
       artifacts: finalizedArtifacts,
       duration: rendered.duration,
@@ -1383,6 +2278,6 @@ export async function copyUpload(jobId, file, destinationDir = join(JOBS_DIR, jo
   await mkdir(destinationDir, { recursive: true });
   const safeName = file.name.replace(/[^\p{L}\p{N}._-]+/gu, "-");
   const target = join(destinationDir, `${Date.now()}-${safeName || "clip.mp4"}`);
-  await writeFile(target, Buffer.from(await file.arrayBuffer()));
+  await Bun.write(target, file);
   return { name: safeName, path: target, size: (await stat(target)).size };
 }

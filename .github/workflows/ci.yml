@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Syntax and offline tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: "true"
+      BFL_API_KEY: ""
+      BFL_DRY_RUN: "1"
+      GEMINI_API_KEY: ""
+      PS4_LOCAL_VIDEO_GENERATOR: ""
+      GEMINI_CHROME_HEADLESS: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          for file in src/*.mjs scripts/*.mjs public/*.js test/*.mjs tests/*.mjs; do
+            node --check "$file"
+          done
+
+      # Tests must use local fixtures or mocked fetch implementations. This job
+      # intentionally provides no provider credentials and starts no monitor,
+      # browser automation, benchmark download, or paid generation command.
+      - name: Run offline tests
+        run: bun test
+
+      - name: Check whitespace errors
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$BASE_SHA"...HEAD
+          else
+            git show --check --format= HEAD
+          fi

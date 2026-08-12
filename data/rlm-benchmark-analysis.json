@@ -1,67 +1,69 @@
 {
   "schemaVersion": 1,
-  "analyzedAt": "2026-08-11T04:03:56.663Z",
+  "analyzedAt": "2026-08-12T09:22:26.843Z",
   "source": "https://www.youtube.com/@신비한_건축사전_1",
   "sourceSnapshot": {
     "channel": "신비한 건축사전",
-    "videoCount": 244,
-    "shortsCount": 242,
+    "videoCount": 255,
+    "shortsCount": 251,
     "durationProfile": {
       "minSec": 26,
       "maxSec": 139,
-      "meanSec": 75.1,
+      "meanSec": 76.22,
       "medianSec": 78,
       "p10Sec": 43,
       "p90Sec": 104,
       "recommendedTargetSec": 78,
       "recommendedRangeSec": [
-        54,
-        91
+        57,
+        93
       ]
     },
     "metadataCapturedWith": {
       "tool": "yt-dlp",
       "version": "2026.07.04",
-      "command": "--skip-download --print metadata",
+      "command": "channel:refresh full metadata snapshot",
       "updateCommand": "brew upgrade yt-dlp"
     }
   },
   "provenance": {
     "sourceAnalysis": {
-      "snapshotVersion": 2,
+      "snapshotVersion": 3,
       "sourceType": "yt-dlp-channel-metadata",
       "sourceUrl": "https://www.youtube.com/@신비한_건축사전_1",
       "inputFiles": [
         {
           "path": "data/channel-shorts.json",
-          "bytes": 92528,
-          "sha256": "sha256:820f833237a2184fcb3195925761a36809e3eef3d96dd187feac772f3717c186"
+          "bytes": 156333,
+          "sha256": "sha256:6983bc09fb4c3e2572741750522b5423ed37704c51c97c44f7da13bbe994119b"
         },
         {
           "path": "data/channel-videos.json",
-          "bytes": 1171,
-          "sha256": "sha256:16b7fad39661e11222fbdbe4b1f6fad8f7180d439012ea70877940037a34b569"
+          "bytes": 3097,
+          "sha256": "sha256:e2802a0cc5991979b641c3d8a3908436825f9a2c86f164232edfc24e96ccdd98"
         },
         {
           "path": "data/shorts-metadata.json",
-          "bytes": 121696,
-          "sha256": "sha256:411591a913459dbada34d05575f875adcdea79cfee7d929293166c46f70687f4"
+          "bytes": 165213,
+          "sha256": "sha256:8488282d43fbb9ba6a55d6cd54f0a5cfc499c56f078881f20dab8f9b57fee34f"
         }
       ],
       "completeness": {
-        "expectedVideos": 244,
-        "indexedVideos": 244,
-        "shorts": 242,
-        "longVideos": 2,
+        "expectedVideos": 255,
+        "indexedVideos": 255,
+        "shorts": 251,
+        "longVideos": 4,
+        "uniqueIds": 255,
         "complete": true
       },
       "analysisLimitations": [
         "title classification is heuristic and does not establish visual, audio, caption, or factual entailment evidence",
+        "editorialHypothesis is prescriptive guidance inferred from titles and metadata, not a measured audiovisual channel property",
         "media evidence is collected separately by benchmark:media",
         "exact source wording and original assets are not copied"
       ]
     },
-    "mediaEvidenceScope": 3,
+    "mediaEvidenceScope": 12,
     "mediaEvidenceIsRepresentative": false,
     "limitations": [
       "RLM aggregates metadata and sampled media evidence; it does not prove semantic equivalence",
@@ -79,7 +81,7 @@
       },
       {
         "id": "visualConsistency",
-        "label": "시각 일관성·생성 품질",
+        "label": "시각 증거·미디어 규격",
         "weight": 25
       },
       {
@@ -94,7 +96,7 @@
       },
       {
         "id": "factSourceFit",
-        "label": "사실성·출처·벤치마크 적합성",
+        "label": "출처 텍스트 결속·벤치마크 적합성",
         "weight": 10
       },
       {
@@ -105,54 +107,139 @@
     ],
     "weightTotal": 100,
     "scoreScale": "0-100 per criterion; weighted sum",
-    "semanticEligibilityRequires": [
+    "technicalEvidenceRequires": [
       "approved video-generation provider",
       "run-bound provider/model provenance",
-      "committee evidence",
+      "software-method evidence",
       "terminal immutable closure"
-    ]
+    ],
+    "contentSemanticsMeasured": false
   },
   "mediaEvidence": {
-    "sampleCount": 3,
-    "averageDurationSec": 106.59,
+    "sampleCount": 12,
+    "audioSampleCount": 11,
+    "captionSampleCount": 11,
+    "measuredAudioQcCount": 2,
+    "averageDurationSec": 72.35,
     "averageFps": 30,
-    "averageSceneCuts": 22.67,
-    "averageSilenceCount": 0.33,
-    "averageCaptionCount": 111.33,
-    "averageCaptionCps": 29.31,
-    "averageCaptionCuesPerMinute": 62.6,
+    "averageSceneCuts": 22.08,
+    "averageSilenceCount": 0.17,
+    "averageCaptionCount": 73,
+    "averageCaptionCps": 27.18,
+    "averageCaptionCuesPerMinute": 60.59,
     "captionCuesPerMinuteRange": [
-      60.7,
-      63.72
+      0,
+      79.59
     ],
-    "averageWordTimingCoverage": 2.079,
+    "averageWordTimingCoverage": 1.878,
     "evidence": [
       {
-        "durationSec": 98.854,
-        "frameCount": 2965,
-        "sceneCutCount": 18,
-        "silenceCount": 1,
-        "captionCount": 100,
-        "captionCuesPerMinute": 60.7,
-        "wordTimingCoverage": 2.22
-      },
-      {
-        "durationSec": 111.107483,
-        "frameCount": 3331,
-        "sceneCutCount": 27,
+        "durationSec": 95.7,
+        "frameCount": 2871,
+        "sceneCutCount": 21,
         "silenceCount": 0,
-        "captionCount": 118,
-        "captionCuesPerMinute": 63.72,
-        "wordTimingCoverage": 2.059
+        "captionCount": 102,
+        "captionCuesPerMinute": 63.95,
+        "wordTimingCoverage": 1.804
       },
       {
-        "durationSec": 109.814,
-        "frameCount": 3294,
+        "durationSec": 88.491247,
+        "frameCount": 2652,
+        "sceneCutCount": 31,
+        "silenceCount": 0,
+        "captionCount": 92,
+        "captionCuesPerMinute": 62.38,
+        "wordTimingCoverage": 1.978
+      },
+      {
+        "durationSec": 95.754,
+        "frameCount": 2871,
         "sceneCutCount": 23,
         "silenceCount": 0,
-        "captionCount": 116,
-        "captionCuesPerMinute": 63.38,
-        "wordTimingCoverage": 1.957
+        "captionCount": 106,
+        "captionCuesPerMinute": 66.42,
+        "wordTimingCoverage": 1.858
+      },
+      {
+        "durationSec": 88.194,
+        "frameCount": 2645,
+        "sceneCutCount": 26,
+        "silenceCount": 0,
+        "captionCount": 86,
+        "captionCuesPerMinute": 58.51,
+        "wordTimingCoverage": 1.814
+      },
+      {
+        "durationSec": 62.166667,
+        "frameCount": 1865,
+        "sceneCutCount": 16,
+        "silenceCount": 0,
+        "captionCount": 0,
+        "captionCuesPerMinute": 0,
+        "wordTimingCoverage": null
+      },
+      {
+        "durationSec": 78.034,
+        "frameCount": 2340,
+        "sceneCutCount": 22,
+        "silenceCount": 0,
+        "captionCount": 72,
+        "captionCuesPerMinute": 55.36,
+        "wordTimingCoverage": 1.861
+      },
+      {
+        "durationSec": 66.334,
+        "frameCount": 1989,
+        "sceneCutCount": 29,
+        "silenceCount": 0,
+        "captionCount": 66,
+        "captionCuesPerMinute": 59.7,
+        "wordTimingCoverage": 1.939
+      },
+      {
+        "durationSec": 74.114,
+        "frameCount": 2222,
+        "sceneCutCount": 17,
+        "silenceCount": 1,
+        "captionCount": 88,
+        "captionCuesPerMinute": 71.24,
+        "wordTimingCoverage": 1.909
+      },
+      {
+        "durationSec": 53.734,
+        "frameCount": 1611,
+        "sceneCutCount": 20,
+        "silenceCount": 0,
+        "captionCount": 60,
+        "captionCuesPerMinute": 67,
+        "wordTimingCoverage": 1.9
+      },
+      {
+        "durationSec": 64.834,
+        "frameCount": 1944,
+        "sceneCutCount": 22,
+        "silenceCount": 0,
+        "captionCount": 86,
+        "captionCuesPerMinute": 79.59,
+        "wordTimingCoverage": 1.988
+      },
+      {
+        "durationSec": 41.394,
+        "frameCount": 1240,
+        "sceneCutCount": 19,
+        "silenceCount": 0,
+        "captionCount": 54,
+        "captionCuesPerMinute": 78.27,
+        "wordTimingCoverage": 1.889
+      },
+      {
+        "durationSec": 59.394,
+        "frameCount": 1781,
+        "sceneCutCount": 19,
+        "silenceCount": 1,
+        "captionCount": 64,
+        "captionCuesPerMinute": 64.65,
+        "wordTimingCoverage": 1.719
       }
     ]
   },
@@ -171,7 +258,7 @@
   "reduction": {
     "engine": "RLM-recursive-reducer",
     "chunkSize": 32,
-    "inputCount": 242,
+    "inputCount": 251,
     "levels": [
       [
         {
@@ -179,28 +266,37 @@
           "chunkIndex": 0,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 3481,
-          "minDurationSec": 79,
-          "maxDurationSec": 139,
+          "durationSum": 3487,
+          "minDurationSec": 88,
+          "maxDurationSec": 136,
           "categoryCounts": {
-            "건축·구조 원리": 18,
             "물·도시 인프라": 12,
-            "서울의 숨은 구조": 13,
-            "에너지·기후 대응": 5,
-            "고대 문명·유산": 1,
-            "조선·궁궐·성곽": 6
+            "서울의 숨은 구조": 7,
+            "건축·구조 원리": 18,
+            "고대 문명·유산": 2,
+            "조선·궁궐·성곽": 3,
+            "에너지·기후 대응": 5
           },
           "hookCounts": {
-            "왜 그랬을까": 8,
-            "숫자·스케일": 17,
-            "상식 뒤집기": 10,
-            "숨은 장소·장치": 5,
+            "숫자·스케일": 7,
+            "숨은 장소·장치": 6,
+            "왜 그랬을까": 9,
+            "상식 뒤집기": 8,
             "불가능을 가능하게": 5
           },
           "resolutionCounts": {
             "2160x3840": 32
           },
           "titles": [
+            "바다를 막지 않고 뚫은 7킬로미터",
+            "도시 물을 받아 내는 갈대밭",
+            "1971년까지 한강 한복판의 섬이었던 동네",
+            "하루 한 번 한쪽이 통째로 들리는 부산의 다리",
+            "이집트 대피라미드 천장 위에 빈 방을 다섯 칸이나 쌓아 올린 이유",
+            "돌을 붙이지도 않고 쌓았는데 2천 년째 남아 있는 로마 성벽",
+            "바다를 잠깐 치워 놓고 판 터널",
+            "강이 감아 도는데 물가를 피해 앉은 마을",
+            "아파트 지하주차장 바닥에 구덩이를 판 이유, 물을 빼려는 게 아닙니다",
             "유리를 두 겹으로 겹쳐놨는데 트럭 소리만 그대로 들어오는 이유",
             "아파트에서 화장실 냄새를 막고 있는 건 뚜껑이 아니라 물 한 컵입니다",
             "아파트 천장에 달린 그 쇠붙이, 전기도 센서도 안 씁니다",
@@ -223,7 +319,36 @@
             "도로를 걷어냈더니 기온이 내려간 서울 한복판",
             "매년 물에 잠기는 서울 한강공원, 사실 잠기라고 만든 땅입니다",
             "경복궁 뒷산은 왜 500년 동안 도끼가 금지됐을까",
-            "서울 한복판에서 대낮에 냉방을 최대로 틀지만 냉동기는 꺼져 있는 555미터 건물",
+            "서울 한복판에서 대낮에 냉방을 최대로 틀지만 냉동기는 꺼져 있는 555미터 건물"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 1,
+          "count": 32,
+          "validDurationCount": 32,
+          "durationSum": 3198,
+          "minDurationSec": 75,
+          "maxDurationSec": 139,
+          "categoryCounts": {
+            "건축·구조 원리": 12,
+            "조선·궁궐·성곽": 8,
+            "서울의 숨은 구조": 13,
+            "에너지·기후 대응": 3,
+            "물·도시 인프라": 13,
+            "고대 문명·유산": 4
+          },
+          "hookCounts": {
+            "왜 그랬을까": 14,
+            "숫자·스케일": 16,
+            "상식 뒤집기": 7,
+            "숨은 장소·장치": 8,
+            "불가능을 가능하게": 3
+          },
+          "resolutionCounts": {
+            "2160x3840": 32
+          },
+          "titles": [
             "영화 오디세이에 나오는 3300년 된 트로이 성벽이 비스듬히 누워 있는 이유",
             "창경궁의 이 연못, 조선이 판 게 아닙니다",
             "이 성벽 돌에 새겨진 600년 전 이름, 낙서가 아닙니다",
@@ -232,36 +357,7 @@
             "강남 한복판에 도둑이 500년 동안 못 뚫은 무덤이 있습니다",
             "유리도 난로도 없이 한겨울에 채소를 길러낸 조선의 온실",
             "하루에 집 2천 채가 탔습니다, 세종이 내린 답은 소방이 아니었죠",
-            "강화도는 원래 섬 하나가 아니었습니다, 사람이 붙인 겁니다"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 1,
-          "count": 32,
-          "validDurationCount": 32,
-          "durationSum": 3024,
-          "minDurationSec": 75,
-          "maxDurationSec": 116,
-          "categoryCounts": {
-            "물·도시 인프라": 19,
-            "건축·구조 원리": 8,
-            "조선·궁궐·성곽": 6,
-            "서울의 숨은 구조": 17,
-            "고대 문명·유산": 4,
-            "에너지·기후 대응": 2
-          },
-          "hookCounts": {
-            "왜 그랬을까": 13,
-            "상식 뒤집기": 7,
-            "숫자·스케일": 14,
-            "숨은 장소·장치": 7,
-            "불가능을 가능하게": 4
-          },
-          "resolutionCounts": {
-            "2160x3840": 32
-          },
-          "titles": [
+            "강화도는 원래 섬 하나가 아니었습니다, 사람이 붙인 겁니다",
             "500년 동안 홍수를 맞고도 안 무너진 서울 돌다리의 비밀",
             "산꼭대기인데 우물이 80개, 남한산성 물은 어디서 왔을까",
             "서울 광화문 지하 40m를 지금도 파 내려가는 이유",
@@ -284,7 +380,35 @@
             "한강 공사비의 20%를 강바닥에서 캐냈습니다",
             "서울에 시간당 100mm 넘는 비가 오면 안 되는 이유",
             "한강이 강이 아니라 호수인 이유",
-            "비가 제일 많이 오는데 물이 없던 섬",
+            "비가 제일 많이 오는데 물이 없던 섬"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 2,
+          "count": 32,
+          "validDurationCount": 32,
+          "durationSum": 2674,
+          "minDurationSec": 61,
+          "maxDurationSec": 105,
+          "categoryCounts": {
+            "물·도시 인프라": 17,
+            "서울의 숨은 구조": 9,
+            "건축·구조 원리": 7,
+            "조선·궁궐·성곽": 2,
+            "에너지·기후 대응": 3
+          },
+          "hookCounts": {
+            "상식 뒤집기": 5,
+            "숫자·스케일": 15,
+            "불가능을 가능하게": 4,
+            "숨은 장소·장치": 6,
+            "왜 그랬을까": 9
+          },
+          "resolutionCounts": {
+            "2160x3840": 32
+          },
+          "titles": [
             "한강 물이 수도꼭지까지 오는 데 거치는 여섯 단계",
             "도로에 구멍이 뚫리는 건 트럭 때문이 아닙니다",
             "서울 사람들이 하루에 버린 물이 전부 모이는 곳",
@@ -293,36 +417,7 @@
             "비만 오면 사라지던 모래벌판을 110일 만에 도시로 만든 방법",
             "서울 한복판 억새밭, 사실은 쓰레기 9200만 톤 위에 떠 있습니다",
             "경복궁 마당은 평평해 보이지만 사실 평평하지 않습니다",
-            "서울 지하철은 매일 수영장 70개 분량의 물을 퍼내고 있습니다"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 2,
-          "count": 32,
-          "validDurationCount": 32,
-          "durationSum": 2679,
-          "minDurationSec": 61,
-          "maxDurationSec": 105,
-          "categoryCounts": {
-            "서울의 숨은 구조": 6,
-            "건축·구조 원리": 12,
-            "조선·궁궐·성곽": 1,
-            "에너지·기후 대응": 7,
-            "물·도시 인프라": 18,
-            "고대 문명·유산": 1
-          },
-          "hookCounts": {
-            "숫자·스케일": 19,
-            "숨은 장소·장치": 5,
-            "왜 그랬을까": 11,
-            "불가능을 가능하게": 4,
-            "상식 뒤집기": 3
-          },
-          "resolutionCounts": {
-            "2160x3840": 32
-          },
-          "titles": [
+            "서울 지하철은 매일 수영장 70개 분량의 물을 퍼내고 있습니다",
             "멀쩡한 서울 고가도로를 부수고 그 밑에 개천을 다시 판 이유",
             "1,700년 전 사람들이 삽만 들고 2.6km 둑을 쌓은 방법",
             "임금이 백성 20만 명을 불러 개천 바닥 흙만 퍼낸 이유",
@@ -345,7 +440,34 @@
             "바다가 코앞까지 오자 60미터 등대를 통째로 옮겼습니다",
             "이 교회는 쌓아 올린 게 아니라 산에서 파낸 겁니다",
             "3천 년 된 신전을 천 조각으로 잘라 산 위로 옮겼습니다",
-            "폭우가 쏟아지면 고속도로가 통째로 강으로 변합니다",
+            "폭우가 쏟아지면 고속도로가 통째로 강으로 변합니다"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 3,
+          "count": 32,
+          "validDurationCount": 32,
+          "durationSum": 2613,
+          "minDurationSec": 64,
+          "maxDurationSec": 96,
+          "categoryCounts": {
+            "건축·구조 원리": 14,
+            "에너지·기후 대응": 5,
+            "고대 문명·유산": 2,
+            "물·도시 인프라": 7
+          },
+          "hookCounts": {
+            "왜 그랬을까": 5,
+            "숫자·스케일": 15,
+            "불가능을 가능하게": 1,
+            "숨은 장소·장치": 4,
+            "상식 뒤집기": 3
+          },
+          "resolutionCounts": {
+            "2160x3840": 32
+          },
+          "titles": [
             "직원 600명이 일하는 8층 건물을 통째로 돌려버린 이유",
             "공사 중에 지진이 덮쳐 다리가 80센티미터 늘어나버렸습니다",
             "에어컨 없는 대성당이 한여름에도 서늘한 이유",
@@ -354,36 +476,7 @@
             "에어컨 없이 5만 명을 시원하게 만든 로마의 방법",
             "바다를 건너던 다리가 갑자기 바닷속으로 사라집니다",
             "1만 1천 톤짜리 콘크리트가 물 위에 둥둥 떠 있습니다",
-            "바닷물이 높아지면 해저에서 철문 78개가 일어섭니다"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 3,
-          "count": 32,
-          "validDurationCount": 32,
-          "durationSum": 2474,
-          "minDurationSec": 64,
-          "maxDurationSec": 94,
-          "categoryCounts": {
-            "건축·구조 원리": 9,
-            "에너지·기후 대응": 3,
-            "물·도시 인프라": 11,
-            "서울의 숨은 구조": 3,
-            "고대 문명·유산": 1,
-            "조선·궁궐·성곽": 1
-          },
-          "hookCounts": {
-            "숨은 장소·장치": 3,
-            "숫자·스케일": 17,
-            "왜 그랬을까": 5,
-            "상식 뒤집기": 4,
-            "불가능을 가능하게": 1
-          },
-          "resolutionCounts": {
-            "2160x3840": 32
-          },
-          "titles": [
+            "바닷물이 높아지면 해저에서 철문 78개가 일어섭니다",
             "도쿄 땅속 50미터에 신전이 하나 숨어 있습니다",
             "방파제에 일부러 구멍을 숭숭 뚫어놓은 이유",
             "아무도 못 짓던 지붕, 공 하나로 끝났습니다",
@@ -406,7 +499,35 @@
             "배 한 척이 주전자 8개 전기로 하늘을 올라갑니다",
             "이 물이 마르면 세계 최대 사원이 가라앉습니다",
             "2,300년 전 기계가 아직도 하수처리장에서 돌아갑니다",
-            "13층 건물을 땅속으로 거꾸로 지었다? 인도 우물의 반전 설계",
+            "13층 건물을 땅속으로 거꾸로 지었다? 인도 우물의 반전 설계"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 4,
+          "count": 32,
+          "validDurationCount": 32,
+          "durationSum": 2417,
+          "minDurationSec": 64,
+          "maxDurationSec": 88,
+          "categoryCounts": {
+            "물·도시 인프라": 10,
+            "에너지·기후 대응": 2,
+            "건축·구조 원리": 7,
+            "조선·궁궐·성곽": 2,
+            "고대 문명·유산": 2
+          },
+          "hookCounts": {
+            "숫자·스케일": 22,
+            "불가능을 가능하게": 8,
+            "왜 그랬을까": 8,
+            "상식 뒤집기": 7,
+            "숨은 장소·장치": 2
+          },
+          "resolutionCounts": {
+            "2160x3840": 32
+          },
+          "titles": [
             "바다보다 낮은 나라가 사는 법 , 풍차 1만 개로 바다를 밀어냈다",
             "전기도 모터도 없는데 물이 산을 오릅니다 , 수격 펌프의 반전",
             "댐도 없이 2,200년째 홍수를 막는 시설이 있습니다",
@@ -415,35 +536,7 @@
             "소음을 소음으로 지운다 노이즈캔슬링의 미친 원리",
             "이 돌탑, 사실은 달력입니다  1,400년을 버틴 첨성대의 비밀",
             "10년 걸린다던 공사를 2년 9개월에 끝낸 조선판 크레인",
-            "종소리가 숨을 쉰다고? 1,200년 전 신라가 만든 소리의 비밀"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 4,
-          "count": 32,
-          "validDurationCount": 32,
-          "durationSum": 2410,
-          "minDurationSec": 43,
-          "maxDurationSec": 88,
-          "categoryCounts": {
-            "건축·구조 원리": 10,
-            "물·도시 인프라": 12,
-            "서울의 숨은 구조": 1,
-            "조선·궁궐·성곽": 1,
-            "고대 문명·유산": 2
-          },
-          "hookCounts": {
-            "상식 뒤집기": 9,
-            "불가능을 가능하게": 6,
-            "왜 그랬을까": 9,
-            "숫자·스케일": 23,
-            "숨은 장소·장치": 3
-          },
-          "resolutionCounts": {
-            "2160x3840": 32
-          },
-          "titles": [
+            "종소리가 숨을 쉰다고? 1,200년 전 신라가 만든 소리의 비밀",
             "이 곡선, 멋이 아니라 계산입니다  에펠탑이 바람을 이긴 방법",
             "연필 굵기 철사에 매달린 다리가 90년째 안 무너지는 이유",
             "5만 톤 배가 산을 넘어갑니다, 펌프 하나 없는 물의 계단",
@@ -466,7 +559,34 @@
             "난로도 없는 방바닥이 영하 20도에 절절 끓었던 이유",
             "만약 쇠 연장도 없이 종이 한 장 안 들어가는 돌벽을 만들라고 하면?",
             "만약 전기도 없이 사막 한복판에서 얼음을 얼릴 수 있다면 믿으시겠어요?",
-            "만약 펌프도 없이 물을 산꼭대기까지 올려야 한다면? 2천 년 전 로마인의 미친 해결법",
+            "만약 펌프도 없이 물을 산꼭대기까지 올려야 한다면? 2천 년 전 로마인의 미친 해결법"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 5,
+          "count": 32,
+          "validDurationCount": 32,
+          "durationSum": 1865,
+          "minDurationSec": 38,
+          "maxDurationSec": 86,
+          "categoryCounts": {
+            "건축·구조 원리": 11,
+            "물·도시 인프라": 5,
+            "고대 문명·유산": 4,
+            "에너지·기후 대응": 3
+          },
+          "hookCounts": {
+            "숫자·스케일": 8,
+            "왜 그랬을까": 9,
+            "상식 뒤집기": 7,
+            "불가능을 가능하게": 14,
+            "숨은 장소·장치": 2
+          },
+          "resolutionCounts": {
+            "2160x3840": 32
+          },
+          "titles": [
             "못 하나 없이 지은 5층 목탑, 천 년 동안 지진에도 안 무너진 진짜 이유",
             "바퀴도 없이 1500톤짜리 돌을? 250년 전 러시아가 돌 하나 옮긴 방법이 미쳤습니다",
             "천 년 전 검을 전자현미경으로 들여다봤더니.. 과학자들이 깜짝 놀란 이유",
@@ -475,35 +595,7 @@
             "2000년 전 로마인들은 펌프도 없이 물을 50km나 보냈습니다 1km에 딱 30cm",
             "기둥이 15도나 기울었는데 안 무너진다고 700년을 버텨낸 기적의 흙집, 토루!",
             "옛날 정화조는 왜 맨날 넘쳤을까 악취 싹 잡은 천재적인 원리",
-            "전기도 배터리도 없는데 온 동네를 깨운다고 손으로 돌리는 사이렌의 소름 돋는 작동 원리"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 5,
-          "count": 32,
-          "validDurationCount": 32,
-          "durationSum": 1681,
-          "minDurationSec": 38,
-          "maxDurationSec": 86,
-          "categoryCounts": {
-            "건축·구조 원리": 11,
-            "물·도시 인프라": 16,
-            "서울의 숨은 구조": 3,
-            "고대 문명·유산": 3,
-            "에너지·기후 대응": 4
-          },
-          "hookCounts": {
-            "상식 뒤집기": 7,
-            "숫자·스케일": 18,
-            "불가능을 가능하게": 9,
-            "왜 그랬을까": 7,
-            "숨은 장소·장치": 5
-          },
-          "resolutionCounts": {
-            "2160x3840": 32
-          },
-          "titles": [
+            "전기도 배터리도 없는데 온 동네를 깨운다고 손으로 돌리는 사이렌의 소름 돋는 작동 원리",
             "시멘트 한 방울 없이 쌓았는데, 지진이 두 번 와도 안 무너진 벽",
             "못이나 본드 없이 나무를 절대 안 흔들리게 고정하는 조상님들의 천재적인 방법!",
             "\"폭죽 하나 터트렸을 뿐인데...?\" 초등학생도 1분 만에 이해하는 자동차 엔진의 원리!",
@@ -526,7 +618,35 @@
             "땅을 파서 무너지는 건물을 살려낸 천재적인 해결법, 피사의 사탑",
             "팬 하나로 제트엔진을 만든 환상적인 기술! 터보제트 엔진의 놀라운 작동 원리",
             "금속을 아예 녹여서 붙여버린다고? 알고 보면 진짜 천재적인 용접의 역사",
-            "다리가 무너지지 않고 버티는 천재적인 방법! '교량 받침' 기술의 비밀",
+            "다리가 무너지지 않고 버티는 천재적인 방법! '교량 받침' 기술의 비밀"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 6,
+          "count": 32,
+          "validDurationCount": 32,
+          "durationSum": 1747,
+          "minDurationSec": 40,
+          "maxDurationSec": 72,
+          "categoryCounts": {
+            "물·도시 인프라": 8,
+            "건축·구조 원리": 14,
+            "조선·궁궐·성곽": 3,
+            "고대 문명·유산": 4
+          },
+          "hookCounts": {
+            "왜 그랬을까": 1,
+            "불가능을 가능하게": 5,
+            "상식 뒤집기": 2,
+            "숨은 장소·장치": 5,
+            "숫자·스케일": 14
+          },
+          "resolutionCounts": {
+            "2160x3840": 10,
+            "1080x1920": 22
+          },
+          "titles": [
             "수도꼭지가 진짜 똑똑해진 이유",
             "바다 한가운데에 기어코 도시를 세워버린 천재적인 아이디어",
             "자석 힘으로 스스로 움직이는 자기부상열차의 원리",
@@ -535,35 +655,7 @@
             "못 하나 없이 나무를 단단하게 잠그는 기술, 장부맞춤",
             "무거운 지붕을 문제 없이 견디는 고대 목조 건축 기술",
             "대문잠금 장치가 진화해오는 과정",
-            "물속에 다리 기둥을 세운 기발한 해결책, 코퍼댐 공법"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 6,
-          "count": 32,
-          "validDurationCount": 32,
-          "durationSum": 1692,
-          "minDurationSec": 40,
-          "maxDurationSec": 72,
-          "categoryCounts": {
-            "고대 문명·유산": 1,
-            "물·도시 인프라": 14,
-            "서울의 숨은 구조": 5,
-            "건축·구조 원리": 18,
-            "에너지·기후 대응": 1,
-            "조선·궁궐·성곽": 3
-          },
-          "hookCounts": {
-            "숫자·스케일": 30,
-            "숨은 장소·장치": 2,
-            "상식 뒤집기": 1
-          },
-          "resolutionCounts": {
-            "2160x3840": 1,
-            "1080x1920": 31
-          },
-          "titles": [
+            "물속에 다리 기둥을 세운 기발한 해결책, 코퍼댐 공법",
             "붕괴되지 않는 아치교의 숨겨진, 고대 기술자들의 능력",
             "만약 매년 거대한 태풍이 휩쓸고 가는 망망대해 한복판에 사람이 살 수 있는 인공 섬 92개를 만들어 도시를 지어야 한다면 과연 어떻게 했을까요?",
             "만약 매일 두 번씩 거대한 조수가 정면으로 들이치는 자리에 절대 무너지지 않는 돌다리를 놓아야 한다면 과연 어떻게 했을까요?",
@@ -586,7 +678,33 @@
             "만약 7톤짜리 돌 60만 개를 아파트 22층 높이까지 쌓아 탑을 만들어야 한다면 과연 어떻게 했을까요?",
             "만약 나무만으로, 파도에 부러지지 않는 세상에서 가장 긴 배를 만들어야 한다면 과연 어떻게 했을까요?",
             "만약 코끼리 22마리 무게의 돌을 바다 건너 성벽에 올려야 한다면 과연 어떻게 했을까요?",
-            "만약 적의 포격이 쏟아지는 상황에서, 강을 건너기 위해 다리를 6시간 안에 설치해야 했다면 어떻게 했을까요?",
+            "만약 적의 포격이 쏟아지는 상황에서, 강을 건너기 위해 다리를 6시간 안에 설치해야 했다면 어떻게 했을까요?"
+          ]
+        },
+        {
+          "level": "leaf",
+          "chunkIndex": 7,
+          "count": 27,
+          "validDurationCount": 27,
+          "durationSum": 1129,
+          "minDurationSec": 26,
+          "maxDurationSec": 59,
+          "categoryCounts": {
+            "물·도시 인프라": 9,
+            "고대 문명·유산": 1,
+            "건축·구조 원리": 11,
+            "조선·궁궐·성곽": 1
+          },
+          "hookCounts": {
+            "숫자·스케일": 15,
+            "숨은 장소·장치": 1,
+            "상식 뒤집기": 1,
+            "불가능을 가능하게": 1
+          },
+          "resolutionCounts": {
+            "1080x1920": 27
+          },
+          "titles": [
             "만약 갑자기 불어난 강물이 도시 성문으로 쏟아져 들어오기 전에 긴급 흙 방벽을 5일 안에 완성해야 한다면 과연 어떻게 했을까요",
             "만약 매년 강물이 넘쳐 도시가 통째로 잠기는 것을 막기 위해 흙 방벽을 10일 안에 완성해야 한다면 과연 어떻게 했을까요?",
             "만약 적군이 마실 물을 완전히 끊기 위해 임시 흙 댐을 5일 안에 완성해야 한다면 과연 어떻게 했을까요?",
@@ -595,31 +713,7 @@
             "만약 수천 명의 군대가 산을 넘기 위해 절벽길을 7일 안에 완성해야 한다면 과연 어떻게 했을까요?",
             "만약 쳐들어오는 적군을 막기 위해 목책 성벽을 열흘 안에 완성해야 한다면 과연 어떻게 했을까요?",
             "만약 100킬로미터 밖 산속 물을 도시 한복판까지 끌어오기 위해 수로를 한 달 안에 완성해야 한다면 과연 어떻게 했을까요?",
-            "만약 수만 명의 군대가 강을 건너기 위해 부교를 보름 안에 완성해야 한다면 과연 어떻게 했을까요?"
-          ]
-        },
-        {
-          "level": "leaf",
-          "chunkIndex": 7,
-          "count": 18,
-          "validDurationCount": 18,
-          "durationSum": 732,
-          "minDurationSec": 26,
-          "maxDurationSec": 59,
-          "categoryCounts": {
-            "건축·구조 원리": 9,
-            "물·도시 인프라": 6,
-            "서울의 숨은 구조": 1,
-            "에너지·기후 대응": 1
-          },
-          "hookCounts": {
-            "숫자·스케일": 9,
-            "상식 뒤집기": 1
-          },
-          "resolutionCounts": {
-            "1080x1920": 18
-          },
-          "titles": [
+            "만약 수만 명의 군대가 강을 건너기 위해 부교를 보름 안에 완성해야 한다면 과연 어떻게 했을까요?",
             "만약 수백 미터 깊이 협곡을 건너기 위해 다리를 사흘 안에 완성해야 한다면 과연 어떻게 했을까요?",
             "만약 70도로 기울어진 절벽 위에서, 벽돌을 쌓아 성을 완성해야 한다면 과연 어떻게 했을까요?",
             "만약 바닷물에 잠겨도, 2000년 동안 무너지지 않는 콘크리트를 만들어야 한다면 과연 어떻게 했을까요?",
@@ -645,28 +739,28 @@
         {
           "level": "reduce-1",
           "childCount": 8,
-          "count": 242,
-          "validDurationCount": 242,
-          "durationSum": 18173,
+          "count": 251,
+          "validDurationCount": 251,
+          "durationSum": 19130,
           "minDurationSec": 26,
           "maxDurationSec": 139,
           "categoryCounts": {
-            "건축·구조 원리": 95,
-            "물·도시 인프라": 108,
-            "서울의 숨은 구조": 49,
-            "에너지·기후 대응": 23,
-            "고대 문명·유산": 13,
-            "조선·궁궐·성곽": 18
+            "물·도시 인프라": 81,
+            "서울의 숨은 구조": 29,
+            "건축·구조 원리": 94,
+            "고대 문명·유산": 19,
+            "조선·궁궐·성곽": 19,
+            "에너지·기후 대응": 21
           },
           "hookCounts": {
-            "왜 그랬을까": 53,
-            "숫자·스케일": 147,
-            "상식 뒤집기": 42,
-            "숨은 장소·장치": 30,
-            "불가능을 가능하게": 29
+            "숫자·스케일": 112,
+            "숨은 장소·장치": 34,
+            "왜 그랬을까": 55,
+            "상식 뒤집기": 40,
+            "불가능을 가능하게": 41
           },
           "resolutionCounts": {
-            "2160x3840": 193,
+            "2160x3840": 202,
             "1080x1920": 49
           },
           "children": [
@@ -675,22 +769,22 @@
               "chunkIndex": 0,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 3481,
-              "minDurationSec": 79,
-              "maxDurationSec": 139,
+              "durationSum": 3487,
+              "minDurationSec": 88,
+              "maxDurationSec": 136,
               "categoryCounts": {
-                "건축·구조 원리": 18,
                 "물·도시 인프라": 12,
-                "서울의 숨은 구조": 13,
-                "에너지·기후 대응": 5,
-                "고대 문명·유산": 1,
-                "조선·궁궐·성곽": 6
+                "서울의 숨은 구조": 7,
+                "건축·구조 원리": 18,
+                "고대 문명·유산": 2,
+                "조선·궁궐·성곽": 3,
+                "에너지·기후 대응": 5
               },
               "hookCounts": {
-                "왜 그랬을까": 8,
-                "숫자·스케일": 17,
-                "상식 뒤집기": 10,
-                "숨은 장소·장치": 5,
+                "숫자·스케일": 7,
+                "숨은 장소·장치": 6,
+                "왜 그랬을까": 9,
+                "상식 뒤집기": 8,
                 "불가능을 가능하게": 5
               },
               "resolutionCounts": {
@@ -702,23 +796,23 @@
               "chunkIndex": 1,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 3024,
+              "durationSum": 3198,
               "minDurationSec": 75,
-              "maxDurationSec": 116,
+              "maxDurationSec": 139,
               "categoryCounts": {
-                "물·도시 인프라": 19,
-                "건축·구조 원리": 8,
-                "조선·궁궐·성곽": 6,
-                "서울의 숨은 구조": 17,
-                "고대 문명·유산": 4,
-                "에너지·기후 대응": 2
+                "건축·구조 원리": 12,
+                "조선·궁궐·성곽": 8,
+                "서울의 숨은 구조": 13,
+                "에너지·기후 대응": 3,
+                "물·도시 인프라": 13,
+                "고대 문명·유산": 4
               },
               "hookCounts": {
-                "왜 그랬을까": 13,
+                "왜 그랬을까": 14,
+                "숫자·스케일": 16,
                 "상식 뒤집기": 7,
-                "숫자·스케일": 14,
-                "숨은 장소·장치": 7,
-                "불가능을 가능하게": 4
+                "숨은 장소·장치": 8,
+                "불가능을 가능하게": 3
               },
               "resolutionCounts": {
                 "2160x3840": 32
@@ -729,23 +823,22 @@
               "chunkIndex": 2,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 2679,
+              "durationSum": 2674,
               "minDurationSec": 61,
               "maxDurationSec": 105,
               "categoryCounts": {
-                "서울의 숨은 구조": 6,
-                "건축·구조 원리": 12,
-                "조선·궁궐·성곽": 1,
-                "에너지·기후 대응": 7,
-                "물·도시 인프라": 18,
-                "고대 문명·유산": 1
+                "물·도시 인프라": 17,
+                "서울의 숨은 구조": 9,
+                "건축·구조 원리": 7,
+                "조선·궁궐·성곽": 2,
+                "에너지·기후 대응": 3
               },
               "hookCounts": {
-                "숫자·스케일": 19,
-                "숨은 장소·장치": 5,
-                "왜 그랬을까": 11,
+                "상식 뒤집기": 5,
+                "숫자·스케일": 15,
                 "불가능을 가능하게": 4,
-                "상식 뒤집기": 3
+                "숨은 장소·장치": 6,
+                "왜 그랬을까": 9
               },
               "resolutionCounts": {
                 "2160x3840": 32
@@ -756,23 +849,21 @@
               "chunkIndex": 3,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 2474,
+              "durationSum": 2613,
               "minDurationSec": 64,
-              "maxDurationSec": 94,
+              "maxDurationSec": 96,
               "categoryCounts": {
-                "건축·구조 원리": 9,
-                "에너지·기후 대응": 3,
-                "물·도시 인프라": 11,
-                "서울의 숨은 구조": 3,
-                "고대 문명·유산": 1,
-                "조선·궁궐·성곽": 1
+                "건축·구조 원리": 14,
+                "에너지·기후 대응": 5,
+                "고대 문명·유산": 2,
+                "물·도시 인프라": 7
               },
               "hookCounts": {
-                "숨은 장소·장치": 3,
-                "숫자·스케일": 17,
                 "왜 그랬을까": 5,
-                "상식 뒤집기": 4,
-                "불가능을 가능하게": 1
+                "숫자·스케일": 15,
+                "불가능을 가능하게": 1,
+                "숨은 장소·장치": 4,
+                "상식 뒤집기": 3
               },
               "resolutionCounts": {
                 "2160x3840": 32
@@ -783,22 +874,22 @@
               "chunkIndex": 4,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 2410,
-              "minDurationSec": 43,
+              "durationSum": 2417,
+              "minDurationSec": 64,
               "maxDurationSec": 88,
               "categoryCounts": {
-                "건축·구조 원리": 10,
-                "물·도시 인프라": 12,
-                "서울의 숨은 구조": 1,
-                "조선·궁궐·성곽": 1,
+                "물·도시 인프라": 10,
+                "에너지·기후 대응": 2,
+                "건축·구조 원리": 7,
+                "조선·궁궐·성곽": 2,
                 "고대 문명·유산": 2
               },
               "hookCounts": {
-                "상식 뒤집기": 9,
-                "불가능을 가능하게": 6,
-                "왜 그랬을까": 9,
-                "숫자·스케일": 23,
-                "숨은 장소·장치": 3
+                "숫자·스케일": 22,
+                "불가능을 가능하게": 8,
+                "왜 그랬을까": 8,
+                "상식 뒤집기": 7,
+                "숨은 장소·장치": 2
               },
               "resolutionCounts": {
                 "2160x3840": 32
@@ -809,22 +900,21 @@
               "chunkIndex": 5,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 1681,
+              "durationSum": 1865,
               "minDurationSec": 38,
               "maxDurationSec": 86,
               "categoryCounts": {
                 "건축·구조 원리": 11,
-                "물·도시 인프라": 16,
-                "서울의 숨은 구조": 3,
-                "고대 문명·유산": 3,
-                "에너지·기후 대응": 4
+                "물·도시 인프라": 5,
+                "고대 문명·유산": 4,
+                "에너지·기후 대응": 3
               },
               "hookCounts": {
+                "숫자·스케일": 8,
+                "왜 그랬을까": 9,
                 "상식 뒤집기": 7,
-                "숫자·스케일": 18,
-                "불가능을 가능하게": 9,
-                "왜 그랬을까": 7,
-                "숨은 장소·장치": 5
+                "불가능을 가능하게": 14,
+                "숨은 장소·장치": 2
               },
               "resolutionCounts": {
                 "2160x3840": 32
@@ -835,47 +925,49 @@
               "chunkIndex": 6,
               "count": 32,
               "validDurationCount": 32,
-              "durationSum": 1692,
+              "durationSum": 1747,
               "minDurationSec": 40,
               "maxDurationSec": 72,
               "categoryCounts": {
-                "고대 문명·유산": 1,
-                "물·도시 인프라": 14,
-                "서울의 숨은 구조": 5,
-                "건축·구조 원리": 18,
-                "에너지·기후 대응": 1,
-                "조선·궁궐·성곽": 3
+                "물·도시 인프라": 8,
+                "건축·구조 원리": 14,
+                "조선·궁궐·성곽": 3,
+                "고대 문명·유산": 4
               },
               "hookCounts": {
-                "숫자·스케일": 30,
-                "숨은 장소·장치": 2,
-                "상식 뒤집기": 1
+                "왜 그랬을까": 1,
+                "불가능을 가능하게": 5,
+                "상식 뒤집기": 2,
+                "숨은 장소·장치": 5,
+                "숫자·스케일": 14
               },
               "resolutionCounts": {
-                "2160x3840": 1,
-                "1080x1920": 31
+                "2160x3840": 10,
+                "1080x1920": 22
               }
             },
             {
               "level": "leaf",
               "chunkIndex": 7,
-              "count": 18,
-              "validDurationCount": 18,
-              "durationSum": 732,
+              "count": 27,
+              "validDurationCount": 27,
+              "durationSum": 1129,
               "minDurationSec": 26,
               "maxDurationSec": 59,
               "categoryCounts": {
-                "건축·구조 원리": 9,
-                "물·도시 인프라": 6,
-                "서울의 숨은 구조": 1,
-                "에너지·기후 대응": 1
+                "물·도시 인프라": 9,
+                "고대 문명·유산": 1,
+                "건축·구조 원리": 11,
+                "조선·궁궐·성곽": 1
               },
               "hookCounts": {
-                "숫자·스케일": 9,
-                "상식 뒤집기": 1
+                "숫자·스케일": 15,
+                "숨은 장소·장치": 1,
+                "상식 뒤집기": 1,
+                "불가능을 가능하게": 1
               },
               "resolutionCounts": {
-                "1080x1920": 18
+                "1080x1920": 27
               }
             }
           ]
@@ -885,28 +977,28 @@
     "root": {
       "level": "reduce-1",
       "childCount": 8,
-      "count": 242,
-      "validDurationCount": 242,
-      "durationSum": 18173,
+      "count": 251,
+      "validDurationCount": 251,
+      "durationSum": 19130,
       "minDurationSec": 26,
       "maxDurationSec": 139,
       "categoryCounts": {
-        "건축·구조 원리": 95,
-        "물·도시 인프라": 108,
-        "서울의 숨은 구조": 49,
-        "에너지·기후 대응": 23,
-        "고대 문명·유산": 13,
-        "조선·궁궐·성곽": 18
+        "물·도시 인프라": 81,
+        "서울의 숨은 구조": 29,
+        "건축·구조 원리": 94,
+        "고대 문명·유산": 19,
+        "조선·궁궐·성곽": 19,
+        "에너지·기후 대응": 21
       },
       "hookCounts": {
-        "왜 그랬을까": 53,
-        "숫자·스케일": 147,
-        "상식 뒤집기": 42,
-        "숨은 장소·장치": 30,
-        "불가능을 가능하게": 29
+        "숫자·스케일": 112,
+        "숨은 장소·장치": 34,
+        "왜 그랬을까": 55,
+        "상식 뒤집기": 40,
+        "불가능을 가능하게": 41
       },
       "resolutionCounts": {
-        "2160x3840": 193,
+        "2160x3840": 202,
         "1080x1920": 49
       },
       "children": [
@@ -915,22 +1007,22 @@
           "chunkIndex": 0,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 3481,
-          "minDurationSec": 79,
-          "maxDurationSec": 139,
+          "durationSum": 3487,
+          "minDurationSec": 88,
+          "maxDurationSec": 136,
           "categoryCounts": {
-            "건축·구조 원리": 18,
             "물·도시 인프라": 12,
-            "서울의 숨은 구조": 13,
-            "에너지·기후 대응": 5,
-            "고대 문명·유산": 1,
-            "조선·궁궐·성곽": 6
+            "서울의 숨은 구조": 7,
+            "건축·구조 원리": 18,
+            "고대 문명·유산": 2,
+            "조선·궁궐·성곽": 3,
+            "에너지·기후 대응": 5
           },
           "hookCounts": {
-            "왜 그랬을까": 8,
-            "숫자·스케일": 17,
-            "상식 뒤집기": 10,
-            "숨은 장소·장치": 5,
+            "숫자·스케일": 7,
+            "숨은 장소·장치": 6,
+            "왜 그랬을까": 9,
+            "상식 뒤집기": 8,
             "불가능을 가능하게": 5
           },
           "resolutionCounts": {
@@ -942,23 +1034,23 @@
           "chunkIndex": 1,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 3024,
+          "durationSum": 3198,
           "minDurationSec": 75,
-          "maxDurationSec": 116,
+          "maxDurationSec": 139,
           "categoryCounts": {
-            "물·도시 인프라": 19,
-            "건축·구조 원리": 8,
-            "조선·궁궐·성곽": 6,
-            "서울의 숨은 구조": 17,
-            "고대 문명·유산": 4,
-            "에너지·기후 대응": 2
+            "건축·구조 원리": 12,
+            "조선·궁궐·성곽": 8,
+            "서울의 숨은 구조": 13,
+            "에너지·기후 대응": 3,
+            "물·도시 인프라": 13,
+            "고대 문명·유산": 4
           },
           "hookCounts": {
-            "왜 그랬을까": 13,
+            "왜 그랬을까": 14,
+            "숫자·스케일": 16,
             "상식 뒤집기": 7,
-            "숫자·스케일": 14,
-            "숨은 장소·장치": 7,
-            "불가능을 가능하게": 4
+            "숨은 장소·장치": 8,
+            "불가능을 가능하게": 3
           },
           "resolutionCounts": {
             "2160x3840": 32
@@ -969,23 +1061,22 @@
           "chunkIndex": 2,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 2679,
+          "durationSum": 2674,
           "minDurationSec": 61,
           "maxDurationSec": 105,
           "categoryCounts": {
-            "서울의 숨은 구조": 6,
-            "건축·구조 원리": 12,
-            "조선·궁궐·성곽": 1,
-            "에너지·기후 대응": 7,
-            "물·도시 인프라": 18,
-            "고대 문명·유산": 1
+            "물·도시 인프라": 17,
+            "서울의 숨은 구조": 9,
+            "건축·구조 원리": 7,
+            "조선·궁궐·성곽": 2,
+            "에너지·기후 대응": 3
           },
           "hookCounts": {
-            "숫자·스케일": 19,
-            "숨은 장소·장치": 5,
-            "왜 그랬을까": 11,
+            "상식 뒤집기": 5,
+            "숫자·스케일": 15,
             "불가능을 가능하게": 4,
-            "상식 뒤집기": 3
+            "숨은 장소·장치": 6,
+            "왜 그랬을까": 9
           },
           "resolutionCounts": {
             "2160x3840": 32
@@ -996,23 +1087,21 @@
           "chunkIndex": 3,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 2474,
+          "durationSum": 2613,
           "minDurationSec": 64,
-          "maxDurationSec": 94,
+          "maxDurationSec": 96,
           "categoryCounts": {
-            "건축·구조 원리": 9,
-            "에너지·기후 대응": 3,
-            "물·도시 인프라": 11,
-            "서울의 숨은 구조": 3,
-            "고대 문명·유산": 1,
-            "조선·궁궐·성곽": 1
+            "건축·구조 원리": 14,
+            "에너지·기후 대응": 5,
+            "고대 문명·유산": 2,
+            "물·도시 인프라": 7
           },
           "hookCounts": {
-            "숨은 장소·장치": 3,
-            "숫자·스케일": 17,
             "왜 그랬을까": 5,
-            "상식 뒤집기": 4,
-            "불가능을 가능하게": 1
+            "숫자·스케일": 15,
+            "불가능을 가능하게": 1,
+            "숨은 장소·장치": 4,
+            "상식 뒤집기": 3
           },
           "resolutionCounts": {
             "2160x3840": 32
@@ -1023,22 +1112,22 @@
           "chunkIndex": 4,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 2410,
-          "minDurationSec": 43,
+          "durationSum": 2417,
+          "minDurationSec": 64,
           "maxDurationSec": 88,
           "categoryCounts": {
-            "건축·구조 원리": 10,
-            "물·도시 인프라": 12,
-            "서울의 숨은 구조": 1,
-            "조선·궁궐·성곽": 1,
+            "물·도시 인프라": 10,
+            "에너지·기후 대응": 2,
+            "건축·구조 원리": 7,
+            "조선·궁궐·성곽": 2,
             "고대 문명·유산": 2
           },
           "hookCounts": {
-            "상식 뒤집기": 9,
-            "불가능을 가능하게": 6,
-            "왜 그랬을까": 9,
-            "숫자·스케일": 23,
-            "숨은 장소·장치": 3
+            "숫자·스케일": 22,
+            "불가능을 가능하게": 8,
+            "왜 그랬을까": 8,
+            "상식 뒤집기": 7,
+            "숨은 장소·장치": 2
           },
           "resolutionCounts": {
             "2160x3840": 32
@@ -1049,22 +1138,21 @@
           "chunkIndex": 5,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 1681,
+          "durationSum": 1865,
           "minDurationSec": 38,
           "maxDurationSec": 86,
           "categoryCounts": {
             "건축·구조 원리": 11,
-            "물·도시 인프라": 16,
-            "서울의 숨은 구조": 3,
-            "고대 문명·유산": 3,
-            "에너지·기후 대응": 4
+            "물·도시 인프라": 5,
+            "고대 문명·유산": 4,
+            "에너지·기후 대응": 3
           },
           "hookCounts": {
+            "숫자·스케일": 8,
+            "왜 그랬을까": 9,
             "상식 뒤집기": 7,
-            "숫자·스케일": 18,
-            "불가능을 가능하게": 9,
-            "왜 그랬을까": 7,
-            "숨은 장소·장치": 5
+            "불가능을 가능하게": 14,
+            "숨은 장소·장치": 2
           },
           "resolutionCounts": {
             "2160x3840": 32
@@ -1075,47 +1163,49 @@
           "chunkIndex": 6,
           "count": 32,
           "validDurationCount": 32,
-          "durationSum": 1692,
+          "durationSum": 1747,
           "minDurationSec": 40,
           "maxDurationSec": 72,
           "categoryCounts": {
-            "고대 문명·유산": 1,
-            "물·도시 인프라": 14,
-            "서울의 숨은 구조": 5,
-            "건축·구조 원리": 18,
-            "에너지·기후 대응": 1,
-            "조선·궁궐·성곽": 3
+            "물·도시 인프라": 8,
+            "건축·구조 원리": 14,
+            "조선·궁궐·성곽": 3,
+            "고대 문명·유산": 4
           },
           "hookCounts": {
-            "숫자·스케일": 30,
-            "숨은 장소·장치": 2,
-            "상식 뒤집기": 1
+            "왜 그랬을까": 1,
+            "불가능을 가능하게": 5,
+            "상식 뒤집기": 2,
+            "숨은 장소·장치": 5,
+            "숫자·스케일": 14
           },
           "resolutionCounts": {
-            "2160x3840": 1,
-            "1080x1920": 31
+            "2160x3840": 10,
+            "1080x1920": 22
           }
         },
         {
           "level": "leaf",
           "chunkIndex": 7,
-          "count": 18,
-          "validDurationCount": 18,
-          "durationSum": 732,
+          "count": 27,
+          "validDurationCount": 27,
+          "durationSum": 1129,
           "minDurationSec": 26,
           "maxDurationSec": 59,
           "categoryCounts": {
-            "건축·구조 원리": 9,
-            "물·도시 인프라": 6,
-            "서울의 숨은 구조": 1,
-            "에너지·기후 대응": 1
+            "물·도시 인프라": 9,
+            "고대 문명·유산": 1,
+            "건축·구조 원리": 11,
+            "조선·궁궐·성곽": 1
           },
           "hookCounts": {
-            "숫자·스케일": 9,
-            "상식 뒤집기": 1
+            "숫자·스케일": 15,
+            "숨은 장소·장치": 1,
+            "상식 뒤집기": 1,
+            "불가능을 가능하게": 1
           },
           "resolutionCounts": {
-            "1080x1920": 18
+            "1080x1920": 27
           }
         }
       ]

@@ -1,6 +1,7 @@
 node_modules/
 workspace/
 artifacts/
+.gjc/
 .DS_Store
 .env
 .env.*

@@ -94,6 +94,9 @@ export async function analyzeBenchmarkRLM(options = {}) {
     const wordTimingRates = analyzed.map((item) => item.captions.count > 0 ? item.captions.wordTimingCount / item.captions.count : null).filter(Number.isFinite);
     mediaEvidence = {
       sampleCount: analyzed.length,
+      audioSampleCount: analyzed.filter((item) => item.media.hasAudio && item.media.audioStreamCount > 0).length,
+      captionSampleCount: analyzed.filter((item) => item.captions.count > 0).length,
+      measuredAudioQcCount: analyzed.filter((item) => item.audio?.audioQc?.status === "measured").length,
       averageDurationSec: analyzed.length ? Number((analyzed.reduce((sum, item) => sum + item.media.durationSec, 0) / analyzed.length).toFixed(2)) : null,
       averageFps: analyzed.length ? Number((analyzed.reduce((sum, item) => sum + item.media.fps, 0) / analyzed.length).toFixed(2)) : null,
       averageSceneCuts: analyzed.length ? Number((analyzed.reduce((sum, item) => sum + item.frames.sceneCutCount, 0) / analyzed.length).toFixed(2)) : null,
@@ -106,7 +109,7 @@ export async function analyzeBenchmarkRLM(options = {}) {
       evidence: analyzed.map((item) => ({ durationSec: item.media.durationSec, frameCount: item.frames.frameCountObserved, sceneCutCount: item.frames.sceneCutCount, silenceCount: item.audio.silenceCount, captionCount: item.captions.count, captionCuesPerMinute: item.media.durationSec > 0 ? Number((item.captions.count * 60 / item.media.durationSec).toFixed(2)) : null, wordTimingCoverage: item.captions.count > 0 ? Number((item.captions.wordTimingCount / item.captions.count).toFixed(3)) : null }))
     };
   } catch {
-    mediaEvidence = { sampleCount: 0, evidence: [], status: "no local benchmark media captured" };
+    mediaEvidence = { sampleCount: 0, audioSampleCount: 0, captionSampleCount: 0, measuredAudioQcCount: 0, evidence: [], status: "no local benchmark media captured" };
   }
   const result = {
     schemaVersion: 1,

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "jobId": "bfl-contract-test",
+  "runId": "run-contract-test",
+  "provider": "local-video",
+  "topic": "A safe architecture documentary",
+  "format": "vertical",
+  "targetDurationSec": 10,
+  "targetDurationRangeSec": [10, 20],
+  "segments": [
+    {
+      "index": 1,
+      "durationHint": 5,
+      "prompt": "A wide establishing shot of a sustainable tower at sunrise",
+      "visualPrompt": "A wide establishing shot of a sustainable tower at sunrise",
+      "caption": "A new skyline",
+      "narration": "A new skyline begins here."
+    },
+    {
+      "index": 2,
+      "durationHint": 5,
+      "prompt": "A slow dolly through the tower's timber atrium",
+      "visualPrompt": "A slow dolly through the tower's timber atrium",
+      "caption": "Built from timber",
+      "narration": "The structure uses engineered timber."
+    }
+  ],
+  "requestHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "scriptHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

@@ -16,8 +16,10 @@ async function run(command, args) {
   const path = binary(command);
   if (!path) throw new Error(`${command}가 설치되어 있지 않습니다.`);
   const processHandle = Bun.spawn([path, ...args], { stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr] = await Promise.all([new Response(processHandle.stdout).text(), new Response(processHandle.stderr).text()]);
+  const stdoutPromise = new Response(processHandle.stdout).text();
+  const stderrPromise = new Response(processHandle.stderr).text();
   const code = await processHandle.exited;
+  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
   if (code !== 0) throw new Error(`${command} 실행 실패 (${code}): ${(stderr || stdout).trim().slice(-1200)}`);
   return { stdout, stderr };
 }
@@ -211,11 +213,31 @@ async function readBenchmarkProfile(path = null) {
   }
 }
 
-export function compareDuration(durationSec, profile) {
-  const summary = profile?.summary;
+export function compareDuration(durationSec, profile, expected = null) {
+  const expectedRange = Array.isArray(expected?.rangeSec) && expected.rangeSec.length === 2
+    ? expected.rangeSec.map(Number)
+    : null;
+  const expectedTarget = Number(expected?.targetSec);
+  if (
+    Number.isFinite(durationSec)
+    && Number.isFinite(expectedTarget)
+    && expectedRange?.every(Number.isFinite)
+    && expectedRange[0] >= 0
+    && expectedRange[1] >= expectedRange[0]
+  ) {
+    return {
+      available: true,
+      source: "job-bound-target",
+      targetSec: expectedTarget,
+      rangeSec: expectedRange,
+      deltaFromTargetSec: Number((durationSec - expectedTarget).toFixed(2)),
+      insideRecommendedRange: durationSec >= expectedRange[0] && durationSec <= expectedRange[1]
+    };
+  }
+  const summary = profile?.recentSummary || profile?.summary;
   if (!summary || !Number.isFinite(durationSec)) return { available: false };
   const range = summary.recommendedRangeSec || [summary.p10Sec, summary.p90Sec];
-  return { available: true, targetSec: summary.recommendedTargetSec, rangeSec: range, deltaFromMedianSec: Number((durationSec - summary.medianSec).toFixed(2)), insideP10P90: durationSec >= summary.p10Sec && durationSec <= summary.p90Sec, insideRecommendedRange: durationSec >= range[0] && durationSec <= range[1] };
+  return { available: true, source: profile?.recentSummary ? "benchmark-recent" : "benchmark-overall", targetSec: summary.recommendedTargetSec, rangeSec: range, deltaFromMedianSec: Number((durationSec - summary.medianSec).toFixed(2)), insideP10P90: durationSec >= summary.p10Sec && durationSec <= summary.p90Sec, insideRecommendedRange: durationSec >= range[0] && durationSec <= range[1] };
 }
 
 export async function analyzeVideo(path, options = {}) {
@@ -231,7 +253,7 @@ export async function analyzeVideo(path, options = {}) {
   };
   const benchmark = await readBenchmarkProfile(options.benchmarkPath);
   const cutReconciliation = reconcileCuts(frames.sceneCuts || [], options.expectedCutTimes || []);
-  return { schemaVersion: 1, analyzedAt: new Date().toISOString(), runId: options.runId || null, file: path, media, frames, audio, captions, cutReconciliation, benchmarkDuration: compareDuration(media.durationSec, benchmark) };
+  return { schemaVersion: 1, analyzedAt: new Date().toISOString(), runId: options.runId || null, file: path, media, frames, audio, captions, cutReconciliation, benchmarkDuration: compareDuration(media.durationSec, benchmark, options.expectedDuration) };
 }
 
 export async function analyzeJobMedia(jobDir, options = {}) {

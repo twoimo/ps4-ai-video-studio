@@ -72,9 +72,10 @@ async function runGenerator(generator, input) {
   }
   let timer;
   let timedOut = false;
+  const exitPromise = processHandle.exited;
   try {
     const exitCode = await Promise.race([
-      processHandle.exited,
+      exitPromise,
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           timedOut = true;

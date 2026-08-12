@@ -1,22 +1,112 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { JOBS_DIR } from "./pipeline.mjs";
 import { hashFile } from "./run-ledger.mjs";
+import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
 
 const DEFAULT_CDP = process.env.CHROME_CDP_URL || "http://127.0.0.1:9222";
 const PROFILE_DIR = process.env.CHROME_PROFILE_DIR || join(process.env.HOME || "/tmp", ".ps4-ai-video-studio", "chrome-profile");
 const DOWNLOAD_TIMEOUT_MS = Math.max(60_000, Number(process.env.GEMINI_VIDEO_TIMEOUT_MS || 600_000));
+const MIN_NEW_HEADLESS_CHROME_MAJOR = 109;
+
 function browserConfig(input = {}) {
+  const cdpUrl = String(input.cdpUrl || DEFAULT_CDP).replace(/\/$/, "");
+  const profileDir = resolve(String(input.profileDir || PROFILE_DIR));
+  const profileRoot = resolve(process.env.HOME || "/tmp", ".ps4-ai-video-studio");
+  let parsed;
+  try {
+    parsed = new URL(cdpUrl);
+  } catch {
+    throw new Error("Gemini CDP 주소가 올바르지 않습니다.");
+  }
+  if (
+    parsed.protocol !== "http:"
+    || !["127.0.0.1", "localhost"].includes(parsed.hostname)
+    || !parsed.port
+    || parsed.pathname !== "/"
+    || parsed.search
+    || parsed.hash
+    || parsed.username
+    || parsed.password
+  ) {
+    throw new Error("Gemini CDP는 경로·인증 정보가 없는 로컬 HTTP origin만 사용할 수 있습니다.");
+  }
+  if (profileDir !== profileRoot && !profileDir.startsWith(`${profileRoot}/`)) {
+    throw new Error("Gemini Chrome 프로필은 PS4 Studio 전용 프로필 디렉터리 안에 있어야 합니다.");
+  }
   return {
-    cdpUrl: String(input.cdpUrl || DEFAULT_CDP).replace(/\/$/, ""),
-    profileDir: String(input.profileDir || PROFILE_DIR)
+    cdpUrl: parsed.origin,
+    profileDir
   };
 }
-function headlessEnabled() {
-  return /^(1|true|yes)$/i.test(process.env.GEMINI_CHROME_HEADLESS || "");
+
+export function configuredGeminiJobProfile() {
+  const config = browserConfig();
+  return { geminiCdpUrl: config.cdpUrl, geminiProfileDir: config.profileDir };
+}
+function optionalBoolean(value, name, fallback) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  throw new Error(`${name}에는 1/0, true/false, yes/no 또는 on/off만 사용할 수 있습니다.`);
+}
+
+export function resolveGeminiChromeLaunchPolicy(environment = process.env) {
+  const headless = optionalBoolean(environment.GEMINI_CHROME_HEADLESS, "GEMINI_CHROME_HEADLESS", true);
+  const background = !headless && optionalBoolean(environment.GEMINI_CHROME_BACKGROUND, "GEMINI_CHROME_BACKGROUND", false);
+  return {
+    headless,
+    background,
+    mode: headless ? "headless" : background ? "background" : "visible",
+    headlessImplementation: headless ? "new" : null
+  };
+}
+
+export function geminiChromeMajorVersion(version) {
+  const match = `${version?.Browser || ""} ${version?.["User-Agent"] || ""}`.match(/(?:HeadlessChrome|Chrome|Chromium)\/(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+export function isHeadlessChromeVersion(version) {
+  return /HeadlessChrome\//i.test(`${version?.Browser || ""} ${version?.["User-Agent"] || ""}`);
+}
+
+export function assertGeminiChromeRuntime(version, policy = resolveGeminiChromeLaunchPolicy()) {
+  const chromeMajor = geminiChromeMajorVersion(version);
+  if (!Number.isInteger(chromeMajor)) {
+    throw new Error("연결된 CDP endpoint가 지원되는 Chrome/Chromium인지 확인할 수 없습니다.");
+  }
+  if (policy.headless && chromeMajor < MIN_NEW_HEADLESS_CHROME_MAJOR) {
+    throw new Error(`새 Chrome 헤드리스 모드는 Chrome ${MIN_NEW_HEADLESS_CHROME_MAJOR} 이상이 필요합니다. 현재 감지 버전: ${chromeMajor}`);
+  }
+  const actualHeadless = isHeadlessChromeVersion(version);
+  if (actualHeadless !== policy.headless) {
+    const requested = policy.headless ? "headless" : policy.mode;
+    const actual = actualHeadless ? "headless" : "headed";
+    throw new Error(`Gemini Chrome 모드 불일치: ${requested}를 요청했지만 CDP 포트에는 ${actual} Chrome이 연결되어 있습니다. 전용 Chrome을 완전히 종료한 뒤 같은 프로필로 다시 시작하세요.`);
+  }
+  return { chromeMajor, actualHeadless, mode: policy.mode };
+}
+
+export function buildGeminiChromeLaunchArgs(input = {}, environment = process.env) {
+  const config = browserConfig(input);
+  const policy = resolveGeminiChromeLaunchPolicy(environment);
+  const cdpPort = new URL(config.cdpUrl).port;
+  const chromeArgs = [
+    `--remote-debugging-address=127.0.0.1`,
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${config.profileDir}`,
+    "--no-first-run",
+    "--no-default-browser-check"
+  ];
+  if (policy.headless) chromeArgs.push("--headless=new", "--window-size=1440,1200");
+  else if (policy.background) chromeArgs.push("--no-startup-window");
+  chromeArgs.push("https://gemini.google.com/app");
+  return chromeArgs;
 }
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -88,7 +178,7 @@ async function clipMatchesFormat(filePath, format) {
 }
 
 async function getVersion(baseUrl = DEFAULT_CDP) {
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/json/version`);
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/json/version`, { signal: AbortSignal.timeout(2500) });
   if (!response.ok) throw new Error(`Chrome DevTools 연결 실패 (${response.status})`);
   return response.json();
 }
@@ -111,23 +201,19 @@ async function startChrome(input = {}) {
   if (!binary) throw new Error("Google Chrome 또는 Chromium을 찾지 못했습니다.");
   const cdpPort = new URL(config.cdpUrl).port || "9222";
   await mkdir(config.profileDir, { recursive: true });
-  const chromeArgs = [
-    `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${config.profileDir}`,
-    "--no-first-run",
-    "--no-default-browser-check"
-  ];
-  if (headlessEnabled()) chromeArgs.push("--headless=new", "--disable-gpu", "--no-startup-window");
-  else if (process.env.GEMINI_CHROME_BACKGROUND !== "0") chromeArgs.push("--no-startup-window");
-  chromeArgs.push("https://gemini.google.com/app");
+  const chromeArgs = buildGeminiChromeLaunchArgs(config);
   browserProcess = spawn(binary, chromeArgs, { detached: true, stdio: "ignore" });
   browserProcess.unref();
   for (let attempt = 0; attempt < 40; attempt += 1) {
+    let version;
     try {
-      return await getVersion(config.cdpUrl);
+      version = await getVersion(config.cdpUrl);
     } catch {
       await sleep(500);
+      continue;
     }
+    assertGeminiChromeRuntime(version);
+    return version;
   }
   throw new Error(`Chrome 원격 디버깅 포트(${cdpPort})를 열지 못했습니다.`);
 }
@@ -150,6 +236,7 @@ class CdpBrowser {
       const request = this.pending.get(message.id);
       if (!request) return;
       this.pending.delete(message.id);
+      clearTimeout(request.timeout);
       if (message.error) request.reject(new Error(message.error.message || "Chrome DevTools 오류"));
       else request.resolve(message.result);
     });
@@ -177,11 +264,12 @@ class CdpBrowser {
     this.ws.send(JSON.stringify(message));
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (!this.pending.has(id)) return;
         this.pending.delete(id);
         reject(new Error(`Chrome 명령 시간 초과: ${method}`));
       }, 30000);
+      this.pending.get(id).timeout = timeout;
     });
   }
 
@@ -205,6 +293,11 @@ class CdpBrowser {
     try {
       if (this.targetId) await this.command("Target.closeTarget", { targetId: this.targetId });
     } catch {}
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timeout);
+      request.reject(new Error("Chrome DevTools 세션이 닫혔습니다."));
+    }
+    this.pending.clear();
     try { this.ws?.close(); } catch {}
   }
 }
@@ -217,6 +310,7 @@ async function connectBrowser(input = {}) {
   } catch {
     version = await startChrome(config);
   }
+  assertGeminiChromeRuntime(version);
   const browser = new CdpBrowser(version, config.cdpUrl);
   await browser.connect();
   return browser;
@@ -252,6 +346,8 @@ async function clickVideoTool(browser, format = "vertical") {
       body = (document.body?.innerText || "").slice(-6000);
       if (quotaPattern.test(body)) return { clicked: false, quota: true, body };
       buttons = [...document.querySelectorAll('button,[role="button"],[role="menuitem"],a,div[role="option"]')].filter(visible);
+      const signIn = buttons.find((el) => /로그인|sign in/i.test(text(el)) && /accounts\.google\.com/i.test(el.href || el.closest('a')?.href || ''));
+      if (signIn) return { clicked: false, authRequired: true };
       const fields = [...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(visible);
       if (/동영상 만들기|create videos?/i.test(body) && fields.length) {
         const ratioConfigured = await chooseRatio();
@@ -428,12 +524,34 @@ async function waitForClip(browser, knownMedia, deadline) {
 
 
 export async function geminiBrowserStatus(input = {}) {
-  const config = browserConfig(input);
+  let config = null;
+  let version = null;
+  let policy = null;
   try {
-    const version = await getVersion(config.cdpUrl);
-    return { connected: true, browser: version.Browser || "Chrome", headless: /HeadlessChrome/i.test(String(version["User-Agent"] || "")), cdpUrl: config.cdpUrl, profileDir: config.profileDir };
+    config = browserConfig(input);
+    policy = resolveGeminiChromeLaunchPolicy();
+    version = await getVersion(config.cdpUrl);
+    const runtime = assertGeminiChromeRuntime(version, policy);
+    return {
+      connected: true,
+      browser: version.Browser || "Chrome",
+      chromeMajor: runtime.chromeMajor,
+      headless: runtime.actualHeadless,
+      requestedHeadless: policy.headless,
+      mode: runtime.mode,
+      cdpUrl: config.cdpUrl,
+      profileDir: config.profileDir
+    };
   } catch (error) {
-    return { connected: false, browser: null, headless: null, cdpUrl: config.cdpUrl, profileDir: config.profileDir, message: error.message };
+    return {
+      connected: false,
+      browser: version?.Browser || null,
+      headless: version ? isHeadlessChromeVersion(version) : null,
+      requestedHeadless: policy?.headless ?? null,
+      cdpUrl: config?.cdpUrl || null,
+      profileDir: config?.profileDir || null,
+      message: error.message
+    };
   }
 }
 
@@ -447,13 +565,15 @@ export async function geminiQuotaStatus(input = {}) {
       const body = document.body?.innerText || "";
       const quotaMessage = body.match(/(?:지금은\\s*)?동영상을 생성할 수 없습니다[^.。\\n]*|동영상 생성 할당량[^.。\\n]*|you(?:'|’)re out of videos[^.\\n]*|videos will be available again[^.\\n]*/i)?.[0] || null;
       const quotaResetText = body.match(/[^\\n]*(?:다시 생성할 수 있습니다|videos will be available again)[^\\n]*/i)?.[0]?.trim() || null;
-      const account = [...document.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label") || "").find((value) => /Google Account:/i.test(value)) || null;
+      const account = [...document.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label") || "").find((value) => /Google (?:Account|계정)(?::|\\s)/i.test(value)) || null;
+      const signInRequired = [...document.querySelectorAll("a,button,[role='button']")].some((el) => /로그인|sign in/i.test([el.innerText, el.getAttribute('aria-label')].filter(Boolean).join(' ')) && /accounts\\.google\\.com/i.test(el.href || el.closest('a')?.href || ''));
       const videoMode = /동영상 만들기|create videos?/i.test(body);
       return {
-        available: videoMode && !quotaMessage,
+        available: videoMode && !quotaMessage && !signInRequired,
         quotaMessage,
         quotaResetText,
         account,
+        authentication: account ? "authenticated" : signInRequired ? "sign-in-required" : "unknown",
         plan: body.match(/\\b(?:Pro|Plus|Ultra)\\b/)?.[0] || null,
         videoMode,
         bodyExcerpt: body.slice(-1200)
@@ -464,7 +584,8 @@ export async function geminiQuotaStatus(input = {}) {
       observedAt: new Date().toISOString(),
       cdpUrl: config.cdpUrl,
       profileDir: config.profileDir,
-      headless: /HeadlessChrome/i.test(String(browser.version["User-Agent"] || "")),
+      headless: isHeadlessChromeVersion(browser.version),
+      requestedHeadless: resolveGeminiChromeLaunchPolicy().headless,
       ...observation
     };
   } catch (error) {
@@ -489,7 +610,9 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   const clipsDir = join(jobDir, "clips");
   const requestPayload = generationRequest(job, script);
   const scriptHash = hashJson(script);
-  const actualHeadless = /HeadlessChrome/i.test(String(browser.version["User-Agent"] || ""));
+  const launchPolicy = resolveGeminiChromeLaunchPolicy();
+  const runtime = assertGeminiChromeRuntime(browser.version, launchPolicy);
+  const actualHeadless = runtime.actualHeadless;
   const requestHash = hashJson({ ...requestPayload, scriptHash });
   const providerDecision = {
     requested: "gemini-browser",
@@ -498,15 +621,20 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     policy: "no-local-video-fallback"
   };
   const providerDecisionHash = hashJson(providerDecision);
+  const sessionBinding = canonicalGeminiSessionBinding(job);
+  const sessionBindingHash = geminiSessionBindingHash(job);
+  if (!sessionBinding || !sessionBindingHash) throw new Error("Gemini 실행 세션을 안전하게 결속할 수 없습니다.");
   const providerAttestation = {
     type: "gemini-chrome-session",
     provider: "gemini-browser",
     browser: browser.version.Browser || null,
-    cdpUrl: config.cdpUrl,
-    profileDir: config.profileDir,
+    sessionBinding,
+    sessionBindingHash,
     persistentProfile: true,
     headless: actualHeadless,
-    headlessRequested: headlessEnabled(),
+    headlessRequested: launchPolicy.headless,
+    chromeMajor: runtime.chromeMajor,
+    headlessImplementation: launchPolicy.headlessImplementation,
     fallbackUsed: false
   };
   const providerAttestationHash = hashJson(providerAttestation);
@@ -520,11 +648,11 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   }
   const previousSegments = new Map((previousGeneration?.segments || []).map((segment) => [segment.index, segment]));
   const generation = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     jobId: job.id,
     provider: "gemini-browser",
-    profileDir: config.profileDir,
-    cdpUrl: config.cdpUrl,
+    sessionBinding,
+    sessionBindingHash,
     browser: browser.version.Browser || null,
     startedAt: new Date().toISOString(),
     status: "running",
@@ -544,11 +672,11 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   await mkdir(clipsDir, { recursive: true });
   const bindingMatches = previousGeneration?.requestHash === requestHash
     && previousGeneration?.scriptHash === scriptHash;
-  const sessionBinding = previousGeneration?.provider === "gemini-browser"
+  const resumeSessionMatches = previousGeneration?.provider === "gemini-browser"
     && previousGeneration.providerDecisionHash === providerDecisionHash
     && previousGeneration.providerAttestationHash === providerAttestationHash
-    && previousGeneration.profileDir === config.profileDir
-    && previousGeneration.cdpUrl === config.cdpUrl;
+    && previousGeneration.sessionBindingHash === sessionBindingHash
+    && hashJson(previousGeneration.sessionBinding) === sessionBindingHash;
   const previousSegmentsBound = Boolean(
     previousGeneration?.runId
     && previousGeneration?.requestHash
@@ -567,7 +695,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     && Array.isArray(previousGeneration.segments)
     && previousGeneration.segments.length > 0
     && bindingMatches
-    && sessionBinding
+    && resumeSessionMatches
     && previousSegmentsBound;
   try {
     for (let index = 0; index < script.segments.length; index += 1) {
@@ -611,10 +739,11 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       await browser.navigate("https://gemini.google.com/videos");
       const tool = await clickVideoTool(browser, job.format);
       const quotaText = String(tool.body || "").match(/동영상을 다시 생성할 수 있습니다[^.。\n]*|동영상 생성 할당량[^.。\n]*|you(?:'|’)re out of videos[^.\n]*|videos will be available again[^.\n]*/i)?.[0];
+      if (tool.authRequired) throw new Error("Gemini 전용 프로필의 로그인 세션이 만료되었습니다. GEMINI_CHROME_HEADLESS=0으로 같은 프로필을 열어 직접 로그인한 뒤 headless로 다시 시작하세요.");
       if (tool.quota) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${quotaText || "계정 업그레이드 또는 할당량 갱신이 필요합니다."}`);
       if (!tool.clicked) throw new Error(`Gemini 동영상 도구를 찾지 못했습니다. 화면에 "동영상 만들기"가 활성화되어 있는지 확인하세요. 감지된 버튼: ${(tool.buttons || []).join(", ")}`);
       if (tool.ratioConfigured !== true) throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비를 선택하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
-      const prompt = `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, no watermark, no logos. Korean documentary mood.`;
+      const prompt = `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, and no third-party logos. Retain any provider-required provenance mark. Korean documentary mood.`;
       const filled = await fillPrompt(browser, prompt);
       if (!filled.filled) throw new Error("Gemini 입력창을 찾지 못했습니다.");
       const known = await inspectMedia(browser);
@@ -659,11 +788,16 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   return generation;
 }
 export async function startGeminiBrowser() {
+  const config = browserConfig();
+  const policy = resolveGeminiChromeLaunchPolicy();
+  let version;
   try {
-    const version = await getVersion();
-    return { connected: true, started: false, browser: version.Browser || "Chrome" };
+    version = await getVersion(config.cdpUrl);
   } catch {
-    const version = await startChrome();
-    return { connected: true, started: true, browser: version.Browser || "Chrome" };
+    version = await startChrome(config);
+    const startedRuntime = assertGeminiChromeRuntime(version, policy);
+    return { connected: true, started: true, browser: version.Browser || "Chrome", headless: startedRuntime.actualHeadless, requestedHeadless: policy.headless, chromeMajor: startedRuntime.chromeMajor };
   }
+  const runtime = assertGeminiChromeRuntime(version, policy);
+  return { connected: true, started: false, browser: version.Browser || "Chrome", headless: runtime.actualHeadless, requestedHeadless: policy.headless, chromeMajor: runtime.chromeMajor };
 }

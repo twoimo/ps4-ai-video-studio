@@ -11,8 +11,9 @@ export async function writeJsonAtomic(path, value) {
 
 export async function hashFile(path) {
   const hash = createHash("sha256");
-  const buffer = await readFile(path);
-  hash.update(buffer);
+  const file = Bun.file(path);
+  const stream = file.stream();
+  for await (const chunk of stream) hash.update(chunk);
   return `sha256:${hash.digest("hex")}`;
 }
 

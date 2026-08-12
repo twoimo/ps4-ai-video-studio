@@ -10,7 +10,7 @@ export function createUltragoalResumeSignal({
 } = {}) {
   const availableProfiles = profiles
     .filter((profile) => profile?.available)
-    .map(({ id, email, cdpUrl, headless }) => ({ id, email, cdpUrl, headless }));
+    .map(({ id, cdpUrl, headless }) => ({ id, cdpUrl, headless }));
   const requiresGoalResume = event === "provider-available" || event === "production-complete";
   return {
     schemaVersion: 1,

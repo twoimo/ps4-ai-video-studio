@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "analyze": "bun scripts/analyze-channel.mjs",
-    "benchmark:refresh": "bun scripts/refresh-benchmark.mjs",
+    "channel:refresh": "bun scripts/refresh-channel.mjs",
+    "benchmark:metadata": "bun scripts/refresh-benchmark.mjs",
+    "benchmark:refresh": "bun run channel:refresh && bun run benchmark:metadata && bun run analyze && bun run quality:rlm",
     "yt-dlp:update": "bun scripts/update-yt-dlp.mjs",
     "quality:rlm": "bun scripts/run-rlm-analysis.mjs",
     "benchmark:media": "bun scripts/benchmark-media.mjs",
     "monitor:gemini": "bun scripts/monitor-gemini-production.mjs",
     "dev": "bun --watch src/server.mjs",
-    "start": "bun src/server.mjs"
+    "start": "bun src/server.mjs",
+    "check:syntax": "for file in src/*.mjs scripts/*.mjs public/*.js test/*.mjs tests/*.mjs; do node --check \"$file\"; done",
+    "test": "bun test",
+    "check": "bun run check:syntax && bun test && git diff --check"
   }
 }
