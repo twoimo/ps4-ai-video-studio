@@ -2,7 +2,7 @@
 
 플스포컴퍼니의 AI Shorts 제작 과제를 염두에 둔 로컬 우선 제작·검증 웹앱입니다. 공개 YouTube 채널 `신비한 건축사전`의 메타데이터와 제목 패턴을 벤치마킹하고, 새 주제의 근거 수집, AI 장면 생성, FFmpeg 편집, 한국어 자막·내레이션, 품질 증거 봉인을 하나의 작업(run)으로 연결합니다.
 
-> 이 저장소는 현재 **제출 준비 중인 엔지니어링 프로토타입**입니다. 2026-08-12에 Headless Chrome의 Gemini가 만든 서로 다른 2개 클립에서 20초 세로 MP4·한국어 자막·내레이션까지 무인 E2E를 완주했습니다. 해당 로컬 run의 기술 증거 gate는 100/100으로 통과했지만, VLM/OCR/음성 의미 검증은 아직 별도 단계이므로 콘텐츠 의미 품질이나 게시 적합성을 통과했다고 표현하지 않습니다.
+> 이 저장소는 현재 **제출 준비 중인 엔지니어링 프로토타입**입니다. 2026-08-12에 Headless Chrome의 Gemini가 만든 서로 다른 2개 클립에서 20초 세로 MP4·한국어 자막·내레이션까지 무인 E2E를 완주했습니다. 이미 봉인된 해당 run의 기술 증거 gate는 100/100이지만 의미 gate는 닫혀 있습니다. 이후 새 run은 loopback OMLX 영수증을 추가하며, 모든 의미 증거가 통과한 새 run에 한해서만 gate 승격 대상이 됩니다.
 
 ## 현재 검증 상태
 
@@ -17,7 +17,7 @@
 | 로컬 웹앱 | 채널 탐색, 작업 생성, 진행 상태, 산출물, AHP 계측·기술 증거 gate 표시 구현 |
 | Gemini | Chrome 151 Headless, 전용 프로필, 2개 720×1280·10.005초 클립을 생성해 1080×1920·20.033초 최종 MP4까지 완주. 입력 SHA-256 고유, temporal aHash 거리 39.125, motion gate 2/2 통과 |
 | FLUX 3 | 공식 BFL API용 `local-video` 어댑터, 비용 상한, 체크포인트·재개, 다운로드 검증 구현. 2026-08-12 확인 당시 API 키 미설정·대시보드 잔액 0이며 유료 호출 및 생성 E2E 미수행 |
-| 최종 판정 | 실제 Gemini 고유 다중 클립 + 출처 결속 + 불변 run + 5-method software payload의 기술 gate는 100/100. 콘텐츠 의미 gate는 VLM/OCR/음성 의미 검증 전이므로 fail-closed `needs-improvement` |
+| 최종 판정 | 실제 Gemini 고유 다중 클립 + 출처 결속 + 불변 run + 5-method software payload의 기술 gate를 검증. 새 run은 Qwen3.6-27B-8bit 장면/OCR, FFmpeg black-frame, extractive 출처, TTS 생성 provenance 영수증까지 모두 통과해야 의미 gate 후보가 되며 실패·부재 시 `needs-improvement` |
 
 `data/channel-analysis.json`의 “전수 분석”은 공개 메타데이터와 제목 문맥 규칙 분석입니다. `editorialHypothesis`의 서사·시각 언어는 이 제목 분석에서 세운 제작 가설이며 측정된 시청각 관측값이 아닙니다. 모든 영상 내용을 사람이 시청했거나 모든 프레임을 분석했다는 뜻이 아닙니다. 표본 미디어 분석은 별도 영수증으로 분리되어 있습니다.
 
@@ -202,7 +202,7 @@ CI는 Bun 테스트, Node 구문 검사, `git diff --check`만 수행합니다. 
 - 현재 저장된 채널 미디어 분석은 시간축으로 분산 선택한 12개 표본뿐입니다. 전체 255개 콘텐츠의 시청각 의미를 일반화할 수 없습니다.
 - 자막 타이밍은 현재 대본/내레이션 기반 추정 경로를 포함합니다. ASR 강제 정렬을 사용한 사람 수준의 싱크를 아직 보장하지 않습니다.
 - 기술 증거 gate에는 실제 승인 provider의 완성 영수증, 서로 다른 모든 클립, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 불변 run 폐쇄, 요구된 5-method software attestation payload가 필요합니다. extractive binding은 텍스트 변형을 허용하지 않지만 사실 함의를 판정하지 않습니다. 현재 검증은 payload·파일·계측의 무결성이지 사람의 신원·전문성·독립성 또는 콘텐츠 의미 품질 인증이 아닙니다.
-- 현재 빌드는 VLM 장면 관련성, 번인 자막 OCR, ASR 내레이션 정렬, 사실 함의 검증을 수행하지 않으므로 `semanticGate`를 의도적으로 닫고 run을 `needs-improvement`로 유지합니다.
+- 새 run은 `runs/<runId>/semantic/`에 loopback OMLX의 검증·정제된 응답, 입력 프레임, canonical 영수증을 남깁니다. 원응답 본문은 비밀값 반사를 막기 위해 저장하지 않고 SHA-256만 기록합니다. 장면 관련성·모든 번인 자막 cue의 blind OCR·FFmpeg black-frame·extractive 출처 결속·`narrationGenerationBinding`이 모두 재검증되고 불변 산출물에 봉인된 경우에만 `contentSemanticsVerified`가 열립니다. 이는 ASR이 아니며(`asrPerformed:false`), OMLX 부재나 JSON 오류는 영상 생성을 폐기하지 않고 `needs-improvement`로 닫힙니다. 기존 봉인 run은 소급 변경하지 않습니다.
 
 제출 준비 완료라고 부르려면 위 조건을 충족한 실제 run의 `final.mp4`, `captions.srt`, `quality.json`, provider 영수증과 `runs/<run-id>/manifest.json`을 함께 검토하고, 별도의 사람 콘텐츠 검토를 기록해야 합니다.
 

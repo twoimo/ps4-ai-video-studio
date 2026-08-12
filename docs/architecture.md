@@ -4,7 +4,7 @@
 
 PS4 AI Video Studio는 “AI가 영상을 만들었다”는 주장보다 **어떤 요청이 어떤 provider·입력·출처·산출물로 이어졌는지 재검증할 수 있는가**를 우선합니다. 로컬 웹 UI는 제어면(control plane)이고, 파일시스템의 run 디렉터리와 해시 영수증이 증거면(evidence plane)입니다.
 
-2026-08-12 로컬 실행에서 Gemini Headless Chrome은 서로 다른 2개 세로 클립을 생성했고, 파이프라인은 20.033초 최종 MP4·한국어 번인 자막·내레이션·불변 영수증까지 무인으로 완주했습니다. 기술 증거 gate는 100/100이지만 콘텐츠 의미 gate는 아직 열지 않습니다. 현재 구조 검증은 해시·provider·출처 텍스트·미디어 규격과 동작을 증명하며, VLM 장면 관련성·OCR·음성 의미나 게시 적합성을 대신하지 않습니다. 같은 날짜 BFL은 API 키·크레딧 설정이 없어 실제 생성 호출을 하지 않았습니다.
+2026-08-12 로컬 실행에서 Gemini Headless Chrome은 서로 다른 2개 세로 클립을 생성했고, 파이프라인은 20.033초 최종 MP4·한국어 번인 자막·내레이션·불변 영수증까지 무인으로 완주했습니다. 이미 봉인된 해당 실행의 기술 증거 gate는 100/100이고 의미 gate는 닫힌 상태로 유지합니다. 이후 새 실행은 loopback OMLX 시각/OCR와 결정론적 결속 영수증을 render 직후 추가하며, 증거 부재·오류 시 fail-closed 합니다. 같은 날짜 BFL은 API 키·크레딧 설정이 없어 실제 생성 호출을 하지 않았습니다.
 
 ## 2. System context
 
@@ -229,7 +229,7 @@ AHP 가중치는 다음과 같습니다.
 
 총점 98점만으로 기술 증거 검사를 통과하지 않습니다. 승인 provider provenance, current run 결속, 입력 manifest, benchmark 영수증, 불변 evidence, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 서로 다른 id/role/method를 가진 5개 software-method payload와 현재 evidence·decision에 대한 canonical attestation hash가 모두 필요합니다. extractive binding은 사실 함의 판정이 아니며, 이 해시는 payload 무결성을 검증할 뿐 실제 전문가 참여, 신원, 전문성 또는 독립성을 인증하지 않습니다.
 
-현재 자동 검사는 프레임 분석 파일과 evidence frame의 존재, 미디어 규격, 컷·자막·오디오 계측을 검증합니다. 프레임이 대본과 의미상 맞는지, 번인 자막이 보이는지, 음성이 대본과 일치하는지, 주장이 인용문에서 논리적으로 함의되는지는 검증하지 않습니다. 따라서 `technicalEvidenceGate`와 별도로 `semanticGate`는 닫혀 있고, 사람 또는 별도 VLM/OCR/ASR/entailment 검토 전에는 제출 적합성을 선언하지 않습니다.
+새 실행은 최종 렌더 뒤 첫 quality snapshot 전에 `runs/<runId>/semantic/` 영수증을 만듭니다. Qwen3.6-27B-8bit를 loopback OMLX의 strict JSON schema·`temperature:0`·`chat_template_kwargs.enable_thinking:false`로 호출해 장면 관련성과 모든 번인 자막 cue의 blind OCR을 관찰하고, 같은 입력 프레임에서 FFmpeg `blackframe` 및 최종 영상 재추출 raw-pixel hash를 재계산합니다. 별도로 대본의 extractive 출처 binding과 macOS `say`에 전달한 정확한 텍스트·실제 PCM WAV·생성 오디오 파일 해시를 `narrationGenerationBinding`으로 결속합니다. 이것은 ASR이 아니며 영수증에도 `asrPerformed:false`로 기록합니다. 검증·정제된 응답, 입력 프레임, 입력 manifest, 영수증 및 WAV가 모두 run-bound canonical hash와 불변 복사본에 일치할 때만 `contentSemanticsVerified`가 열립니다. OMLX 원응답 본문은 저장하지 않고 SHA-256만 기록합니다.
 
 ## 10. Threat model
 
@@ -276,6 +276,6 @@ AHP 가중치는 다음과 같습니다.
 - 오류 없는 JSONL event ledger와 해시 검증된 run manifest
 - current evidence에 결속된 5-method software attestation payload(사람 명단이나 독립 기관 증명 아님)
 - `quality.json`의 `technicalEvidenceGate: true`
-- 별도의 사람 콘텐츠 검토 또는 검증된 VLM/OCR/ASR/entailment 증거
+- 새 run의 불변 OMLX 장면/OCR·FFmpeg black-frame·extractive entailment·`narrationGenerationBinding` 영수증(ASR 아님), 그리고 게시 전 사람 콘텐츠 검토
 
-현재 빌드는 의미 검증을 구현하지 않아 `semanticGate: false`, `status: needs-improvement`를 유지합니다. 저장소 상태는 이 체크리스트를 아직 충족하지 않습니다.
+기존 봉인 run은 소급 수정하지 않습니다. 새 run에서 OMLX가 꺼져 있거나 비정상 JSON을 반환하거나 어느 결속이라도 어긋나면 최종 영상은 보존하되 `contentSemanticsVerified:false`, `status:needs-improvement`를 유지합니다.

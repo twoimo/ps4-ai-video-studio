@@ -8,6 +8,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { generateGeminiClips } from "./gemini-browser.mjs";
 import { generateLocalVideoClips } from "./local-video-provider.mjs";
+import { createLocalSemanticReceipt, LOCAL_SEMANTIC_MODEL, preflightLocalSemanticVerifier } from "./local-semantic-verifier.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
 import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
 
@@ -2159,6 +2160,7 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
       { name: "captions.vtt", kind: "caption-timing-estimate", url: mediaPath(job.id, "captions.vtt") },
       { name: "caption-timing.json", kind: "caption-timing", url: mediaPath(job.id, "caption-timing.json") },
       ...(job.voiceover ? [{ name: "voiceover-sync.json", kind: "voiceover-caption-sync", url: mediaPath(job.id, "voiceover-sync.json") }] : []),
+      ...(job.voiceover ? [{ name: "voiceover-mastered.wav", kind: "voiceover-master", url: mediaPath(job.id, "voiceover-mastered.wav") }] : []),
       { name: "script.json", kind: "script", url: mediaPath(job.id, "script.json") },
       { name: "thumbnail.jpg", kind: "thumbnail", url: mediaPath(job.id, "thumbnail.jpg") }
     ],
@@ -2176,6 +2178,29 @@ function providerPolicy(provider) {
   if (provider === "local-video") return "local-video-command-adapter-no-fallback";
   return "local-upload-edit";
 }
+
+const SEMANTIC_PREFLIGHT_PROVIDERS = new Set(["gemini-browser", "local-video"]);
+
+export async function runProviderGenerationWithSemanticPreflight({
+  provider,
+  generate,
+  preflight = preflightLocalSemanticVerifier,
+  fetchImpl = fetch,
+  environment = process.env,
+  onReady = null
+}) {
+  if (typeof generate !== "function") throw new Error("provider generation callback이 필요합니다.");
+  let semanticVerifier = null;
+  if (SEMANTIC_PREFLIGHT_PROVIDERS.has(provider)) {
+    semanticVerifier = await preflight({ fetchImpl, environment });
+    if (semanticVerifier?.available !== true || semanticVerifier?.provider !== "loopback-omlx" || semanticVerifier?.model !== LOCAL_SEMANTIC_MODEL) {
+      throw new Error("로컬 OMLX 의미 검증기 사전 점검 결과를 신뢰할 수 없습니다.");
+    }
+    if (typeof onReady === "function") await onReady(semanticVerifier);
+  }
+  return { semanticVerifier, generation: await generate() };
+}
+
 async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVideoClips = false) {
   const names = preserveGemini ? MUTABLE_OUTPUTS : [...MUTABLE_OUTPUTS, "gemini-generation.json"];
   const voiceoverParts = (await readdir(jobDir).catch(() => [])).filter((name) => /^voiceover-\d{2}(?:-calibrated|-padded)?\.aiff$/.test(name));
@@ -2297,6 +2322,7 @@ export async function runJob(jobId, options = {}) {
 
   let inputManifest = null;
   let localVideoGeneration = null;
+  let localSemanticResult = null;
   const captureRunInputs = async (requestedNames = null, expectedCount = job.clipCount) => {
     if (inputManifest) return inputManifest;
     inputManifest = await createInputManifest(jobDir, runDir, jobId, runId, requestedNames, expectedCount, job.provider);
@@ -2344,15 +2370,36 @@ export async function runJob(jobId, options = {}) {
     await progress(18, "기획", `${script.generatedBy === "gemini-api" ? "Gemini" : "로컬 템플릿"} 대본과 ${script.segments.length}개 장면을 준비했습니다.`);
 
     if (job.provider === "gemini-browser") {
-      await progress(24, "Gemini 영상", "Chrome의 Gemini 동영상 만들기 화면을 제어하는 중입니다.");
-      const generation = await generateGeminiClips(job, script, async (value, message) => progress(24 + Math.round(value * 0.30), "Gemini 영상", message));
+      await progress(22, "의미 검수 준비", "영상 생성 전에 로컬 OMLX 의미 검증 모델을 확인하는 중입니다.");
+      const { generation } = await runProviderGenerationWithSemanticPreflight({
+        provider: job.provider,
+        preflight: options.semanticVerifierPreflight || preflightLocalSemanticVerifier,
+        fetchImpl: options.semanticVerifierFetch || fetch,
+        environment: options.environment || process.env,
+        onReady: (ready) => record({ type: "semantic_verifier_preflight", provider: ready.provider, model: ready.model, available: true }),
+        generate: async () => {
+          await progress(24, "Gemini 영상", "Chrome의 Gemini 동영상 만들기 화면을 제어하는 중입니다.");
+          return generateGeminiClips(job, script, async (value, message) => progress(24 + Math.round(value * 0.30), "Gemini 영상", message));
+        }
+      });
       if (!generation || generation.status !== "completed" || generation.runId !== runId || !generation.requestHash || !generation.scriptHash) {
         throw new Error("Gemini generation provenance가 현재 runId·요청 해시에 결속되지 않았습니다.");
       }
       await captureRunInputs(script.segments.map((_, index) => `${String(index + 1).padStart(2, "0")}.mp4`), script.segments.length);
     } else if (job.provider === "local-video") {
-      await progress(24, "로컬 영상 생성", "설정된 local-video 생성기에서 장면을 생성하는 중입니다.");
-      localVideoGeneration = await generateLocalVideoClips(job, script, runId, async (value, message) => progress(24 + Math.round(value * 0.30), "로컬 영상 생성", message));
+      await progress(22, "의미 검수 준비", "영상 생성 전에 로컬 OMLX 의미 검증 모델을 확인하는 중입니다.");
+      const prepared = await runProviderGenerationWithSemanticPreflight({
+        provider: job.provider,
+        preflight: options.semanticVerifierPreflight || preflightLocalSemanticVerifier,
+        fetchImpl: options.semanticVerifierFetch || fetch,
+        environment: options.environment || process.env,
+        onReady: (ready) => record({ type: "semantic_verifier_preflight", provider: ready.provider, model: ready.model, available: true }),
+        generate: async () => {
+          await progress(24, "로컬 영상 생성", "설정된 local-video 생성기에서 장면을 생성하는 중입니다.");
+          return generateLocalVideoClips(job, script, runId, async (value, message) => progress(24 + Math.round(value * 0.30), "로컬 영상 생성", message));
+        }
+      });
+      localVideoGeneration = prepared.generation;
       const providerReceipt = {
         ...localVideoGeneration.receipt,
         provider: "local-video",
@@ -2385,6 +2432,30 @@ export async function runJob(jobId, options = {}) {
     }
 
     const rendered = await renderJob(job, script, progress, inputManifest);
+    await progress(95, "의미 검수", "로컬 OMLX 장면·번인 자막 검사와 결정론적 provenance 결속을 실행하는 중입니다.");
+    localSemanticResult = await createLocalSemanticReceipt({
+      job,
+      script,
+      runId,
+      jobDir,
+      runDir,
+      sourceEntailment: verifyEvidenceBoundScript(script, job.sources, job.clipCount)
+    });
+    runManifest = { ...runManifest, semanticReceipt: localSemanticResult.receiptReference };
+    await writeRunManifest(runDir, runManifest);
+    await record({
+      type: "local_semantic_receipt",
+      jobId,
+      runId,
+      status: localSemanticResult.receipt.status,
+      receipt: localSemanticResult.receiptReference,
+      evaluator: {
+        provider: localSemanticResult.receipt.evaluator.provider,
+        model: localSemanticResult.receipt.evaluator.model,
+        humanReview: false,
+        asrPerformed: false
+      }
+    });
     job = await updateJob(jobId, {
       status: "verifying",
       stage: "검수",
@@ -2426,6 +2497,7 @@ export async function runJob(jobId, options = {}) {
 
     const artifacts = [
       ...rendered.artifacts,
+      ...localSemanticResult.artifacts,
       { name: "quality.json", kind: "quality", url: mediaPath(job.id, "quality.json") },
       { name: "frame-audio-caption.json", kind: "analysis", url: mediaPath(job.id, "frame-audio-caption.json") },
       { name: "sources.json", kind: "source-bundle", url: mediaPath(job.id, "sources.json") },

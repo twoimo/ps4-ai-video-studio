@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { analyzeClipMotion, clipMotionGatePolicy, clipMotionGateRequired, hasEvidenceHookFraming, JOBS_DIR, ROOT, readJob, verifyEvidenceBoundScript } from "./pipeline.mjs";
 import { analyzeJobMedia } from "./frame-analysis.mjs";
+import { semanticReceiptArtifactPaths, verifyLocalSemanticReceipt } from "./local-semantic-verifier.mjs";
 import { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 import { hashFile } from "./run-ledger.mjs";
 
@@ -1228,6 +1229,9 @@ export async function evaluateJob(jobId, options = {}) {
   const sources = normalizeSources(script?.sources || job.sources);
   const captionTiming = await readJsonOptional(join(jobDir, "caption-timing.json"));
   const voiceoverSync = await readJsonOptional(join(jobDir, "voiceover-sync.json"));
+  const localSemanticReceiptPath = join(runDir, "semantic", "receipt.json");
+  const localSemanticReceipt = await readJsonOptional(localSemanticReceiptPath);
+  const localSemanticEvidencePaths = semanticReceiptArtifactPaths(currentRunId, localSemanticReceipt).map((path) => join(jobDir, path));
   const target = mediaTarget(job.format);
   const expectedSegments = Math.max(1, Number(script?.segments?.length || job.clipCount || 1));
   const actualClipTarget = Math.max(1, Number(job.clipCount || expectedSegments));
@@ -1591,8 +1595,10 @@ export async function evaluateJob(jobId, options = {}) {
     join(jobDir, "captions.vtt"),
     join(jobDir, "caption-timing.json"),
     ...(voiceoverSync ? [join(jobDir, "voiceover-sync.json")] : []),
+    ...(voiceoverSync ? [join(jobDir, "voiceover-mastered.wav")] : []),
     ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
     ...(localVideoGeneration ? [localVideoGenerationPath] : []),
+    ...localSemanticEvidencePaths,
     join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
     ...clips,
     ...normalized,
@@ -1600,6 +1606,17 @@ export async function evaluateJob(jobId, options = {}) {
   ])];
   const evidenceHashes = Object.fromEntries((await Promise.all(analyzedPaths.map(async (path) => [evidenceRelative(jobDir, path), await hashExisting(path)]))).filter(([, hash]) => hash));
   const immutableByName = new Map(immutableArtifacts.map((artifact) => [artifact.name, artifact]));
+  const localSemanticVerification = await verifyLocalSemanticReceipt({
+    jobDir,
+    jobId,
+    runId: currentRunId,
+    script,
+    sourceEntailment: evidenceTextBinding,
+    voiceoverSync,
+    runManifest,
+    immutableArtifacts,
+    requireImmutable: evaluationState.semanticGateEligible
+  });
   const immutableEvidenceBinding = Boolean(
     immutableClosureBinding
     && Object.keys(evidenceHashes).length > 0
@@ -1724,10 +1741,15 @@ export async function evaluateJob(jobId, options = {}) {
     && researchStatusVerified
     && evidenceTextBindingVerified
     && claimEvidencePass;
-  // The current evaluator proves file/hash/media/source-text structure only.
-  // It does not run a content VLM, burned-caption OCR, narration ASR alignment,
-  // or a factual-entailment model, so an autonomous content verdict is unsafe.
-  const contentSemanticsVerified = false;
+  // This gate is deliberately narrower than ASR or human editorial review. It
+  // combines immutable loopback-VLM frame/OCR observations with deterministic
+  // black-frame, extractive source, and TTS generation-provenance bindings.
+  const contentSemanticsVerified = Boolean(
+    evaluationState.semanticGateEligible
+    && immutableClosureBinding
+    && immutableEvidenceBinding
+    && localSemanticVerification.verified
+  );
   const semanticGate = technicalEvidenceGate && contentSemanticsVerified;
   if (!committee) blockers.push("5-method software reviewer payload 파일이 없습니다.");
   if (committee && !committeeReviewValid(committee)) blockers.push("reviewer payload의 고유 id·role·method와 attestation hash가 검증되지 않았습니다. 이 해시는 사람의 신원·독립성 인증이 아닙니다.");
@@ -1755,7 +1777,7 @@ export async function evaluateJob(jobId, options = {}) {
   if (!researchStatusVerified) blockers.push("대본 researchStatus가 verified로 검증되지 않았습니다.");
   if (!evidenceTextBindingVerified) blockers.push(`대본의 주장·내레이션·자막·영상 프롬프트가 인용 근거와 결속되지 않았습니다${evidenceTextBinding.error ? `: ${evidenceTextBinding.error}` : ""}`);
   if (!claimEvidencePass) blockers.push("장면별 주장에 연결된 인용 가능한 출처 근거와 텍스트 결속이 없습니다.");
-  if (!contentSemanticsVerified) blockers.push("콘텐츠 의미 품질은 자동 판정하지 않습니다. VLM 장면 관련성·번인 자막 OCR·ASR 정렬·사실 함의에 대한 사람 또는 별도 검증이 필요합니다.");
+  if (!contentSemanticsVerified) blockers.push(`로컬 의미 영수증 검증을 통과하지 못했습니다. 장면 관련성·번인 자막 OCR·black-frame·extractive 출처·narrationGenerationBinding을 확인하세요${localSemanticVerification.blockers.length ? `: ${localSemanticVerification.blockers.join(", ")}` : ""}`);
   const reportedJobStatus = finalizationReady ? "verifying" : job.status;
   const quality = {
     schemaVersion: 1,
@@ -1776,6 +1798,13 @@ export async function evaluateJob(jobId, options = {}) {
     metrics: {
       technicalEvidenceGate,
       contentSemanticsVerified,
+      localSemanticReceipt: {
+        path: `runs/${currentRunId}/semantic/receipt.json`,
+        status: localSemanticReceipt?.status || "missing",
+        verified: localSemanticVerification.verified,
+        blockers: localSemanticVerification.blockers,
+        ...localSemanticVerification.metrics
+      },
       jobStatus: reportedJobStatus,
       observedJobStatus: job.status,
       evaluationPhase: evaluationState.phase === "finalization" ? "post-publication" : evaluationState.phase,
