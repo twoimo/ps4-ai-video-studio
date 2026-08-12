@@ -106,8 +106,8 @@
     "weightTotal": 100,
     "scoreScale": "0-100 per criterion; weighted sum",
     "semanticEligibilityRequires": [
-      "gemini-browser provider",
-      "run-bound generation provenance",
+      "approved video-generation provider",
+      "run-bound provider/model provenance",
       "committee evidence",
       "terminal immutable closure"
     ]

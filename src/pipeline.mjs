@@ -7,6 +7,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { generateGeminiClips } from "./gemini-browser.mjs";
+import { generateLocalVideoClips } from "./local-video-provider.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
 
 export const ROOT = resolve(import.meta.dirname, "..");
@@ -16,7 +17,7 @@ export const JOBS_DIR = join(WORKSPACE_DIR, "jobs");
 export const ANALYSIS_PATH = join(DATA_DIR, "channel-analysis.json");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
-const SUPPORTED_PROVIDERS = new Set(["local", "gemini-browser"]);
+const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser"]);
 const DEFAULT_SAY_RATE = 165;
 const GEMINI_PROFILE_ROOT = resolve(process.env.HOME || "/tmp", ".ps4-ai-video-studio");
 function normalizeGeminiProfile(input) {
@@ -105,7 +106,7 @@ export async function createJob(input) {
   const targetDurationSec = Math.max(20, Math.min(180, Number(input.targetDurationSec) || benchmarkDuration.recommendedTargetSec || 78));
   const sources = Array.isArray(input.sources) ? input.sources.filter((source) => source && (source.url || source.title || typeof source === "string")) : [];
   const provider = input.provider === undefined ? "gemini-browser" : input.provider;
-  if (!["local", "gemini-browser"].includes(provider)) throw new Error("지원하지 않는 생성 소스입니다. local 또는 gemini-browser만 사용할 수 있습니다.");
+  if (!SUPPORTED_PROVIDERS.has(provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
   const geminiProfile = provider === "gemini-browser" ? normalizeGeminiProfile(input) : {};
   const job = {
     id,
@@ -961,10 +962,19 @@ const MUTABLE_OUTPUTS = [
   "sources.json", "frame-audio-caption.json", "thumbnail.jpg", "quality.json",
   "committee-review.json"
 ];
-async function clearMutableOutputs(jobDir, preserveGemini = false) {
+function providerPolicy(provider) {
+  if (provider === "gemini-browser") return "no-local-video-fallback";
+  if (provider === "local-video") return "local-video-command-adapter-no-fallback";
+  return "local-upload-edit";
+}
+async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVideoClips = false) {
   const names = preserveGemini ? MUTABLE_OUTPUTS : [...MUTABLE_OUTPUTS, "gemini-generation.json"];
   const voiceoverParts = (await readdir(jobDir).catch(() => [])).filter((name) => /^voiceover-\d{2}(?:-calibrated|-padded)?\.aiff$/.test(name));
   await Promise.all([...names, ...voiceoverParts].map((name) => unlink(join(jobDir, name)).catch(() => {})));
+  if (clearLocalVideoClips) {
+    const clips = await readdir(join(jobDir, "clips"), { withFileTypes: true }).catch(() => []);
+    await Promise.all(clips.filter((entry) => entry.isFile() && VIDEO_EXTENSIONS.has(extname(entry.name).toLowerCase())).map((entry) => unlink(join(jobDir, "clips", entry.name)).catch(() => {})));
+  }
   await rm(join(jobDir, "quality"), { recursive: true, force: true });
   await rm(join(jobDir, "normalized"), { recursive: true, force: true });
   await mkdir(join(jobDir, "normalized"), { recursive: true });
@@ -983,7 +993,7 @@ export async function runJob(jobId, options = {}) {
     requested: job.provider,
     selected: job.provider,
     fallbackUsed: false,
-    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : "local-upload-edit"
+    policy: providerPolicy(job.provider)
   };
   const providerDecisionHash = hashJson(providerDecision);
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
@@ -1000,7 +1010,7 @@ export async function runJob(jobId, options = {}) {
     startedAt: new Date().toISOString(),
     status: "running",
     benchmarkSnapshot: null,
-    request: { topic: job.topic, provider: job.provider, format: job.format, clipCount: job.clipCount, targetDurationSec: job.targetDurationSec, targetDurationRangeSec: job.targetDurationRangeSec, captions: job.captions, voiceover: job.voiceover, fallbackPolicy: job.provider === "gemini-browser" ? "no-local-video-fallback" : "local-upload-edit" },
+    request: { topic: job.topic, provider: job.provider, format: job.format, clipCount: job.clipCount, targetDurationSec: job.targetDurationSec, targetDurationRangeSec: job.targetDurationRangeSec, captions: job.captions, voiceover: job.voiceover, fallbackPolicy: providerPolicy(job.provider) },
     providerDecision,
     providerDecisionHash,
     eventsPath: `runs/${runId}/events.jsonl`,
@@ -1016,8 +1026,8 @@ export async function runJob(jobId, options = {}) {
   };
   try {
     await mkdir(runDir, { recursive: true });
-    if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local 또는 gemini-browser만 사용할 수 있습니다.");
-    await clearMutableOutputs(jobDir, job.provider === "gemini-browser");
+    if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
+    await clearMutableOutputs(jobDir, job.provider === "gemini-browser", job.provider === "local-video");
     await writeRunManifest(runDir, runManifest);
     job = await updateJob(jobId, {
       status: "running",
@@ -1063,6 +1073,7 @@ export async function runJob(jobId, options = {}) {
   }
 
   let inputManifest = null;
+  let localVideoGeneration = null;
   const captureRunInputs = async (requestedNames = null, expectedCount = job.clipCount) => {
     if (inputManifest) return inputManifest;
     inputManifest = await createInputManifest(jobDir, runDir, jobId, runId, requestedNames, expectedCount);
@@ -1088,7 +1099,7 @@ export async function runJob(jobId, options = {}) {
     });
     await record({ type: "started", topic: job.topic, provider: job.provider });
     await record({ type: "provider_decision", jobId, runId, ...providerDecision, decisionHash: providerDecisionHash });
-    if (job.provider !== "gemini-browser") await captureRunInputs();
+    if (job.provider === "local") await captureRunInputs();
 
     if (job.provider === "gemini-browser") {
       const previousGeneration = existsSync(join(jobDir, "gemini-generation.json")) ? JSON.parse(await readFile(join(jobDir, "gemini-generation.json"), "utf8")) : null;
@@ -1116,6 +1127,36 @@ export async function runJob(jobId, options = {}) {
         throw new Error("Gemini generation provenance가 현재 runId·요청 해시에 결속되지 않았습니다.");
       }
       await captureRunInputs(script.segments.map((_, index) => `${String(index + 1).padStart(2, "0")}.mp4`), script.segments.length);
+    } else if (job.provider === "local-video") {
+      await progress(24, "로컬 영상 생성", "설정된 local-video 생성기에서 장면을 생성하는 중입니다.");
+      localVideoGeneration = await generateLocalVideoClips(job, script, runId, async (value, message) => progress(24 + Math.round(value * 0.30), "로컬 영상 생성", message));
+      const providerReceipt = {
+        ...localVideoGeneration.receipt,
+        provider: "local-video",
+        model: localVideoGeneration.model,
+        modelVersion: localVideoGeneration.modelVersion,
+        modelId: localVideoGeneration.modelId,
+        requestHash: localVideoGeneration.requestHash,
+        scriptHash: localVideoGeneration.scriptHash
+      };
+      await record({
+        type: "provider_generation",
+        provider: "local-video",
+        jobId,
+        runId,
+        model: localVideoGeneration.model,
+        modelVersion: localVideoGeneration.modelVersion,
+        modelId: localVideoGeneration.modelId,
+        receipt: providerReceipt,
+        artifact: { name: `runs/${runId}/local-video-generation.json`, path: `runs/${runId}/local-video-generation.json`, sha256: providerReceipt.sha256 }
+      });
+      runManifest = {
+        ...runManifest,
+        providerReceipt,
+        providerArtifact: { name: `runs/${runId}/local-video-generation.json`, path: `runs/${runId}/local-video-generation.json`, sha256: providerReceipt.sha256 }
+      };
+      await writeRunManifest(runDir, runManifest);
+      await captureRunInputs(localVideoGeneration.outputNames.map((name) => name.replace(/^clips\//, "")), script.segments.length);
     } else {
       await progress(54, "소스 확인", "업로드된 로컬 클립을 사용합니다.");
     }
@@ -1165,6 +1206,7 @@ export async function runJob(jobId, options = {}) {
       { name: "frame-audio-caption.json", kind: "analysis", url: mediaPath(job.id, "frame-audio-caption.json") },
       { name: "sources.json", kind: "source-bundle", url: mediaPath(job.id, "sources.json") },
       ...(existsSync(join(jobDir, "gemini-generation.json")) ? [{ name: "gemini-generation.json", kind: "provider-provenance", url: mediaPath(job.id, "gemini-generation.json") }] : []),
+      ...(localVideoGeneration ? [{ name: `runs/${runId}/local-video-generation.json`, kind: "provider-provenance", url: mediaPath(job.id, `runs/${runId}/local-video-generation.json`) }] : []),
       { name: `runs/${runId}/events.jsonl`, kind: "run-events", url: mediaPath(job.id, `runs/${runId}/events.jsonl`) },
       { name: `runs/${runId}/input-manifest.json`, kind: "input-manifest", url: mediaPath(job.id, `runs/${runId}/input-manifest.json`) },
       { name: `runs/${runId}/benchmarks/channel-analysis.json`, kind: "benchmark-snapshot", url: mediaPath(job.id, `runs/${runId}/benchmarks/channel-analysis.json`) },
@@ -1181,7 +1223,7 @@ export async function runJob(jobId, options = {}) {
       ...runManifest,
       status: "finalizing",
       runStatus,
-      script: { generatedBy: script.generatedBy, segmentCount: script.segments.length, targetDurationSec: job.targetDurationSec, sourceBundle: job.sourceBundle || { status: "missing" }, providerProvenance: existsSync(join(jobDir, "gemini-generation.json")) ? "gemini-generation.json" : null },
+      script: { generatedBy: script.generatedBy, segmentCount: script.segments.length, targetDurationSec: job.targetDurationSec, sourceBundle: job.sourceBundle || { status: "missing" }, providerProvenance: localVideoGeneration ? `runs/${runId}/local-video-generation.json` : existsSync(join(jobDir, "gemini-generation.json")) ? "gemini-generation.json" : null },
       inputs: sourceEntries,
       artifacts: await artifactReceipt(jobDir, snapshotArtifacts),
       qualitySummary,

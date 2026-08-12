@@ -382,7 +382,7 @@ async function rehydrateCompletedRun(job, manifest) {
     requested: job.provider,
     selected: job.provider,
     fallbackUsed: false,
-    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : "local-upload-edit"
+    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : job.provider === "local-video" ? "local-video-command-adapter-no-fallback" : "local-upload-edit"
   };
   const expectedProviderDecisionHash = hashJson(expectedProviderDecision);
   const providerDecisionEvent = events.find((event) => event.type === "provider_decision");
@@ -664,6 +664,7 @@ async function health() {
       ffprobe: command("ffprobe"),
       macSay: command("say"),
       geminiApiKey: Boolean(process.env.GEMINI_API_KEY),
+      localVideoGenerator: Boolean(String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()),
       ytDlp
     },
     analysis: existsSync(ANALYSIS_PATH),
@@ -708,8 +709,13 @@ async function handleApi(request, url) {
       if (job.provider === "gemini-browser") {
         await startJob(job.id);
       } else if (body.autoStart === true) {
-        if (!(await hasUploadedVideo(job.id))) throw new Error("로컬 자동 시작에는 업로드된 영상 클립이 하나 이상 필요합니다.");
-        await startJob(job.id);
+        if (job.provider === "local-video") {
+          if (!String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()) throw new Error("PS4_LOCAL_VIDEO_GENERATOR가 설정되지 않아 local-video 자동 시작을 수행할 수 없습니다.");
+          await startJob(job.id);
+        } else {
+          if (!(await hasUploadedVideo(job.id))) throw new Error("로컬 자동 시작에는 업로드된 영상 클립이 하나 이상 필요합니다.");
+          await startJob(job.id);
+        }
       }
       return json({ job }, 201);
     } catch (error) {

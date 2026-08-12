@@ -33,6 +33,40 @@ const AHP_CRITERIA = [
   { id: "automationRecovery", label: "자동화 재현성·실패 복구", weight: 10 }
 ];
 
+const PROVIDER_COPY = {
+  "gemini-browser": {
+    short: "Gemini Chrome",
+    detail: "Gemini Chrome",
+    generation: "Gemini video",
+    generationDetail: "Chrome 브라우저 자동화",
+    status: "Gemini Chrome"
+  },
+  "local-video": {
+    short: "로컬 영상 모델",
+    detail: "로컬 영상 모델 명령 어댑터",
+    generation: "Local video model",
+    generationDetail: "설정된 로컬 생성기 명령 · 업로드 아님",
+    status: "로컬 영상 모델"
+  },
+  local: {
+    short: "로컬 클립 업로드",
+    detail: "로컬 클립 업로드 후 편집",
+    generation: "Local clip source",
+    generationDetail: "업로드한 클립 사용 · 영상 생성 없음",
+    status: "로컬 클립 편집"
+  }
+};
+
+function providerCopy(provider) {
+  return PROVIDER_COPY[provider] || {
+    short: "알 수 없는 제공자",
+    detail: "알 수 없는 제공자",
+    generation: "Video source",
+    generationDetail: "제공자 확인 필요",
+    status: "제공자 확인 필요"
+  };
+}
+
 function scoreText(value) {
   if (value === null || value === undefined || value === "") return "—";
   return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "—";
@@ -184,7 +218,7 @@ function renderJobs() {
     return;
   }
   if (!state.selectedJobId || !state.jobs.some((job) => job.id === state.selectedJobId)) state.selectedJobId = state.jobs[0].id;
-  list.innerHTML = state.jobs.map((job) => `<button class="job-card ${job.id === state.selectedJobId ? "selected" : ""}" aria-pressed="${job.id === state.selectedJobId}" data-job-id="${escapeHtml(job.id)}"><div class="job-card-top"><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span><time>${new Date(job.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div><h3>${escapeHtml(job.topic)}</h3><div class="job-card-bottom"><span>${escapeHtml(job.stage)} · ${escapeHtml(job.provider === "local" ? "로컬 소스" : "Gemini Chrome")}</span><strong>${job.progress || 0}%</strong></div><div class="mini-progress"><i style="width:${job.progress || 0}%"></i></div></button>`).join("");
+  list.innerHTML = state.jobs.map((job) => `<button class="job-card ${job.id === state.selectedJobId ? "selected" : ""}" aria-pressed="${job.id === state.selectedJobId}" data-job-id="${escapeHtml(job.id)}"><div class="job-card-top"><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span><time>${new Date(job.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div><h3>${escapeHtml(job.topic)}</h3><div class="job-card-bottom"><span>${escapeHtml(job.stage)} · ${escapeHtml(providerCopy(job.provider).short)}</span><strong>${job.progress || 0}%</strong></div><div class="mini-progress"><i style="width:${job.progress || 0}%"></i></div></button>`).join("");
   $$(".job-card").forEach((button) => button.addEventListener("click", () => { state.selectedJobId = button.dataset.jobId; renderJobs(); }));
   const selected = state.jobs.find((job) => job.id === state.selectedJobId);
   renderJobDetail(selected);
@@ -193,9 +227,18 @@ function renderJobs() {
 }
 
 function renderPipeline(job) {
+  const generationStep = $('[data-role="generation"]');
+  const copy = providerCopy(job?.provider);
+  if (generationStep) {
+    generationStep.dataset.stage = job?.provider === "local-video" ? "로컬 영상 생성" : job?.provider === "gemini-browser" ? "Gemini 영상" : "영상 생성";
+    const title = generationStep.querySelector("b");
+    const description = generationStep.querySelector("small");
+    if (title) title.textContent = job ? copy.generation : "Video generation";
+    if (description) description.textContent = job ? copy.generationDetail : "Gemini Chrome 또는 설정된 로컬 모델";
+  }
   const stageIndexFor = (stage = "") => {
     if (stage.includes("준비") || stage === "대기") return 1;
-    if (stage.includes("Gemini")) return 2;
+    if (stage.includes("Gemini") || stage.includes("영상 생성") || stage.includes("로컬 영상")) return 2;
     if (stage.includes("편집") || stage.includes("정규화")) return 3;
     if (stage.includes("자막") || stage.includes("음성")) return 4;
     if (stage.includes("검수") || stage.includes("검증")) return 5;
@@ -218,16 +261,20 @@ function renderPipeline(job) {
       ? "FAIL"
       : done ? "DONE" : active ? (job.status === "verifying" ? "VERIFY" : "RUN") : "WAIT";
   });
-  $("#pipeline-status").textContent = job ? `${statusLabel(job.status)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
+  $("#pipeline-status").textContent = job ? `${copy.status} · ${statusLabel(job.status)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
 }
 
 function renderJobDetail(job) {
   const detail = $("#job-detail");
   if (!job) return;
+  const copy = providerCopy(job.provider);
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
   const artifactRecords = job.artifacts || [];
   const artifacts = artifactRecords.filter((artifact) => artifact.url).map((artifact) => `<a class="artifact-link" href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer"><span>${artifact.kind?.includes("video") ? "▶" : artifact.kind?.includes("thumbnail") ? "▧" : "≡"}</span>${escapeHtml(artifact.name)}<b>↗</b></a>`).join("");
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status) ? `<div class="upload-box"><label for="detail-upload"><span>클립을 여기에 올리세요</span><small>MP4, MOV, WebM · 여러 파일 가능</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local">업로드된 클립으로 편집 실행</button></div>` : "";
+  const providerNotice = job.provider === "local-video"
+    ? `<div class="pending-evidence">로컬 영상 모델 명령 어댑터 · 설정된 로컬 생성기 실행 결과만 사용합니다. 로컬 클립 업로드 경로가 아닙니다.</div>`
+    : "";
   const detailState = state.qualityDetails[job.id];
   const quality = detailState?.quality || job.qualitySummary;
   const history = detailState?.history || [];
@@ -238,9 +285,9 @@ function renderJobDetail(job) {
     ? `<video controls playsinline preload="metadata" poster="${escapeHtml(previewThumbnail.url || "")}" src="${escapeHtml(previewVideo.url)}"></video>`
     : `<div class="preview-unavailable">현재 실행의 불변 미리보기 산출물이 없습니다.</div>`;
   const qualityPanel = quality
-    ? `<div class="ahp-summary ${quality.semanticGate ? "passed" : "needs-improvement"}"><div><span class="panel-kicker">${quality.semanticGate ? "AHP QUALITY SCORE" : "MECHANICAL CHECK · SEMANTIC GATE CLOSED"}</span><strong>${scoreText(quality.totalScore)}<small>/ 100</small></strong></div><span>${quality.semanticGate ? "위원회·Gemini 근거 검토 가능" : "기계 점수만 표시 · Gemini 의미론 판정 보류"}</span></div>${renderAHPPanel(quality, history)}${quality.blockers?.length ? `<div class="warning-box"><b>차단·개선 항목</b><ul>${quality.blockers.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}`
+    ? `<div class="ahp-summary ${quality.semanticGate ? "passed" : "needs-improvement"}"><div><span class="panel-kicker">${quality.semanticGate ? "AHP QUALITY SCORE" : "MECHANICAL CHECK · SEMANTIC GATE CLOSED"}</span><strong>${scoreText(quality.totalScore)}<small>/ 100</small></strong></div><span>${quality.semanticGate ? (job.provider === "gemini-browser" ? "위원회·Gemini 근거 검토 가능" : "위원회 근거 검토 가능") : "기계 점수만 표시 · 의미론 판정 보류"}</span></div>${renderAHPPanel(quality, history)}${quality.blockers?.length ? `<div class="warning-box"><b>차단·개선 항목</b><ul>${quality.blockers.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}`
     : `<div class="pending-evidence">품질 검수 대기 · 현재 상태 ${escapeHtml(statusLabel(job.status))}${detailState?.error ? ` · ${escapeHtml(detailState.error)}` : ""}</div>`;
-  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}${job.status === "completed" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${localControls}<div class="detail-meta"><span>생성 모드 <b>${job.provider === "local" ? "로컬 편집" : "Gemini Chrome"}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}${job.status === "completed" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${providerNotice}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
@@ -290,7 +337,8 @@ async function createProduction(event) {
   event.preventDefault();
   const provider = $("#provider").value;
   const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, captions: $("#captions").checked, voiceover: $("#voiceover").checked, autoStart: provider === "gemini-browser" };
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, captions: $("#captions").checked, voiceover: $("#voiceover").checked };
+  if (provider === "gemini-browser") body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;
   button.querySelector("span").textContent = "파이프라인 시작 중…";
@@ -299,7 +347,12 @@ async function createProduction(event) {
     state.selectedJobId = payload.job.id;
     await refreshJobs();
     document.querySelector("#rendering").scrollIntoView({ behavior: "smooth", block: "start" });
-    showToast(provider === "gemini-browser" ? "Gemini Chrome 자동 생성 작업을 시작했습니다." : "작업을 만들었습니다. 클립을 업로드하세요.");
+    const message = provider === "gemini-browser"
+      ? "Gemini Chrome 자동 생성 작업을 시작했습니다."
+      : provider === "local-video"
+        ? "로컬 영상 모델 명령 어댑터 작업을 만들었습니다. 설정된 생성기 명령이 필요합니다."
+        : "로컬 클립 편집 작업을 만들었습니다. 클립을 업로드하세요.";
+    showToast(message);
   } catch (error) { showToast(error.message, "error"); }
   finally { button.disabled = false; button.querySelector("span").textContent = "자동 제작 시작"; }
 }

@@ -138,7 +138,7 @@ const result = {
     weights: AHP_CRITERIA,
     weightTotal: ahpWeightTotal,
     scoreScale: "0-100 per criterion; weighted sum",
-    semanticEligibilityRequires: ["gemini-browser provider", "run-bound generation provenance", "committee evidence", "terminal immutable closure"]
+    semanticEligibilityRequires: ["approved video-generation provider", "run-bound provider/model provenance", "committee evidence", "terminal immutable closure"]
   },
   snapshot: { subscribers: 449000, totalVideos: videos.length, shorts: shorts.length, longVideos: longVideos.length, shortsMetadataCount: shortMetadata.metadataCount },
   shortsDuration: shortMetadata.summary,

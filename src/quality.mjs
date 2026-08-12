@@ -19,7 +19,7 @@ const RANDOM_INDEX = { 1: 0, 2: 0, 3: 0.58, 4: 0.9, 5: 1.12, 6: 1.24, 7: 1.32, 8
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
 const REQUIRED_ARTIFACTS = ["final.mp4", "captions.srt", "script.json", "thumbnail.jpg"];
 const QUALITY_DIR = "quality";
-const SUPPORTED_PROVIDERS = new Set(["local", "gemini-browser"]);
+const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser"]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function clamp(value, min = 0, max = 100) {
@@ -57,6 +57,35 @@ function expectedGeminiRequest(job, script) {
       narration: segment.narration || ""
     }))
   };
+}
+
+function expectedLocalVideoRequest(job, script, runId, scriptHash) {
+  const base = {
+    schemaVersion: 1,
+    jobId: job.id,
+    runId,
+    provider: "local-video",
+    topic: job.topic || "",
+    format: job.format || "vertical",
+    targetDurationSec: Number(job.targetDurationSec || 0),
+    targetDurationRangeSec: job.targetDurationRangeSec || null,
+    segments: (script?.segments || []).map((segment, index) => ({
+      index: index + 1,
+      durationHint: segment.durationHint || null,
+      prompt: segment.visualPrompt || "",
+      visualPrompt: segment.visualPrompt || "",
+      caption: segment.caption || "",
+      narration: segment.narration || ""
+    }))
+  };
+  const requestHash = hashJson({ ...base, scriptHash });
+  return { ...base, requestHash, scriptHash };
+}
+
+function providerPolicy(provider) {
+  if (provider === "gemini-browser") return "no-local-video-fallback";
+  if (provider === "local-video") return "local-video-command-adapter-no-fallback";
+  return "local-upload-edit";
 }
 
 function commandPath(command) {
@@ -252,7 +281,7 @@ export async function saveCommitteeReview(jobId, review) {
   const jobDir = join(JOBS_DIR, jobId);
   const job = await readJob(jobId);
   const latest = await readJsonOptional(join(jobDir, QUALITY_DIR, "latest.json"));
-  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local 또는 gemini-browser만 사용할 수 있습니다.");
+  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
   if (review.jobId && review.jobId !== job.id) throw new Error("위원회 리뷰가 현재 작업 식별자에 결속되어 있지 않습니다.");
   if (!review.runId || review.runId !== job.runId) throw new Error("위원회 리뷰가 현재 실행 runId에 결속되어 있지 않습니다.");
   if (!latest || latest.jobId !== job.id || latest.runId !== job.runId) throw new Error("현재 run에 결속된 품질 산출물이 없습니다.");
@@ -281,7 +310,7 @@ export async function persistQuality(jobDir, quality) {
 }
 export async function evaluateJob(jobId, options = {}) {
   const job = await readJob(jobId);
-  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local 또는 gemini-browser만 사용할 수 있습니다.");
+  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
   if (options.runId && options.runId !== job.runId) throw new Error("품질 검사는 현재 작업의 runId만 허용합니다.");
   const currentRunId = job.runId || null;
   if (!currentRunId) throw new Error("현재 실행 산출물이 없어 품질 검사를 시작할 수 없습니다.");
@@ -338,6 +367,9 @@ export async function evaluateJob(jobId, options = {}) {
   const expectedSegments = Math.max(1, Number(script?.segments?.length || job.clipCount || 1));
   const actualClipTarget = Math.max(1, Number(job.clipCount || expectedSegments));
   const geminiGeneration = await readJsonOptional(join(jobDir, "gemini-generation.json"));
+  const localVideoGenerationPath = join(runDir, "local-video-generation.json");
+  const localVideoGeneration = await readJsonOptional(localVideoGenerationPath);
+  const localVideoReceiptHash = await hashExisting(localVideoGenerationPath);
   const currentClipHashes = await Promise.all(clips.map((path) => hashExisting(path)));
   const generationSegments = Array.isArray(geminiGeneration?.segments) ? geminiGeneration.segments : [];
   const geminiRequest = expectedGeminiRequest(job, script);
@@ -349,7 +381,7 @@ export async function evaluateJob(jobId, options = {}) {
     requested: job.provider,
     selected: job.provider,
     fallbackUsed: false,
-    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : "local-upload-edit"
+    policy: providerPolicy(job.provider)
   };
   const expectedProviderDecisionHash = hashJson(expectedProviderDecision);
   const providerAttestation = geminiGeneration?.providerAttestation;
@@ -394,6 +426,42 @@ export async function evaluateJob(jobId, options = {}) {
         && segment.providerDecisionHash === expectedProviderDecisionHash
         && segment.providerAttestationHash === geminiGeneration.providerAttestationHash;
     });
+  const localVideoScriptHash = hashJson(script);
+  const localVideoRequest = expectedLocalVideoRequest(job, script, currentRunId, localVideoScriptHash);
+  const localVideoRequestHash = localVideoRequest.requestHash;
+  const localVideoSegments = Array.isArray(localVideoGeneration?.segments) ? localVideoGeneration.segments : [];
+  const localVideoModelBinding = Boolean(
+    localVideoGeneration?.provider === "local-video"
+    && localVideoGeneration.jobId === jobId
+    && localVideoGeneration.runId === currentRunId
+    && localVideoGeneration.model
+    && localVideoGeneration.modelVersion
+    && localVideoGeneration.modelId
+    && localVideoGeneration.requestHash === localVideoRequestHash
+    && localVideoGeneration.scriptHash === localVideoScriptHash
+    && (!localVideoGeneration.request || hashJson(localVideoGeneration.request) === hashJson(localVideoRequest))
+  );
+  const localVideoClipBinding = localVideoModelBinding
+    && localVideoGeneration.status === "completed"
+    && localVideoSegments.length === actualClipTarget
+    && localVideoSegments.every((segment, index) => {
+      const expectedPath = evidenceRelative(jobDir, clips[index] || "");
+      return segment.index === index + 1
+        && segment.runId === currentRunId
+        && segment.requestHash === localVideoRequestHash
+        && segment.scriptHash === localVideoScriptHash
+        && segment.path === expectedPath
+        && segment.output === expectedPath
+        && segment.sha256
+        && segment.sha256 === currentClipHashes[index];
+    });
+  const localVideoReceiptBinding = Boolean(
+    job.provider === "local-video"
+    && localVideoModelBinding
+    && runManifest?.providerReceipt?.path === evidenceRelative(jobDir, localVideoGenerationPath)
+    && runManifest.providerReceipt.sha256 === localVideoReceiptHash
+    && runManifest.providerArtifact?.sha256 === localVideoReceiptHash
+  );
   const runInputReceipt = runManifest?.inputManifest;
   const inputManifestReceiptBound = Boolean(
     runInputReceipt
@@ -436,7 +504,7 @@ export async function evaluateJob(jobId, options = {}) {
     && JSON.stringify(request?.targetDurationRangeSec || []) === JSON.stringify(job.targetDurationRangeSec || [])
     && request?.captions === job.captions
     && request?.voiceover === job.voiceover
-    && request?.fallbackPolicy === (job.provider === "gemini-browser" ? "no-local-video-fallback" : "local-upload-edit")
+    && request?.fallbackPolicy === providerPolicy(job.provider)
     && runManifest.eventsPath === `runs/${currentRunId}/events.jsonl`
   );
   const providerDecisionBinding = Boolean(
@@ -533,7 +601,10 @@ export async function evaluateJob(jobId, options = {}) {
         && await hashExisting(artifactPath) === artifact.sha256;
     }))).every(Boolean)
   );
-  const providerProof = job.provider === "local" || (generationClipBinding && providerDecisionBinding && providerDecisionEventBinding);
+  const providerProof = job.provider === "local"
+    || (job.provider === "gemini-browser" && generationClipBinding && providerDecisionBinding && providerDecisionEventBinding)
+    || (job.provider === "local-video" && localVideoClipBinding && localVideoReceiptBinding && providerDecisionBinding && providerDecisionEventBinding);
+  const providerGenerationProvenance = job.provider === "gemini-browser" ? generationProvenance : job.provider === "local-video" ? localVideoModelBinding : false;
   const generatedCaptionCuesPerMinute = finalMedia?.duration > 0 ? round(captions.length * 60 / finalMedia.duration, 2) : null;
   const benchmarkCaptionDensity = Number(rlmBenchmark?.mediaEvidence?.averageCaptionCuesPerMinute);
   const normalizedSpecs = normalizedMedia.filter(Boolean).map((media) => `${media.width}x${media.height}@${round(media.fps, 2)}`);
@@ -592,6 +663,7 @@ export async function evaluateJob(jobId, options = {}) {
     join(jobDir, "caption-timing.json"),
     ...(voiceoverSync ? [join(jobDir, "voiceover-sync.json")] : []),
     ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
+    ...(localVideoGeneration ? [localVideoGenerationPath] : []),
     join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
     ...clips,
     ...normalized,
@@ -695,10 +767,10 @@ export async function evaluateJob(jobId, options = {}) {
   const ahp = calculateAHP();
   const totalScore = round(criteria.reduce((sum, criterion) => sum + criterion.score * (AHP_CRITERIA.find((item) => item.id === criterion.id)?.weight || 0) / 100, 0));
   const blockers = criteria.flatMap((criterion) => criterion.blockers.map((blocker) => `${criterion.label}: ${blocker}`));
-  const semanticGate = job.provider === "gemini-browser"
+  const semanticGate = (job.provider === "gemini-browser" || job.provider === "local-video")
     && (job.status === "completed" || finalizationReady)
     && providerProof
-    && generationProvenance
+    && providerGenerationProvenance
     && terminalRunBinding
     && immutableClosureBinding
     && immutableEvidenceBinding
@@ -718,7 +790,7 @@ export async function evaluateJob(jobId, options = {}) {
   if (!benchmarkReceiptBinding) blockers.push("벤치마크 스냅샷 영수증이 현재 실행과 결속되지 않았습니다.");
   if (!eventLogParsePass) blockers.push("불변 run 이벤트 로그에 해석할 수 없는 JSON 행이 있습니다.");
   if (!sourceSetBinding) blockers.push("요청한 출처 집합과 캡처된 출처 집합이 일치하지 않습니다.");
-  if (job.provider !== "gemini-browser") blockers.push("실제 Gemini 브라우저 생성 산출물만 의미론적 98점 판정에 사용할 수 있습니다.");
+  if (job.provider === "local") blockers.push("local 업로드·편집 산출물은 의미론적 98점 판정에 사용할 수 없습니다.");
   if (job.provider === "gemini-browser" && !providerProof) blockers.push("Gemini 브라우저 생성 provenance 기록이 없거나 요청한 클립 수를 채우지 못했습니다.");
   if (job.provider === "gemini-browser" && !providerDecisionBinding) blockers.push("Gemini 실행 provider 결정과 fallback 금지 정책이 run manifest에 결속되지 않았습니다.");
   if (job.provider === "gemini-browser" && !providerDecisionEventBinding) blockers.push("Gemini provider 결정 이벤트의 해시·runId 결속이 검증되지 않았습니다.");
@@ -726,6 +798,8 @@ export async function evaluateJob(jobId, options = {}) {
   if (job.provider === "gemini-browser" && !terminalRunBinding) blockers.push("Gemini 의미론 판정은 완료된 작업과 terminal run manifest에서만 허용됩니다.");
   if (job.provider === "gemini-browser" && !immutableClosureBinding) blockers.push("Gemini 의미론 판정에 필요한 불변 산출물·이벤트 해시 폐쇄가 없습니다.");
   if (job.provider === "gemini-browser" && !immutableEvidenceBinding) blockers.push("Gemini 의미론 판정에 사용한 품질·미디어 해시가 불변 run 산출물과 일치하지 않습니다.");
+  if (job.provider === "local-video" && !localVideoModelBinding) blockers.push("local-video 생성 영수증의 provider·model·요청·스크립트 해시 결속이 검증되지 않았습니다.");
+  if (job.provider === "local-video" && !localVideoReceiptBinding) blockers.push("local-video 생성 영수증이 현재 run 산출물로 봉인되지 않았습니다.");
   if (!claimEvidencePass) blockers.push("장면별 주장에 연결된 인용 가능한 출처 근거가 없습니다.");
   const reportedJobStatus = finalizationReady ? "completed" : job.status;
   const quality = {
@@ -750,6 +824,11 @@ export async function evaluateJob(jobId, options = {}) {
       providerDecisionEventBinding,
       providerAttestationBinding,
       geminiGeneration: geminiGeneration ? { status: geminiGeneration.status, segmentCount: geminiGeneration.segments?.length || 0, browser: geminiGeneration.browser, profileDir: geminiGeneration.profileDir } : null,
+      localVideoGeneration: localVideoGeneration ? { status: localVideoGeneration.status, segmentCount: localVideoSegments.length, model: localVideoGeneration.model, modelVersion: localVideoGeneration.modelVersion, modelId: localVideoGeneration.modelId, receiptPath: evidenceRelative(jobDir, localVideoGenerationPath), receiptSha256: localVideoReceiptHash } : null,
+      localVideoModelBinding,
+      localVideoClipBinding,
+      localVideoReceiptBinding,
+      providerGenerationProvenance,
       generationClipBinding,
       generationProvenance,
       terminalRunBinding,
