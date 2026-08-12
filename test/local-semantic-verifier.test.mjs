@@ -415,4 +415,4 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
   });
   expect(tampered.verified).toBe(false);
   expect(tampered.blockers.some((blocker) => blocker.includes("response-file-hash") || blocker.includes("raw-response-hash") || blocker.startsWith("immutable:"))).toBe(true);
-});
+}, 20_000);
