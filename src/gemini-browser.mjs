@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { JOBS_DIR } from "./pipeline.mjs";
@@ -9,8 +9,24 @@ import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./prove
 
 const DEFAULT_CDP = process.env.CHROME_CDP_URL || "http://127.0.0.1:9222";
 const PROFILE_DIR = process.env.CHROME_PROFILE_DIR || join(process.env.HOME || "/tmp", ".ps4-ai-video-studio", "chrome-profile");
-const DOWNLOAD_TIMEOUT_MS = Math.max(60_000, Number(process.env.GEMINI_VIDEO_TIMEOUT_MS || 600_000));
+const DEFAULT_VIDEO_TIMEOUT_MS = 1_200_000;
+const MIN_VIDEO_TIMEOUT_MS = 300_000;
+const MAX_VIDEO_TIMEOUT_MS = 3_600_000;
 const MIN_NEW_HEADLESS_CHROME_MAJOR = 109;
+
+export function resolveGeminiVideoTimeoutMs(environment = process.env) {
+  const raw = environment.GEMINI_VIDEO_TIMEOUT_MS;
+  if (raw === undefined || raw === null || String(raw).trim() === "") return DEFAULT_VIDEO_TIMEOUT_MS;
+  const normalized = String(raw).trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("GEMINI_VIDEO_TIMEOUT_MS에는 밀리초 단위의 정수만 사용할 수 있습니다.");
+  }
+  const timeoutMs = Number(normalized);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < MIN_VIDEO_TIMEOUT_MS || timeoutMs > MAX_VIDEO_TIMEOUT_MS) {
+    throw new Error(`GEMINI_VIDEO_TIMEOUT_MS는 ${MIN_VIDEO_TIMEOUT_MS}~${MAX_VIDEO_TIMEOUT_MS} 사이여야 합니다.`);
+  }
+  return timeoutMs;
+}
 
 function browserConfig(input = {}) {
   const cdpUrl = String(input.cdpUrl || DEFAULT_CDP).replace(/\/$/, "");
@@ -118,6 +134,112 @@ function stableValue(value) {
 
 function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
+}
+
+export function canonicalGeminiConversationUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ""));
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "gemini.google.com") return null;
+  const path = parsed.pathname.replace(/\/+$/, "");
+  if (!/^\/app\/[^/?#]+$/i.test(path)) return null;
+  return `https://gemini.google.com${path}`;
+}
+
+export function selectGeminiRecoveryTarget(checkpoint = {}, targets = []) {
+  const conversationUrl = canonicalGeminiConversationUrl(checkpoint.conversationUrl);
+  const checkpointTargetId = String(checkpoint.targetId || "").trim();
+  if (!conversationUrl || !checkpointTargetId) {
+    return { status: "invalid-checkpoint", target: null, conversationUrl };
+  }
+  const matches = (Array.isArray(targets) ? targets : []).filter((target) => (
+    String(target?.type || "").toLowerCase() === "page"
+    && canonicalGeminiConversationUrl(target?.url) === conversationUrl
+  ));
+  if (matches.length === 0) return { status: "missing", target: null, conversationUrl };
+  if (matches.length !== 1) return { status: "ambiguous", target: null, conversationUrl, matchCount: matches.length };
+  const target = matches[0];
+  if (String(target.targetId || "") !== checkpointTargetId) {
+    return { status: "target-id-mismatch", target: null, conversationUrl };
+  }
+  return { status: "exact", target, conversationUrl };
+}
+
+export function geminiPendingRecoveryDecision(previousGeneration, current = {}) {
+  const pending = previousGeneration?.pendingSegment;
+  if (!pending) return { applicable: false, eligible: false, reason: "no-pending-checkpoint" };
+  const semanticMatch = previousGeneration?.jobId === current.jobId
+    && previousGeneration?.resumeRequestHash === current.resumeRequestHash
+    && previousGeneration?.resumeScriptHash === current.resumeScriptHash;
+  if (!semanticMatch) return { applicable: false, eligible: false, reason: "semantic-resume-mismatch" };
+  const reject = (reason) => ({ applicable: true, eligible: false, reason });
+  if (Number(previousGeneration.schemaVersion) < 4 || previousGeneration.provider !== "gemini-browser") return reject("generation-receipt-version-invalid");
+  if (!["running", "failed"].includes(previousGeneration.status)) return reject("generation-status-not-recoverable");
+  if (hashJson(previousGeneration.sessionBinding) !== current.sessionBindingHash) return reject("session-receipt-integrity-mismatch");
+  if (hashJson(previousGeneration.providerDecision) !== current.providerDecisionHash) return reject("provider-decision-receipt-integrity-mismatch");
+  if (hashJson(previousGeneration.providerAttestation) !== current.providerAttestationHash) return reject("provider-attestation-receipt-integrity-mismatch");
+  if (pending.schemaVersion !== 1) return reject("pending-checkpoint-version-invalid");
+  if (pending.status !== "submitted-awaiting-result") return reject("pending-status-not-recoverable");
+  if (!Number.isInteger(pending.index) || pending.index < 1 || pending.index !== current.index) return reject("segment-index-mismatch");
+  if (!previousGeneration.runId || pending.runId !== previousGeneration.runId) return reject("run-binding-mismatch");
+  if (!previousGeneration.requestHash || pending.requestHash !== previousGeneration.requestHash) return reject("request-binding-mismatch");
+  if (!previousGeneration.scriptHash || pending.scriptHash !== previousGeneration.scriptHash) return reject("script-binding-mismatch");
+  if (pending.resumeRequestHash !== previousGeneration.resumeRequestHash || pending.resumeRequestHash !== current.resumeRequestHash) {
+    return reject("resume-request-binding-mismatch");
+  }
+  if (pending.resumeScriptHash !== previousGeneration.resumeScriptHash || pending.resumeScriptHash !== current.resumeScriptHash) {
+    return reject("resume-script-binding-mismatch");
+  }
+  if (!current.sessionBindingHash || previousGeneration.sessionBindingHash !== current.sessionBindingHash || pending.sessionBindingHash !== current.sessionBindingHash) {
+    return reject("session-binding-mismatch");
+  }
+  if (!current.providerDecisionHash || previousGeneration.providerDecisionHash !== current.providerDecisionHash || pending.providerDecisionHash !== current.providerDecisionHash) {
+    return reject("provider-decision-binding-mismatch");
+  }
+  if (!current.providerAttestationHash || previousGeneration.providerAttestationHash !== current.providerAttestationHash || pending.providerAttestationHash !== current.providerAttestationHash) {
+    return reject("provider-attestation-binding-mismatch");
+  }
+  const prompt = String(current.prompt || "");
+  if (!prompt || pending.prompt !== prompt || pending.promptHash !== hashJson({ prompt })) return reject("prompt-binding-mismatch");
+  if (
+    pending.submissionAcknowledgement?.verified !== true
+    || ![1, 2].includes(pending.submissionAcknowledgement?.clickCount)
+    || !Array.isArray(pending.submissionAcknowledgement?.evidenceTypes)
+    || pending.submissionAcknowledgement.evidenceTypes.length === 0
+    || pending.submissionAcknowledgement.evidenceTypes.some((type) => !["user-message", "stop-response", "generation"].includes(type))
+  ) return reject("submission-acknowledgement-missing");
+  if (
+    !Number.isFinite(Date.parse(pending.submittedAt))
+    || !Number.isInteger(pending.timeoutMs)
+    || pending.timeoutMs < MIN_VIDEO_TIMEOUT_MS
+    || pending.timeoutMs > MAX_VIDEO_TIMEOUT_MS
+  ) return reject("pending-timing-checkpoint-invalid");
+  if (
+    !canonicalGeminiConversationUrl(pending.conversationUrl)
+    || !String(pending.targetId || "").trim()
+    || String(pending.targetId).length > 256
+  ) {
+    return reject("conversation-target-binding-missing");
+  }
+  for (const key of ["videos", "links", "chats"]) {
+    if (
+      !Array.isArray(pending.knownMedia?.[key])
+      || pending.knownMedia[key].length > 2_000
+      || pending.knownMedia[key].some((value) => typeof value !== "string" || value.length > 8_192)
+    ) {
+      return reject("known-media-checkpoint-invalid");
+    }
+  }
+  return {
+    applicable: true,
+    eligible: true,
+    reason: "exact-pending-recovery",
+    checkpoint: pending,
+    conversationUrl: canonicalGeminiConversationUrl(pending.conversationUrl)
+  };
 }
 
 export function geminiVideoQuotaMessage(value) {
@@ -300,7 +422,7 @@ class CdpBrowser {
     this.targetId = null;
   }
 
-  async connect() {
+  async connect(options = {}) {
     this.ws = new WebSocket(this.version.webSocketDebuggerUrl);
     this.ws.addEventListener("message", (event) => {
       const message = JSON.parse(typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8"));
@@ -315,8 +437,17 @@ class CdpBrowser {
       this.ws.addEventListener("open", resolve, { once: true });
       this.ws.addEventListener("error", reject, { once: true });
     });
-    const created = await this.command("Target.createTarget", { url: "https://gemini.google.com/app", newWindow: true });
-    this.targetId = created.targetId;
+    if (options.resumeTarget) {
+      const listed = await this.command("Target.getTargets");
+      const selection = selectGeminiRecoveryTarget(options.resumeTarget, listed.targetInfos || []);
+      if (selection.status !== "exact") {
+        throw new Error(`Gemini 대기 결과의 기존 대화 탭을 안전하게 복구하지 못했습니다 (${selection.status}). 중복 생성을 막기 위해 새 요청을 전송하지 않습니다.`);
+      }
+      this.targetId = selection.target.targetId;
+    } else {
+      const created = await this.command("Target.createTarget", { url: "https://gemini.google.com/app", newWindow: true });
+      this.targetId = created.targetId;
+    }
     const attached = await this.command("Target.attachToTarget", { targetId: this.targetId, flatten: true });
     this.sessionId = attached.sessionId;
     await mkdir(join(process.cwd(), "workspace", "downloads"), { recursive: true });
@@ -360,20 +491,36 @@ class CdpBrowser {
     await sleep(2500);
   }
 
-  async close() {
-    try {
-      if (this.targetId) await this.command("Target.closeTarget", { targetId: this.targetId });
-    } catch {}
+  async close(options = {}) {
+    const preserveTarget = options.preserveTarget === true;
+    let targetClosed = false;
+    let sessionDetached = false;
+    if (preserveTarget) {
+      try {
+        if (this.sessionId) {
+          await this.command("Target.detachFromTarget", { sessionId: this.sessionId });
+          sessionDetached = true;
+        }
+      } catch {}
+    } else {
+      try {
+        if (this.targetId) {
+          const result = await this.command("Target.closeTarget", { targetId: this.targetId });
+          targetClosed = result?.success === true;
+        }
+      } catch {}
+    }
     for (const request of this.pending.values()) {
       clearTimeout(request.timeout);
       request.reject(new Error("Chrome DevTools 세션이 닫혔습니다."));
     }
     this.pending.clear();
     try { this.ws?.close(); } catch {}
+    return { preserveTarget, targetClosed, sessionDetached, targetId: this.targetId || null };
   }
 }
 
-async function connectBrowser(input = {}) {
+async function resolveBrowserVersion(input = {}) {
   const config = browserConfig(input);
   let version;
   try {
@@ -382,8 +529,20 @@ async function connectBrowser(input = {}) {
     version = await startChrome(config);
   }
   assertGeminiChromeRuntime(version);
+  return version;
+}
+
+async function connectBrowser(input = {}, options = {}) {
+  const config = browserConfig(input);
+  const version = options.version || await resolveBrowserVersion(config);
+  assertGeminiChromeRuntime(version);
   const browser = new CdpBrowser(version, config.cdpUrl);
-  await browser.connect();
+  try {
+    await browser.connect({ resumeTarget: options.resumeTarget || null });
+  } catch (error) {
+    await browser.close({ preserveTarget: true }).catch(() => {});
+    throw error;
+  }
   return browser;
 }
 
@@ -854,6 +1013,33 @@ async function inspectMedia(browser) {
   }))()`);
 }
 
+function serializeKnownMedia(knownMedia = {}) {
+  return Object.fromEntries(["videos", "links", "chats"].map((key) => [
+    key,
+    [...new Set(Array.from(knownMedia[key] || []).filter((value) => typeof value === "string" && value))].sort()
+  ]));
+}
+
+function deserializeKnownMedia(knownMedia = {}) {
+  return Object.fromEntries(["videos", "links", "chats"].map((key) => [key, new Set(knownMedia[key] || [])]));
+}
+
+async function waitForConversationBinding(browser, initialObservation = {}) {
+  let conversationUrl = canonicalGeminiConversationUrl(initialObservation.conversationUrl);
+  for (let attempt = 0; !conversationUrl && attempt < 120; attempt += 1) {
+    const href = await browser.evaluate("location.href").catch(() => null);
+    conversationUrl = canonicalGeminiConversationUrl(href);
+    if (!conversationUrl && attempt < 119) await sleep(250);
+  }
+  return conversationUrl;
+}
+
+async function writeGenerationCheckpoint(path, generation) {
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, JSON.stringify(generation, null, 2));
+  await rename(temporary, path);
+}
+
 async function downloadFromPage(browser, url) {
   const encoded = JSON.stringify(url);
   const result = await browser.evaluate(`(async () => {
@@ -873,7 +1059,16 @@ async function downloadFromPage(browser, url) {
   return Buffer.from(result.base64, "base64");
 }
 
-async function waitForClip(browser, knownMedia, deadline) {
+export class GeminiClipTimeoutError extends Error {
+  constructor(timeoutMs) {
+    super(`Gemini 영상 생성 결과를 ${Math.round(timeoutMs / 60_000)}분 안에 찾지 못했습니다. 제출된 대화 탭은 늦게 도착하는 결과를 회수할 수 있도록 보존합니다.`);
+    this.name = "GeminiClipTimeoutError";
+    this.code = "GEMINI_VIDEO_RESULT_TIMEOUT";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+async function waitForClip(browser, knownMedia, deadline, timeoutMs) {
   while (Date.now() < deadline) {
     const media = await inspectMedia(browser);
     const quotaMessage = geminiVideoQuotaMessage(media.body);
@@ -902,7 +1097,7 @@ async function waitForClip(browser, knownMedia, deadline) {
     }
     await sleep(2500);
   }
-  throw new Error("Gemini 영상 생성 결과를 시간 안에 찾지 못했습니다. 로그인·동영상 기능·할당량을 확인하세요.");
+  throw new GeminiClipTimeoutError(timeoutMs);
 }
 
 
@@ -987,17 +1182,19 @@ export async function geminiQuotaStatus(input = {}) {
   }
 }
 
+function geminiClipPrompt(job, script, segment) {
+  return `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, and no third-party logos. Retain any provider-required provenance mark. Korean documentary mood.`;
+}
+
 export async function generateGeminiClips(job, script, onProgress = async () => {}) {
   const config = browserConfig({ cdpUrl: job.geminiCdpUrl, profileDir: job.geminiProfileDir });
-  const browser = await connectBrowser(config);
   const jobDir = join(JOBS_DIR, job.id);
   const clipsDir = join(jobDir, "clips");
+  const generationPath = join(jobDir, "gemini-generation.json");
+  const timeoutMs = resolveGeminiVideoTimeoutMs();
   const requestPayload = generationRequest(job, script);
   const scriptHash = hashJson(script);
   const resumeScriptHash = canonicalGeminiResumeScriptHash(script);
-  const launchPolicy = resolveGeminiChromeLaunchPolicy();
-  const runtime = assertGeminiChromeRuntime(browser.version, launchPolicy);
-  const actualHeadless = runtime.actualHeadless;
   const requestHash = hashJson({ ...requestPayload, scriptHash });
   const resumeRequestHash = hashJson({ ...requestPayload, scriptHash: resumeScriptHash });
   const providerDecision = {
@@ -1010,36 +1207,62 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   const sessionBinding = canonicalGeminiSessionBinding(job);
   const sessionBindingHash = geminiSessionBindingHash(job);
   if (!sessionBinding || !sessionBindingHash) throw new Error("Gemini 실행 세션을 안전하게 결속할 수 없습니다.");
+
+  let previousGeneration = null;
+  if (existsSync(generationPath)) {
+    try {
+      previousGeneration = JSON.parse(await readFile(generationPath, "utf8"));
+    } catch {
+      previousGeneration = null;
+    }
+  }
+
+  const version = await resolveBrowserVersion(config);
+  const launchPolicy = resolveGeminiChromeLaunchPolicy();
+  const runtime = assertGeminiChromeRuntime(version, launchPolicy);
   const providerAttestation = {
     type: "gemini-chrome-session",
     provider: "gemini-browser",
-    browser: browser.version.Browser || null,
+    browser: version.Browser || null,
     sessionBinding,
     sessionBindingHash,
     persistentProfile: true,
-    headless: actualHeadless,
+    headless: runtime.actualHeadless,
     headlessRequested: launchPolicy.headless,
     chromeMajor: runtime.chromeMajor,
     headlessImplementation: launchPolicy.headlessImplementation,
     fallbackUsed: false
   };
   const providerAttestationHash = hashJson(providerAttestation);
-  let previousGeneration = null;
-  if (existsSync(join(jobDir, "gemini-generation.json"))) {
-    try {
-      previousGeneration = JSON.parse(await readFile(join(jobDir, "gemini-generation.json"), "utf8"));
-    } catch {
-      previousGeneration = null;
-    }
+  const pendingIndex = Number(previousGeneration?.pendingSegment?.index);
+  const pendingScriptSegment = Number.isInteger(pendingIndex) ? script.segments[pendingIndex - 1] : null;
+  const pendingPrompt = pendingScriptSegment ? geminiClipPrompt(job, script, pendingScriptSegment) : "";
+  const recoveryDecision = geminiPendingRecoveryDecision(previousGeneration, {
+    jobId: job.id,
+    index: pendingIndex,
+    prompt: pendingPrompt,
+    resumeRequestHash,
+    resumeScriptHash,
+    sessionBindingHash,
+    providerDecisionHash,
+    providerAttestationHash
+  });
+  if (previousGeneration?.pendingSegment && !recoveryDecision.eligible) {
+    throw new Error(`Gemini 제출 체크포인트가 현재 실행과 안전하게 결속되지 않습니다 (${recoveryDecision.reason}). 중복 생성을 막기 위해 새 요청을 전송하지 않습니다.`);
   }
+
+  const browser = await connectBrowser(config, {
+    version,
+    resumeTarget: recoveryDecision.eligible ? recoveryDecision.checkpoint : null
+  });
   const previousSegments = new Map((previousGeneration?.segments || []).map((segment) => [segment.index, segment]));
   const generation = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     jobId: job.id,
     provider: "gemini-browser",
     sessionBinding,
     sessionBindingHash,
-    browser: browser.version.Browser || null,
+    browser: version.Browser || null,
     startedAt: new Date().toISOString(),
     status: "running",
     runId: job.runId || null,
@@ -1053,7 +1276,18 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     providerDecision,
     providerDecisionHash,
     request: requestPayload,
-    resumedFrom: previousGeneration?.status === "failed" ? previousGeneration.completedAt || null : null,
+    resultWaitPolicy: {
+      timeoutMs,
+      minimumMs: MIN_VIDEO_TIMEOUT_MS,
+      maximumMs: MAX_VIDEO_TIMEOUT_MS,
+      timerStartsAfter: "verified-submission-and-durable-checkpoint",
+      preserveConversationTargetWhilePending: true
+    },
+    resumedFrom: ["failed", "running"].includes(previousGeneration?.status)
+      ? previousGeneration.completedAt || previousGeneration.startedAt || null
+      : null,
+    pendingSegment: null,
+    recoveredPendingSegments: [],
     segments: [],
     rejectedResumes: []
   };
@@ -1083,27 +1317,67 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       && segment.path === segment.output
     ))
   );
-  const canResumePartial = previousGeneration?.status === "failed"
+  const canResumePartial = ["failed", "running"].includes(previousGeneration?.status)
     && Array.isArray(previousGeneration.segments)
     && previousGeneration.segments.length > 0
     && bindingMatches
     && resumeSessionMatches
     && previousSegmentsBound;
+  let preserveTarget = false;
+
+  const completeSegment = async ({ index, segment, target, prompt, acknowledgement, bytes, recovered = false, recoverySource = null }) => {
+    await writeFile(target, bytes);
+    if (!(await clipMatchesFormat(target, job.format))) {
+      await unlink(target).catch(() => {});
+      throw new Error(`Gemini가 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 비율의 영상을 반환하지 않았습니다.`);
+    }
+    const path = `clips/${String(index).padStart(2, "0")}.mp4`;
+    const completedSegment = {
+      index,
+      runId: job.runId || null,
+      requestHash,
+      scriptHash,
+      resumeRequestHash,
+      resumeScriptHash,
+      durationHint: segment.durationHint || null,
+      prompt,
+      submissionAcknowledgement: acknowledgement,
+      path,
+      output: path,
+      sha256: await hashFile(target).catch(() => null),
+      providerDecisionHash,
+      providerAttestationHash,
+      ...(recovered ? { recovered: true, sourceRunId: recoverySource?.runId || null, sourceSubmittedAt: recoverySource?.submittedAt || null } : {})
+    };
+    const pendingBeforeCompletion = generation.pendingSegment;
+    generation.segments.push(completedSegment);
+    generation.pendingSegment = null;
+    try {
+      await writeGenerationCheckpoint(generationPath, generation);
+    } catch (error) {
+      generation.segments.pop();
+      generation.pendingSegment = pendingBeforeCompletion;
+      throw error;
+    }
+  };
+
   try {
     for (let index = 0; index < script.segments.length; index += 1) {
+      const segmentNumber = index + 1;
       const segment = script.segments[index];
-      const target = join(clipsDir, `${String(index + 1).padStart(2, "0")}.mp4`);
-      const previousSegment = previousSegments.get(index + 1);
+      const prompt = geminiClipPrompt(job, script, segment);
+      const target = join(clipsDir, `${String(segmentNumber).padStart(2, "0")}.mp4`);
+      const previousSegment = previousSegments.get(segmentNumber);
       const existingHashMatches = canResumePartial
         && previousSegment?.sha256
         && existsSync(target)
         && await hashFile(target).catch(() => null) === previousSegment.sha256;
       const existingFormatMatches = existingHashMatches ? await clipMatchesFormat(target, job.format) : false;
       if (existingHashMatches && existingFormatMatches) {
-        const path = `clips/${String(index + 1).padStart(2, "0")}.mp4`;
+        const path = `clips/${String(segmentNumber).padStart(2, "0")}.mp4`;
         generation.segments.push({
           ...previousSegment,
-          index: index + 1,
+          index: segmentNumber,
           runId: job.runId || null,
           requestHash,
           scriptHash,
@@ -1118,25 +1392,63 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
           providerAttestationHash,
           resumed: true
         });
-        await onProgress(Math.round(((index + 1) / script.segments.length) * 100), `${index + 1}/${script.segments.length} 기존 Gemini 클립을 재사용했습니다.`);
+        await onProgress(Math.round((segmentNumber / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 기존 Gemini 클립을 재사용했습니다.`);
         continue;
+      }
+      if (recoveryDecision.eligible && segmentNumber < pendingIndex) {
+        throw new Error(`Gemini 대기 결과를 복구하기 전 ${segmentNumber}번 선행 클립의 결속을 확인하지 못했습니다. 중복 요청을 전송하지 않습니다.`);
       }
       if (existingHashMatches && !existingFormatMatches) {
         generation.rejectedResumes.push({
-          index: index + 1,
-          path: `clips/${String(index + 1).padStart(2, "0")}.mp4`,
+          index: segmentNumber,
+          path: `clips/${String(segmentNumber).padStart(2, "0")}.mp4`,
           expectedFormat: job.format,
           reason: "format-mismatch"
         });
       }
-      await onProgress(Math.round((index / script.segments.length) * 100), `${index + 1}/${script.segments.length} 장면을 Gemini에 요청하는 중입니다.`);
+
+      if (recoveryDecision.eligible && segmentNumber === pendingIndex) {
+        const checkpoint = recoveryDecision.checkpoint;
+        generation.pendingSegment = {
+          ...checkpoint,
+          runId: job.runId || null,
+          requestHash,
+          scriptHash,
+          resumeRequestHash,
+          resumeScriptHash,
+          sessionBindingHash,
+          providerDecisionHash,
+          providerAttestationHash,
+          recoverySourceRunId: checkpoint.runId,
+          recoveryStartedAt: new Date().toISOString(),
+          timeoutMs
+        };
+        await writeGenerationCheckpoint(generationPath, generation);
+        await onProgress(Math.round((index / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 제출된 Gemini 대화에서 늦게 도착한 결과를 회수하는 중입니다.`);
+        const waitStartedAt = Date.now();
+        generation.pendingSegment.waitStartedAt = new Date(waitStartedAt).toISOString();
+        generation.pendingSegment.waitDeadlineAt = new Date(waitStartedAt + timeoutMs).toISOString();
+        await writeGenerationCheckpoint(generationPath, generation);
+        const bytes = await waitForClip(browser, deserializeKnownMedia(checkpoint.knownMedia), waitStartedAt + timeoutMs, timeoutMs);
+        const acknowledgement = {
+          ...checkpoint.submissionAcknowledgement,
+          recoveredFromCheckpoint: true,
+          sourceRunId: checkpoint.runId
+        };
+        await completeSegment({ index: segmentNumber, segment, target, prompt, acknowledgement, bytes, recovered: true, recoverySource: checkpoint });
+        generation.recoveredPendingSegments.push({ index: segmentNumber, sourceRunId: checkpoint.runId, recoveredAt: new Date().toISOString() });
+        await writeGenerationCheckpoint(generationPath, generation);
+        await onProgress(Math.round((segmentNumber / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 기존 Gemini 대화의 결과를 회수했습니다.`);
+        continue;
+      }
+
+      await onProgress(Math.round((index / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 장면을 Gemini에 요청하는 중입니다.`);
       await browser.navigate("https://gemini.google.com/videos");
       const tool = await clickVideoTool(browser, job.format);
       if (tool.authRequired) throw new Error("Gemini 전용 프로필의 로그인 세션이 만료되었습니다. GEMINI_CHROME_HEADLESS=0으로 같은 프로필을 열어 직접 로그인한 뒤 headless로 다시 시작하세요.");
       if (tool.quota) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${tool.quotaMessage || "할당량 갱신이 필요합니다."}`);
       if (!tool.clicked) throw new Error(`Gemini 동영상 도구를 찾지 못했습니다. 화면에 "동영상 만들기"가 활성화되어 있는지 확인하세요. 감지된 버튼: ${(tool.buttons || []).join(", ")}`);
       if (tool.ratioConfigured !== true) throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비를 선택하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
-      const prompt = `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, and no third-party logos. Retain any provider-required provenance mark. Korean documentary mood.`;
       const filled = await fillPrompt(browser, prompt);
       if (!filled.filled) throw new Error("Gemini 입력창을 찾지 못했습니다.");
       const submissionRatio = await verifyVideoAspectRatio(browser, job.format);
@@ -1153,43 +1465,78 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       if (!submitted.submitted || submitted.verified !== true) {
         throw new Error(`Gemini 영상 요청 전송을 확인하지 못했습니다 (${submitted.reason || "authoritative-submit-evidence-missing"}). 입력창 초기화와 사용자 메시지·응답 중지·생성 상태 중 하나를 함께 확인해야 합니다.`);
       }
-      const bytes = await waitForClip(browser, knownMedia, Date.now() + DOWNLOAD_TIMEOUT_MS);
-      await writeFile(target, bytes);
-      if (!(await clipMatchesFormat(target, job.format))) {
-        await unlink(target).catch(() => {});
-        throw new Error(`Gemini가 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 비율의 영상을 반환하지 않았습니다.`);
-      }
-      generation.segments.push({
-        index: index + 1,
+      const submittedAt = new Date().toISOString();
+      const conversationUrl = await waitForConversationBinding(browser, submitted.observation || {});
+      generation.pendingSegment = {
+        schemaVersion: 1,
+        status: "submitted-awaiting-result",
+        index: segmentNumber,
         runId: job.runId || null,
         requestHash,
         scriptHash,
         resumeRequestHash,
         resumeScriptHash,
+        sessionBindingHash,
+        providerDecisionHash,
+        providerAttestationHash,
         durationHint: segment.durationHint || null,
         prompt,
+        promptHash: hashJson({ prompt }),
+        submittedAt,
+        conversationUrl,
+        targetId: browser.targetId,
+        knownMedia: serializeKnownMedia(knownMedia),
         submissionAcknowledgement: {
           verified: true,
           clickCount: submitted.clickCount,
           evidenceTypes: submitted.evidenceTypes
         },
-        path: `clips/${String(index + 1).padStart(2, "0")}.mp4`,
-        output: `clips/${String(index + 1).padStart(2, "0")}.mp4`,
-        sha256: await hashFile(target).catch(() => null),
-        providerDecisionHash,
-        providerAttestationHash
+        timeoutMs
+      };
+      await writeGenerationCheckpoint(generationPath, generation);
+      if (!conversationUrl) {
+        throw new Error("Gemini 요청은 전송됐지만 대화 URL을 안전하게 결속하지 못했습니다. 대화 탭을 보존하고 중복 요청을 차단합니다.");
+      }
+      const waitStartedAt = Date.now();
+      generation.pendingSegment.waitStartedAt = new Date(waitStartedAt).toISOString();
+      generation.pendingSegment.waitDeadlineAt = new Date(waitStartedAt + timeoutMs).toISOString();
+      await writeGenerationCheckpoint(generationPath, generation);
+      const bytes = await waitForClip(browser, knownMedia, waitStartedAt + timeoutMs, timeoutMs);
+      await completeSegment({
+        index: segmentNumber,
+        segment,
+        target,
+        prompt,
+        acknowledgement: generation.pendingSegment.submissionAcknowledgement,
+        bytes
       });
-      await onProgress(Math.round(((index + 1) / script.segments.length) * 100), `${index + 1}/${script.segments.length} 장면 다운로드 완료`);
+      await onProgress(Math.round((segmentNumber / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 장면 다운로드 완료`);
     }
   } catch (error) {
+    preserveTarget = Boolean(generation.pendingSegment);
     generation.status = "failed";
     generation.error = error.message;
+    generation.errorCode = error.code || null;
+    if (generation.pendingSegment) {
+      generation.pendingSegment.lastFailureAt = new Date().toISOString();
+      generation.pendingSegment.lastFailureCode = error.code || "GEMINI_PENDING_RESULT_FAILURE";
+      generation.pendingSegment.targetPreservationRequested = true;
+    }
     throw error;
   } finally {
-    await browser.close();
+    const closeResult = await browser.close({ preserveTarget });
+    if (generation.pendingSegment) {
+      generation.pendingSegment.targetPreservation = {
+        requested: preserveTarget,
+        closeTargetCommandSent: !preserveTarget,
+        cdpSessionDetached: closeResult.sessionDetached,
+        targetId: closeResult.targetId,
+        recordedAt: new Date().toISOString()
+      };
+    }
     if (generation.status === "running") generation.status = "completed";
     generation.completedAt = new Date().toISOString();
-    await writeFile(join(jobDir, "gemini-generation.json"), JSON.stringify(generation, null, 2)).catch(() => {});
+    await writeGenerationCheckpoint(generationPath, generation);
   }
   return generation;
 }

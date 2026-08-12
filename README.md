@@ -128,12 +128,14 @@ bun run quality:rlm
 ```dotenv
 CHROME_CDP_URL=http://127.0.0.1:9222
 CHROME_PROFILE_DIR=/Users/you/.ps4-ai-video-studio/chrome-profile
-GEMINI_VIDEO_TIMEOUT_MS=600000
+GEMINI_VIDEO_TIMEOUT_MS=1200000
 GEMINI_CHROME_HEADLESS=1
 GEMINI_CHROME_BACKGROUND=0
 ```
 
 `CHROME_PROFILE_DIR`는 `~/.ps4-ai-video-studio/` 안의 전용 경로여야 합니다. 일상용 Chrome 프로필을 공유하지 마세요. 런타임 기본값은 창을 열지 않는 Chrome `--headless=new`이며 Chrome 109 이상을 요구합니다. CDP는 `127.0.0.1`에만 결속되고, 요청한 headless/visible 모드와 이미 해당 포트에 떠 있는 Chrome의 실제 모드가 다르면 자동화는 새 창이나 요청을 만들지 않고 중단합니다.
+
+영상 1개 결과 대기 기본값은 20분이며 `GEMINI_VIDEO_TIMEOUT_MS`에는 5분~60분 범위의 정수 밀리초만 허용됩니다. 타이머는 제출 확인과 체크포인트 저장 뒤 시작됩니다. 결과가 늦어 시간 초과되면 제출된 Gemini 대화 탭을 닫지 않고 CDP만 분리합니다. 같은 작업·대본·프로필 결속으로 재실행할 때 정확히 하나의 기존 대화 탭이 확인되어야 그 결과부터 회수하며, 탭이 없거나 중복되어 모호하면 중복 생성을 막기 위해 새 요청을 보내지 않습니다.
 
 최초 로그인 또는 세션 갱신이 필요할 때만 `GEMINI_CHROME_HEADLESS=0`과 `GEMINI_CHROME_BACKGROUND=0`으로 같은 전용 프로필을 열어 사람이 로그인합니다. 로그인 후 그 전용 Chrome을 **완전히 종료**하고 `GEMINI_CHROME_HEADLESS=1`로 되돌린 다음 서버와 모니터를 재시작하세요. 동일한 `CHROME_PROFILE_DIR`의 쿠키·세션이 재사용되지만, 만료된 로그인이나 CAPTCHA는 headless에서 우회하지 않고 명시적으로 실패합니다. `GEMINI_API_KEY`는 근거 결속 대본 생성을 위한 선택 설정이며 Chrome 영상 생성 세션과는 별개입니다.
 

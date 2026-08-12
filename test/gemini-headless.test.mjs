@@ -1,19 +1,24 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   assertGeminiChromeRuntime,
   buildGeminiChromeLaunchArgs,
+  canonicalGeminiConversationUrl,
   canonicalGeminiResumeScriptHash,
   confirmGeminiPromptSubmission,
   geminiAspectRatioEvidence,
   geminiChromeMajorVersion,
   geminiPromptRetryDecision,
+  geminiPendingRecoveryDecision,
   geminiPromptSubmissionDomState,
   geminiPromptSubmissionEvidence,
   geminiVideoQuotaMessage,
   isHeadlessChromeVersion,
-  resolveGeminiChromeLaunchPolicy
+  resolveGeminiChromeLaunchPolicy,
+  resolveGeminiVideoTimeoutMs,
+  selectGeminiRecoveryTarget
 } from "../src/gemini-browser.mjs";
 
 const HEADLESS_151 = {
@@ -105,6 +110,122 @@ describe("Gemini Chrome runtime mode attestation", () => {
       "User-Agent": "HeadlessChrome/108.0.0.0"
     }, { headless: true, mode: "headless" })).toThrow("Chrome 109 이상");
     expect(() => assertGeminiChromeRuntime({ Browser: "Unknown/1" }, { headless: true, mode: "headless" })).toThrow("확인할 수 없습니다");
+  });
+});
+
+describe("Gemini long-running result recovery", () => {
+  test("defaults to twenty minutes and strictly bounds timeout configuration", () => {
+    expect(resolveGeminiVideoTimeoutMs({})).toBe(1_200_000);
+    expect(resolveGeminiVideoTimeoutMs({ GEMINI_VIDEO_TIMEOUT_MS: "300000" })).toBe(300_000);
+    expect(resolveGeminiVideoTimeoutMs({ GEMINI_VIDEO_TIMEOUT_MS: " 3600000 " })).toBe(3_600_000);
+    for (const value of ["60000", "3600001", "600000.5", "ten-minutes", "-600000", "Infinity"]) {
+      expect(() => resolveGeminiVideoTimeoutMs({ GEMINI_VIDEO_TIMEOUT_MS: value })).toThrow("GEMINI_VIDEO_TIMEOUT_MS");
+    }
+  });
+
+  test("selects only the single exact live conversation target", () => {
+    const checkpoint = {
+      targetId: "target-1",
+      conversationUrl: "https://gemini.google.com/app/conversation-1?hl=ko"
+    };
+    expect(canonicalGeminiConversationUrl(checkpoint.conversationUrl)).toBe("https://gemini.google.com/app/conversation-1");
+    expect(selectGeminiRecoveryTarget(checkpoint, [{
+      targetId: "target-1",
+      type: "page",
+      url: "https://gemini.google.com/app/conversation-1?hl=en"
+    }])).toMatchObject({ status: "exact", conversationUrl: "https://gemini.google.com/app/conversation-1" });
+    expect(selectGeminiRecoveryTarget(checkpoint, [
+      { targetId: "target-1", type: "page", url: "https://gemini.google.com/app/conversation-1" },
+      { targetId: "target-2", type: "page", url: "https://gemini.google.com/app/conversation-1?hl=ko" }
+    ])).toMatchObject({ status: "ambiguous", matchCount: 2 });
+    expect(selectGeminiRecoveryTarget(checkpoint, [{
+      targetId: "different-target",
+      type: "page",
+      url: "https://gemini.google.com/app/conversation-1"
+    }])).toMatchObject({ status: "target-id-mismatch" });
+    expect(selectGeminiRecoveryTarget({ ...checkpoint, conversationUrl: "https://example.test/app/conversation-1" }, [])).toMatchObject({
+      status: "invalid-checkpoint"
+    });
+  });
+
+  test("requires a fully bound acknowledgement before a retry may recover without resubmission", () => {
+    const prompt = "Create a vertical 9:16 documentary clip.";
+    const digest = (value) => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+    const promptHash = digest({ prompt });
+    const sessionBinding = { binding: "session" };
+    const providerDecision = { decision: "gemini-browser" };
+    const providerAttestation = { attestation: "headless-session" };
+    const current = {
+      jobId: "job-1",
+      index: 1,
+      prompt,
+      resumeRequestHash: "resume-request",
+      resumeScriptHash: "resume-script",
+      sessionBindingHash: digest(sessionBinding),
+      providerDecisionHash: digest(providerDecision),
+      providerAttestationHash: digest(providerAttestation)
+    };
+    const previous = {
+      schemaVersion: 4,
+      status: "failed",
+      provider: "gemini-browser",
+      jobId: "job-1",
+      runId: "run-1",
+      requestHash: "request-1",
+      scriptHash: "script-1",
+      resumeRequestHash: current.resumeRequestHash,
+      resumeScriptHash: current.resumeScriptHash,
+      sessionBindingHash: current.sessionBindingHash,
+      providerDecisionHash: current.providerDecisionHash,
+      providerAttestationHash: current.providerAttestationHash,
+      sessionBinding,
+      providerDecision,
+      providerAttestation,
+      pendingSegment: {
+        schemaVersion: 1,
+        status: "submitted-awaiting-result",
+        index: 1,
+        runId: "run-1",
+        requestHash: "request-1",
+        scriptHash: "script-1",
+        resumeRequestHash: current.resumeRequestHash,
+        resumeScriptHash: current.resumeScriptHash,
+        sessionBindingHash: current.sessionBindingHash,
+        providerDecisionHash: current.providerDecisionHash,
+        providerAttestationHash: current.providerAttestationHash,
+        prompt,
+        promptHash,
+        submittedAt: "2026-08-12T12:00:00.000Z",
+        timeoutMs: 1_200_000,
+        conversationUrl: "https://gemini.google.com/app/conversation-1",
+        targetId: "target-1",
+        knownMedia: { videos: [], links: [], chats: [] },
+        submissionAcknowledgement: { verified: true, clickCount: 1, evidenceTypes: ["user-message"] }
+      }
+    };
+
+    expect(geminiPendingRecoveryDecision(previous, current)).toMatchObject({
+      applicable: true,
+      eligible: true,
+      reason: "exact-pending-recovery"
+    });
+    for (const mutate of [
+      (value) => { value.pendingSegment.runId = "different-run"; },
+      (value) => { value.pendingSegment.prompt += " altered"; },
+      (value) => { value.pendingSegment.providerAttestationHash = "different-attestation"; },
+      (value) => { value.pendingSegment.submissionAcknowledgement.verified = false; },
+      (value) => { value.pendingSegment.timeoutMs = 1; },
+      (value) => { value.pendingSegment.knownMedia.videos = [42]; }
+    ]) {
+      const corrupted = structuredClone(previous);
+      mutate(corrupted);
+      expect(geminiPendingRecoveryDecision(corrupted, current)).toMatchObject({ applicable: true, eligible: false });
+    }
+    expect(geminiPendingRecoveryDecision(previous, { ...current, resumeScriptHash: "new-script" })).toMatchObject({
+      applicable: false,
+      eligible: false,
+      reason: "semantic-resume-mismatch"
+    });
   });
 });
 
