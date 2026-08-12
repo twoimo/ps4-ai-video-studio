@@ -1878,6 +1878,89 @@ async function renderCaptions(input, output, captionsPath, format) {
   await runCommand("ffmpeg", ["-y", "-i", input, "-vf", `scale=${size}:force_original_aspect_ratio=decrease,pad=${size}:(ow-iw)/2:(oh-ih)/2:color=black,subtitles=filename='${escaped}':force_style='${style}'`, "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-c:a", "copy", output]);
 }
 
+export function voiceoverAudioMixPolicy(targetDuration) {
+  const target = Number(targetDuration);
+  if (!Number.isFinite(target) || target <= 0) throw new Error("음성 믹스 목표 영상 길이가 올바르지 않습니다.");
+  const duration = target.toFixed(3);
+  const sourceGain = 0.22;
+  const voiceGain = 1;
+  const processingTailPadSec = 1;
+  const filterComplex = [
+    `[0:a:0]aresample=48000:async=0:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${sourceGain.toFixed(6)},apad=pad_dur=${processingTailPadSec.toFixed(3)}[ambient]`,
+    `[1:a:0]aresample=48000:async=0:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume=${voiceGain.toFixed(6)},apad=pad_dur=${processingTailPadSec.toFixed(3)},asplit=2[voice-sidechain][voice-mix]`,
+    "[ambient][voice-sidechain]sidechaincompress=threshold=0.040000:ratio=8.000000:attack=12.000000:release=320.000000:makeup=1.000000:knee=2.500000:link=average:detection=rms:mix=1.000000[ambient-ducked]",
+    `[ambient-ducked][voice-mix]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.950000:attack=5.000000:release=50.000000:level=false:latency=true,atrim=start=0:end=${duration},asetpts=N/SR/TB[mixed]`
+  ].join(";");
+  return {
+    version: "ffmpeg-sidechain-ambient/v1",
+    sourceAudioMode: "preserved-low-level-sidechain-ducked",
+    sourceAudio: {
+      input: "0:a:0",
+      role: "provider-native-ambient",
+      gainLinear: sourceGain,
+      gainDb: -13.152
+    },
+    voiceAudio: {
+      input: "1:a:0",
+      role: "macos-say-narration",
+      gainLinear: voiceGain,
+      gainDb: 0
+    },
+    ducking: {
+      filter: "sidechaincompress",
+      thresholdLinear: 0.04,
+      ratio: 8,
+      attackMs: 12,
+      releaseMs: 320,
+      makeupGain: 1,
+      knee: 2.5,
+      link: "average",
+      detection: "rms",
+      wetMix: 1
+    },
+    summing: {
+      filter: "amix",
+      inputs: 2,
+      duration: "first",
+      dropoutTransitionSec: 0,
+      normalize: false
+    },
+    limiter: {
+      filter: "alimiter",
+      limitLinear: 0.95,
+      attackMs: 5,
+      releaseMs: 50,
+      autoLevel: false,
+      compensateLatency: true
+    },
+    output: {
+      streamCount: 1,
+      codec: "aac",
+      bitrateKbps: 192,
+      sampleRateHz: 48000,
+      channels: 2,
+      durationSec: Number(duration),
+      processingTailPadSec
+    },
+    filterComplex
+  };
+}
+
+export function voiceoverMixFfmpegArgs(input, voice, output, targetDuration) {
+  const policy = voiceoverAudioMixPolicy(targetDuration);
+  return [
+    "-y", "-i", input, "-i", voice,
+    "-filter_complex", policy.filterComplex,
+    "-map", "0:v:0", "-map", "[mixed]",
+    "-map_metadata", "-1", "-map_chapters", "-1",
+    "-t", policy.output.durationSec.toFixed(3),
+    "-c:v", "copy", "-c:a", policy.output.codec,
+    "-b:a", `${policy.output.bitrateKbps}k`,
+    "-ar", String(policy.output.sampleRateHz), "-ac", String(policy.output.channels),
+    "-movflags", "+faststart", output
+  ];
+}
+
 async function addVoiceover(input, output, script, warnings, targetDuration) {
   if (!hasCommand("say")) throw new Error("macOS say 명령이 없어 음성 합성을 수행할 수 없습니다.");
   const target = Number(targetDuration);
@@ -1958,14 +2041,10 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
       "-c:a", "pcm_s16le", masteredVoicePath
     ]);
     const voiceoverDurationSec = await probeDuration(masteredVoicePath);
-    await runCommand("ffmpeg", [
-      "-y", "-i", input, "-i", masteredVoicePath,
-      "-filter_complex", "[1:a]aresample=48000,volume=1.00[voice]",
-      "-map", "0:v:0", "-map", "[voice]", "-t", String(target),
-      "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", output
-    ]);
+    const audioMixPolicy = voiceoverAudioMixPolicy(target);
+    await runCommand("ffmpeg", voiceoverMixFfmpegArgs(input, masteredVoicePath, output, target));
     const sync = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: "macOS say",
       alignment: "segment-duration-calibrated",
       estimated: true,
@@ -1975,9 +2054,12 @@ async function addVoiceover(input, output, script, warnings, targetDuration) {
       loudnessTarget: { integratedLufs: -14, loudnessRangeLu: 3.5, truePeakDbfs: -1 },
       targetDurationSec: Number(target.toFixed(3)),
       voiceoverDurationSec: Number(voiceoverDurationSec.toFixed(3)),
-      sourceAudioMode: "muted-when-voiceover-enabled",
-      sourceAudioGain: 0,
-      voiceAudioGain: 1,
+      sourceAudioMode: audioMixPolicy.sourceAudioMode,
+      sourceAudioGain: audioMixPolicy.sourceAudio.gainLinear,
+      sourceAudioGainDb: audioMixPolicy.sourceAudio.gainDb,
+      voiceAudioGain: audioMixPolicy.voiceAudio.gainLinear,
+      voiceAudioGainDb: audioMixPolicy.voiceAudio.gainDb,
+      audioMixPolicy,
       segments: segmentSync
     };
     await writeJsonAtomic(join(jobDir, "voiceover-sync.json"), sync);

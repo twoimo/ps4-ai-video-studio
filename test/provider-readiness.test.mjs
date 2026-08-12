@@ -222,11 +222,11 @@ describe("readiness projection and UI", () => {
 });
 
 describe("Gemini monitor TTL", () => {
-  test("does not claim readiness from an old or invalid monitor", () => {
+  test("derives readiness timestamps from profile observations rather than monitor events", () => {
     const fresh = {
       schemaVersion: 2,
       updatedAt: "2026-08-12T11:59:00.000Z",
-      status: "monitoring",
+      status: "quota-available",
       profiles: [{
         observedAt: "2026-08-12T11:59:30.000Z",
         available: true,
@@ -236,12 +236,49 @@ describe("Gemini monitor TTL", () => {
         videoMode: true
       }]
     };
-    expect(geminiMonitorReadiness(fresh, { now: NOW }).status).toBe("READY");
-    expect(geminiMonitorReadiness({ ...fresh, updatedAt: "2026-08-12T10:00:00.000Z" }, { now: NOW })).toMatchObject({
-      status: "STALE",
-      blockers: [{ code: "monitor-stale" }]
+    expect(geminiMonitorReadiness(fresh, { now: NOW })).toMatchObject({
+      status: "READY",
+      evidence: "fresh-profile-observation",
+      observedAt: "2026-08-12T11:59:30.000Z",
+      expiresAt: "2026-08-12T12:14:30.000Z"
     });
+    expect(geminiMonitorReadiness({
+      ...fresh,
+      updatedAt: "2026-08-12T11:59:59.000Z",
+      profiles: [{ ...fresh.profiles[0], observedAt: "2026-08-12T10:00:00.000Z" }]
+    }, { now: NOW })).toMatchObject({
+      status: "STALE",
+      evidence: "stale-profile-observation",
+      observedAt: "2026-08-12T10:00:00.000Z",
+      blockers: [{ code: "profile-observation-stale" }]
+    });
+    expect(geminiMonitorReadiness({ ...fresh, updatedAt: "invalid" }, { now: NOW }).status).toBe("NOT_CONNECTED");
     expect(geminiMonitorReadiness({ profiles: [] }, { now: NOW }).status).toBe("NOT_CONNECTED");
+  });
+
+  test("invalidates an available observation after generation or review supersedes it", () => {
+    const profile = {
+      observedAt: "2026-08-12T11:59:30.000Z",
+      available: true,
+      authentication: "authenticated",
+      headless: true,
+      requestedHeadless: true,
+      videoMode: true
+    };
+    const result = geminiMonitorReadiness({
+      schemaVersion: 2,
+      updatedAt: "2026-08-12T11:59:55.000Z",
+      status: "review-needs-remediation",
+      profiles: [profile]
+    }, { now: NOW });
+    expect(result).toMatchObject({
+      status: "BLOCKED",
+      evidence: "fresh-profile-observation",
+      observedAt: profile.observedAt,
+      operational: { freshProfileCount: 1, availableCount: 0 },
+      blockers: [{ code: "profile-observation-superseded" }]
+    });
+    expect(result.observedAt).not.toBe("2026-08-12T11:59:55.000Z");
   });
 
   test("never reports READY from an unauthenticated, headed, stale, or non-video profile", () => {
@@ -253,7 +290,7 @@ describe("Gemini monitor TTL", () => {
       requestedHeadless: true,
       videoMode: true
     };
-    const monitor = { schemaVersion: 2, updatedAt: "2026-08-12T11:59:40.000Z", status: "monitoring", profiles: [profile] };
+    const monitor = { schemaVersion: 2, updatedAt: "2026-08-12T11:59:40.000Z", status: "quota-available", profiles: [profile] };
     expect(geminiMonitorReadiness({ ...monitor, profiles: [{ ...profile, authentication: "sign-in-required" }] }, { now: NOW })).toMatchObject({
       status: "BLOCKED",
       blockers: [{ code: "authentication-required" }]
@@ -267,7 +304,12 @@ describe("Gemini monitor TTL", () => {
       blockers: [{ code: "video-mode-unavailable" }]
     });
     expect(geminiMonitorReadiness({ ...monitor, profiles: [{ ...profile, observedAt: "2026-08-12T10:00:00.000Z" }] }, { now: NOW })).toMatchObject({
+      status: "STALE",
+      blockers: [{ code: "profile-observation-stale" }]
+    });
+    expect(geminiMonitorReadiness({ ...monitor, profiles: [{ ...profile, observedAt: undefined }] }, { now: NOW })).toMatchObject({
       status: "BLOCKED",
+      operational: { freshProfileCount: 0, availableCount: 0 },
       blockers: [{ code: "profile-observation-stale" }]
     });
   });

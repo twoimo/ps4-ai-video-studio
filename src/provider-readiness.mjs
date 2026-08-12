@@ -26,6 +26,7 @@ const BLOCKER_MESSAGES = Object.freeze({
   "monitor-stale": "Gemini 모니터 관측이 TTL을 초과했습니다.",
   "monitor-no-profiles": "Gemini 모니터에 관측된 프로필이 없습니다.",
   "profile-observation-stale": "TTL 안에 관측된 Gemini 프로필이 없습니다.",
+  "profile-observation-superseded": "최근 Gemini 프로필 관측 이후 작업 상태가 변경되어 다시 관측해야 합니다.",
   "headless-required": "사용 가능한 Gemini 프로필이 headless 모드로 확인되지 않았습니다.",
   "video-mode-unavailable": "Gemini 동영상 만들기 모드를 확인하지 못했습니다.",
   "authentication-required": "로그인 또는 인증이 필요합니다.",
@@ -162,8 +163,7 @@ export function geminiMonitorReadiness(rawMonitor, { now = new Date(), ttlMs = P
       blockers: [blocker("monitor-invalid")]
     };
   }
-  const monitorTiming = timing(monitor.updatedAt, now.getTime(), ttlMs);
-  if (!monitorTiming.valid) {
+  if (!timing(monitor.updatedAt, now.getTime(), ttlMs).valid) {
     return {
       provider: "gemini",
       status: "NOT_CONNECTED",
@@ -172,17 +172,29 @@ export function geminiMonitorReadiness(rawMonitor, { now = new Date(), ttlMs = P
     };
   }
   const profiles = monitor.profiles.filter((profile) => profile && typeof profile === "object" && !Array.isArray(profile));
-  const freshProfiles = profiles.filter((profile) => timing(profile.observedAt, now.getTime(), ttlMs).fresh === true);
+  const profileTimings = profiles
+    .map((profile) => ({ profile, timing: timing(profile.observedAt, now.getTime(), ttlMs) }))
+    .filter(({ timing: profileTiming }) => profileTiming.valid)
+    .sort((left, right) => timestamp(right.timing.observedAt) - timestamp(left.timing.observedAt));
+  const latestProfileTiming = profileTimings[0]?.timing || null;
+  const freshProfiles = profileTimings
+    .filter(({ timing: profileTiming }) => profileTiming.fresh === true)
+    .map(({ profile }) => profile);
+  // A positive quota observation is single-use evidence. Once the monitor moves
+  // on to job execution or review, that observation can no longer prove that
+  // the just-used profile still has generation quota. A new profiles_observed
+  // event restores status=quota-available with a new per-profile observedAt.
+  const availabilityObservationCurrent = monitor.status === "quota-available";
   const authenticatedCount = freshProfiles.filter((profile) => profile.authentication === "authenticated").length;
   const headlessCount = freshProfiles.filter((profile) => profile.headless === true && profile.requestedHeadless !== false).length;
   const videoModeCount = freshProfiles.filter((profile) => profile.videoMode === true).length;
-  const availableCount = freshProfiles.filter((profile) => (
+  const availableCount = availabilityObservationCurrent ? freshProfiles.filter((profile) => (
     profile.available === true
     && profile.authentication === "authenticated"
     && profile.headless === true
     && profile.requestedHeadless !== false
     && profile.videoMode === true
-  )).length;
+  )).length : 0;
   const operational = {
     profileCount: profiles.length,
     freshProfileCount: freshProfiles.length,
@@ -193,20 +205,21 @@ export function geminiMonitorReadiness(rawMonitor, { now = new Date(), ttlMs = P
     nextCheckAt: timestamp(monitor.nextQuotaCheckAt) === null ? null : new Date(timestamp(monitor.nextQuotaCheckAt)).toISOString(),
     quotaResetAt: timestamp(monitor.quotaResetAt) === null ? null : new Date(timestamp(monitor.quotaResetAt)).toISOString()
   };
-  if (!monitorTiming.fresh) {
+  if (latestProfileTiming && !freshProfiles.length) {
     return {
       provider: "gemini",
       status: "STALE",
-      evidence: "stale-redacted-monitor",
-      observedAt: monitorTiming.observedAt,
-      expiresAt: monitorTiming.expiresAt,
+      evidence: "stale-profile-observation",
+      observedAt: latestProfileTiming.observedAt,
+      expiresAt: latestProfileTiming.expiresAt,
       operational,
-      blockers: [blocker("monitor-stale")]
+      blockers: [blocker("profile-observation-stale")]
     };
   }
   let blockerCode = null;
   if (!profiles.length) blockerCode = "monitor-no-profiles";
   else if (!freshProfiles.length) blockerCode = "profile-observation-stale";
+  else if (!availabilityObservationCurrent && freshProfiles.some((profile) => profile.available === true)) blockerCode = "profile-observation-superseded";
   else if (availableCount > 0) blockerCode = null;
   else if (authenticatedCount === 0) blockerCode = "authentication-required";
   else if (headlessCount === 0) blockerCode = "headless-required";
@@ -216,9 +229,11 @@ export function geminiMonitorReadiness(rawMonitor, { now = new Date(), ttlMs = P
   return {
     provider: "gemini",
     status: availableCount > 0 ? "READY" : "BLOCKED",
-    evidence: "fresh-redacted-monitor",
-    observedAt: monitorTiming.observedAt,
-    expiresAt: monitorTiming.expiresAt,
+    evidence: latestProfileTiming ? "fresh-profile-observation" : "missing-profile-observation",
+    ...(latestProfileTiming ? {
+      observedAt: latestProfileTiming.observedAt,
+      expiresAt: latestProfileTiming.expiresAt
+    } : {}),
     operational,
     blockers: blockerCode ? [blocker(blockerCode)] : []
   };
