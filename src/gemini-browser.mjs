@@ -143,7 +143,13 @@ export function canonicalGeminiConversationUrl(value) {
   } catch {
     return null;
   }
-  if (parsed.protocol !== "https:" || parsed.hostname !== "gemini.google.com") return null;
+  if (
+    parsed.protocol !== "https:"
+    || parsed.hostname !== "gemini.google.com"
+    || parsed.username
+    || parsed.password
+    || parsed.port
+  ) return null;
   const path = parsed.pathname.replace(/\/+$/, "");
   if (!/^\/app\/[^/?#]+$/i.test(path)) return null;
   return `https://gemini.google.com${path}`;
@@ -228,7 +234,7 @@ export function geminiPendingRecoveryDecision(previousGeneration, current = {}) 
     if (
       !Array.isArray(pending.knownMedia?.[key])
       || pending.knownMedia[key].length > 2_000
-      || pending.knownMedia[key].some((value) => typeof value !== "string" || value.length > 8_192)
+      || pending.knownMedia[key].some((value) => typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/i.test(value))
     ) {
       return reject("known-media-checkpoint-invalid");
     }
@@ -1005,6 +1011,7 @@ async function submitPrompt(browser, prompt, format) {
 
 async function inspectMedia(browser) {
   return browser.evaluate(`(() => ({
+    pageUrl: location.href,
     videos: [...document.querySelectorAll('video')].map(v => ({ src: v.currentSrc || v.src || '', ready: v.readyState, duration: v.duration || 0 })),
     links: [...document.querySelectorAll('a')].map(a => ({ href: a.href || '', text: (a.innerText || a.getAttribute('aria-label') || '').trim() })).filter(x => x.href && (/\\.mp4|download|다운로드|내려받기/i.test(x.href + ' ' + x.text))),
     chats: [...document.querySelectorAll('a')].map(a => ({ href: a.href || '', text: (a.innerText || a.getAttribute('aria-label') || '').trim() })).filter(x => /gemini\\.google\\.com\\/app\\/[^/?#]+/i.test(x.href)),
@@ -1016,7 +1023,10 @@ async function inspectMedia(browser) {
 function serializeKnownMedia(knownMedia = {}) {
   return Object.fromEntries(["videos", "links", "chats"].map((key) => [
     key,
-    [...new Set(Array.from(knownMedia[key] || []).filter((value) => typeof value === "string" && value))].sort()
+    [...new Set(Array.from(knownMedia[key] || [])
+      .filter((value) => typeof value === "string" && value)
+      .map((value) => /^sha256:[a-f0-9]{64}$/i.test(value) ? value : hashJson({ type: "gemini-page-media", value })))]
+      .sort()
   ]));
 }
 
@@ -1068,24 +1078,24 @@ export class GeminiClipTimeoutError extends Error {
   }
 }
 
-async function waitForClip(browser, knownMedia, deadline, timeoutMs) {
+async function waitForClip(browser, knownMedia, deadline, timeoutMs, expectedConversationUrl) {
+  const expectedUrl = canonicalGeminiConversationUrl(expectedConversationUrl);
+  if (!expectedUrl) throw new Error("Gemini 결과 대기에는 결속된 대화 URL이 필요합니다.");
   while (Date.now() < deadline) {
     const media = await inspectMedia(browser);
+    if (canonicalGeminiConversationUrl(media.pageUrl) !== expectedUrl) {
+      throw new Error("Gemini 결과 대기 중 결속된 대화 URL이 변경되었습니다. 다른 대화의 결과를 가져오지 않습니다.");
+    }
     const quotaMessage = geminiVideoQuotaMessage(media.body);
     if (quotaMessage) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${quotaMessage}`);
     const knownVideos = knownMedia?.videos || new Set();
     const knownLinks = knownMedia?.links || new Set();
-    const knownChats = knownMedia?.chats || new Set();
-    const freshChats = (media.chats || []).filter((item) => item.href && !knownChats.has(item.href));
-    const chat = freshChats[0];
-    if (chat?.href) {
-      knownChats.add(chat.href);
-      await browser.navigate(chat.href);
-      continue;
-    }
-    const freshVideos = media.videos.filter((video) => video.src && !knownVideos.has(video.src) && video.ready > 0);
+    const freshVideos = media.videos.filter((video) => video.src
+      && !knownVideos.has(hashJson({ type: "gemini-page-media", value: video.src }))
+      && video.ready > 0);
     const direct = freshVideos.find((video) => !video.src.startsWith("blob:")) || freshVideos[0];
-    const freshLinks = media.links.filter((item) => item.href && !knownLinks.has(item.href));
+    const freshLinks = media.links.filter((item) => item.href
+      && !knownLinks.has(hashJson({ type: "gemini-page-media", value: item.href })));
     const link = freshLinks[0];
     if (direct?.src) {
       const data = await downloadFromPage(browser, direct.src);
@@ -1429,7 +1439,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         generation.pendingSegment.waitStartedAt = new Date(waitStartedAt).toISOString();
         generation.pendingSegment.waitDeadlineAt = new Date(waitStartedAt + timeoutMs).toISOString();
         await writeGenerationCheckpoint(generationPath, generation);
-        const bytes = await waitForClip(browser, deserializeKnownMedia(checkpoint.knownMedia), waitStartedAt + timeoutMs, timeoutMs);
+        const bytes = await waitForClip(browser, deserializeKnownMedia(checkpoint.knownMedia), waitStartedAt + timeoutMs, timeoutMs, checkpoint.conversationUrl);
         const acknowledgement = {
           ...checkpoint.submissionAcknowledgement,
           recoveredFromCheckpoint: true,
@@ -1456,11 +1466,11 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비의 선택 상태를 전송 직전에 확인하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
       }
       const known = await inspectMedia(browser);
-      const knownMedia = {
+      const knownMedia = deserializeKnownMedia(serializeKnownMedia({
         videos: new Set((known.videos || []).map((video) => video.src).filter(Boolean)),
         links: new Set((known.links || []).map((item) => item.href).filter(Boolean)),
         chats: new Set((known.chats || []).map((item) => item.href).filter(Boolean))
-      };
+      }));
       const submitted = await submitPrompt(browser, prompt, job.format);
       if (!submitted.submitted || submitted.verified !== true) {
         throw new Error(`Gemini 영상 요청 전송을 확인하지 못했습니다 (${submitted.reason || "authoritative-submit-evidence-missing"}). 입력창 초기화와 사용자 메시지·응답 중지·생성 상태 중 하나를 함께 확인해야 합니다.`);
@@ -1501,7 +1511,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       generation.pendingSegment.waitStartedAt = new Date(waitStartedAt).toISOString();
       generation.pendingSegment.waitDeadlineAt = new Date(waitStartedAt + timeoutMs).toISOString();
       await writeGenerationCheckpoint(generationPath, generation);
-      const bytes = await waitForClip(browser, knownMedia, waitStartedAt + timeoutMs, timeoutMs);
+      const bytes = await waitForClip(browser, knownMedia, waitStartedAt + timeoutMs, timeoutMs, conversationUrl);
       await completeSegment({
         index: segmentNumber,
         segment,

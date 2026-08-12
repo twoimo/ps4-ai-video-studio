@@ -215,6 +215,7 @@ describe("Gemini long-running result recovery", () => {
       (value) => { value.pendingSegment.providerAttestationHash = "different-attestation"; },
       (value) => { value.pendingSegment.submissionAcknowledgement.verified = false; },
       (value) => { value.pendingSegment.timeoutMs = 1; },
+      (value) => { value.pendingSegment.knownMedia.links = ["https://signed.example.test/video.mp4?token=secret"]; },
       (value) => { value.pendingSegment.knownMedia.videos = [42]; }
     ]) {
       const corrupted = structuredClone(previous);
