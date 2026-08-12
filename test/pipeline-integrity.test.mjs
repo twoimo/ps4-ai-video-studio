@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createJob, evidenceFallbackScript, JOBS_DIR, perceptualFingerprintDistance, sourceExcerpt, validateEvidenceBoundScript, verifyEvidenceBoundScript } from "../src/pipeline.mjs";
+import { captionEntriesForDuration, createJob, evidenceFallbackScript, hasEvidenceHookFraming, JOBS_DIR, perceptualFingerprintDistance, sourceExcerpt, validateEvidenceBoundScript, verifyEvidenceBoundScript } from "../src/pipeline.mjs";
 
 const sources = [{
   title: "공식 건축 기록",
@@ -268,6 +268,8 @@ describe("deterministic source evidence extraction", () => {
     const result = evidenceFallbackScript("경복궁 박석과 마사토의 배수 구조", 4, [source], 32);
 
     expect(result.generatedBy).toBe("evidence-extract-fallback");
+    expect(hasEvidenceHookFraming(result.title)).toBe(true);
+    expect(result.title).toBe(result.segments[0].narration);
     expect(result.segments).toHaveLength(4);
     expect(result.segments.filter((segment) => /마사토|배수|빗물/u.test(segment.narration)).length).toBeGreaterThanOrEqual(2);
     for (const segment of result.segments) {
@@ -279,6 +281,23 @@ describe("deterministic source evidence extraction", () => {
     }
     const rainy = result.segments.find((segment) => segment.narration.startsWith("여름,"));
     if (rainy) expect(rainy.caption).not.toBe("여름");
+  });
+
+  test("keeps a 20-second evidence fallback inside the benchmark caption-density range", () => {
+    const twoClip = evidenceFallbackScript("경복궁 박석과 마사토의 배수 구조", 2, [{
+      title: "국가유산 박석 건축 기록",
+      url: "https://example.go.kr/heritage/paving",
+      fetchStatus: "fetched",
+      sha256: `sha256:${"e".repeat(64)}`,
+      ...sourceExcerpt(new TextEncoder().encode(heritageArticle), "text/html", ["경복궁", "박석", "마사토", "배수"])
+    }], 20);
+    const cues = captionEntriesForDuration(twoClip, 20);
+    const cuesPerMinute = cues.length * 60 / 20;
+
+    expect(cuesPerMinute).toBeGreaterThanOrEqual(60.59 * 0.5);
+    expect(cuesPerMinute).toBeLessThanOrEqual(60.59 * 1.5);
+    expect(Math.min(...cues.map((cue) => cue.end - cue.start))).toBeGreaterThanOrEqual(0.6);
+    expect(Math.max(...cues.map((cue) => [...cue.text].length))).toBeLessThanOrEqual(12);
   });
 
   test("re-ranks legacy wide evidence windows and refines quote locators", () => {

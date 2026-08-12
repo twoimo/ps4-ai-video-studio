@@ -21,7 +21,13 @@ import {
   validateCommitteeReview
 } from "../src/quality.mjs";
 import { geminiSessionBindingHash } from "../src/provenance.mjs";
-import { monitorStartupPlanTransition, resolveMonitorClipPlan, runSoftwareReview } from "../scripts/monitor-gemini-production.mjs";
+import {
+  classifyGeminiFailure,
+  monitorStartupPlanTransition,
+  profileFailoverTransition,
+  resolveMonitorClipPlan,
+  runSoftwareReview
+} from "../scripts/monitor-gemini-production.mjs";
 
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
@@ -529,6 +535,95 @@ test("monitor supersedes only a terminal incompatible legacy plan", () => {
   });
   expect(profileChanged.action).toBe("supersede");
   expect(profileChanged.reasons).toEqual(["profile-binding"]);
+});
+
+test("monitor checkpoints an immutable failed run and creates only a new alternate-profile plan", () => {
+  const monitorState = {
+    status: "quota-blocked",
+    jobId: "failed-job-account-1",
+    runId: "immutable-run-account-1",
+    profileId: "account-1",
+    attempts: 2,
+    completion: { stale: true },
+    lastError: "quota exhausted"
+  };
+  const currentJob = {
+    id: monitorState.jobId,
+    runId: monitorState.runId,
+    status: "failed",
+    geminiSessionBindingHash: HASH_A
+  };
+  const observations = [
+    { id: "account-1", available: false },
+    { id: "account-2", available: true }
+  ];
+  const originalInputs = structuredClone({ monitorState, currentJob, observations });
+  const transition = profileFailoverTransition({
+    monitorState,
+    currentJob,
+    observations,
+    reason: "quota-exhausted",
+    checkpointedAt: "2026-08-12T11:20:00.000Z"
+  });
+
+  expect(transition).toEqual({
+    action: "create-new-job",
+    nextProfileId: "account-2",
+    checkpoint: {
+      checkpointedAt: "2026-08-12T11:20:00.000Z",
+      reason: "quota-exhausted",
+      jobId: "failed-job-account-1",
+      runId: "immutable-run-account-1",
+      profileId: "account-1",
+      jobStatus: "failed",
+      immutableRunBound: true,
+      sessionBindingHash: HASH_A
+    },
+    reset: {
+      status: "switching-profile",
+      jobId: null,
+      runId: null,
+      profileId: "account-2",
+      attempts: 0,
+      completion: null,
+      lastError: null
+    }
+  });
+  expect({ monitorState, currentJob, observations }).toEqual(originalInputs);
+
+  expect(profileFailoverTransition({
+    monitorState,
+    currentJob: { ...currentJob, status: "running" },
+    observations
+  })).toEqual({ action: "preserve", reason: "immutable-active-run" });
+  expect(profileFailoverTransition({
+    monitorState,
+    currentJob,
+    observations: observations.map((profile) => ({ ...profile, available: false }))
+  })).toEqual({ action: "wait", reason: "no-alternate-profile" });
+});
+
+test("monitor classifies 9:16 output mismatches as non-retryable on the same profile", () => {
+  expect(classifyGeminiFailure("Gemini가 세로 9:16 비율의 동영상을 반환하지 않았습니다.")).toEqual({
+    kind: "non-retryable",
+    code: "aspect-ratio-mismatch",
+    retryableOnSameProfile: false,
+    preferAlternateProfile: true
+  });
+  expect(classifyGeminiFailure("Gemini did not return a vertical 9:16 video.")).toMatchObject({
+    kind: "non-retryable",
+    retryableOnSameProfile: false
+  });
+  expect(classifyGeminiFailure("You're out of videos. Videos will be available again tomorrow.")).toMatchObject({
+    kind: "quota-blocked",
+    retryableOnSameProfile: true,
+    preferAlternateProfile: true
+  });
+  expect(classifyGeminiFailure("download timed out")).toMatchObject({
+    kind: "failed",
+    retryableOnSameProfile: true,
+    preferAlternateProfile: false
+  });
 });
 
 test("monitor delegates needs-improvement review only to the local software runner", async () => {

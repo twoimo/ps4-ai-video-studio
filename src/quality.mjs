@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
-import { analyzeClipMotion, clipMotionGatePolicy, clipMotionGateRequired, JOBS_DIR, ROOT, readJob, verifyEvidenceBoundScript } from "./pipeline.mjs";
+import { analyzeClipMotion, clipMotionGatePolicy, clipMotionGateRequired, hasEvidenceHookFraming, JOBS_DIR, ROOT, readJob, verifyEvidenceBoundScript } from "./pipeline.mjs";
 import { analyzeJobMedia } from "./frame-analysis.mjs";
 import { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 import { hashFile } from "./run-ledger.mjs";
@@ -1544,7 +1544,7 @@ export async function evaluateJob(jobId, options = {}) {
   const evidenceTextBindingVerified = evidenceTextBinding.verified === true;
   const claimEvidencePass = researchStatusVerified && evidenceTextBindingVerified && segmentClaimEvidence(script, sources);
   const title = script?.title || job.topic || "";
-  const titleHasHookPattern = /이유|왜|방법|비밀|사실|아닙니다|않습니다|없습니다|숨어|어떻게|어디서|하지만|[0-9]+/.test(title);
+  const titleHasHookPattern = hasEvidenceHookFraming(title);
   const completeSegments = Array.isArray(script?.segments) && script.segments.length >= expectedSegments && script.segments.every((segment) => segment.caption && segment.narration && segment.visualPrompt);
   const finalHasTarget = finalMedia?.width === target.width && finalMedia?.height === target.height;
   const sourceDurationSum = clipMedia.filter(Boolean).reduce((sum, media) => sum + media.duration, 0);

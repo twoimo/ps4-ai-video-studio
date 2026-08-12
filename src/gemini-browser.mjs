@@ -120,6 +120,77 @@ function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
 }
 
+export function geminiVideoQuotaMessage(value) {
+  const body = String(value || "");
+  const patterns = [
+    /(?:지금은\s*)?동영상을 생성할 수 없습니다[^.。\n]{0,240}/i,
+    /동영상을 다시 생성할 수 있습니다[^.。\n]{0,240}/i,
+    /동영상[^.。\n]{0,48}(?:생성\s*)?(?:할당량|쿼터|한도)[^.。\n]{0,160}(?:소진|모두 사용|초과|도달|재설정|갱신|다시 생성)/i,
+    /(?:할당량|쿼터|한도)[^.。\n]{0,48}동영상[^.。\n]{0,160}(?:소진|모두 사용|초과|도달|재설정|갱신|다시 생성)/i,
+    /you(?:'|’)re out of videos[^.\n]{0,240}/i,
+    /video generation (?:quota|limit)[^.\n]{0,160}(?:reached|exhausted|used up|reset|available again)/i,
+    /videos will be available again[^.\n]{0,240}/i,
+    /(?:video generation|videos?)[^.\n]{0,80}(?:quota|usage limit|generation limit)[^.\n]{0,160}(?:reached|exhausted|used up|reset|available again)/i,
+    /(?:quota|usage limit|generation limit)[^.\n]{0,80}(?:video generation|videos?)[^.\n]{0,160}(?:reached|exhausted|used up|reset|available again)/i
+  ];
+  for (const pattern of patterns) {
+    const match = body.match(pattern);
+    if (match) return match[0].trim();
+  }
+  return null;
+}
+
+export function geminiAspectRatioEvidence(format, evidence = {}) {
+  const desiredRatio = format === "vertical" ? "portrait" : "landscape";
+  const oppositeRatio = desiredRatio === "portrait" ? "landscape" : "portrait";
+  const labelMatches = (value, ratio) => {
+    const label = String(value || "").trim().toLowerCase();
+    if (!label) return false;
+    const selectionLabel = label.replace(/가로\s*[/·-]?\s*세로(?:\s*비율)?/g, " ");
+    const portrait = /(?:\bportrait\b|세로(?:\s*모드)?|9\s*[:/x×]\s*16)/i.test(selectionLabel);
+    const landscape = /(?:\blandscape\b|가로(?:\s*모드)?|16\s*[:/x×]\s*9)/i.test(selectionLabel);
+    return ratio === "portrait" ? portrait && !landscape : landscape && !portrait;
+  };
+  const controlLabel = String(evidence.controlLabel || "").trim();
+  const options = Array.isArray(evidence.options) ? evidence.options : [];
+  const controlDesired = labelMatches(controlLabel, desiredRatio);
+  const controlOpposite = labelMatches(controlLabel, oppositeRatio);
+  const selectedDesired = options.some((option) => option?.selected === true && labelMatches(option.label, desiredRatio));
+  const selectedOpposite = options.some((option) => option?.selected === true && labelMatches(option.label, oppositeRatio));
+  const configured = !controlOpposite && !selectedOpposite && (controlDesired || selectedDesired);
+  return {
+    configured,
+    desiredRatio,
+    controlLabel: controlLabel || null,
+    method: controlDesired ? "control-label" : selectedDesired ? "selected-state" : null,
+    contradiction: controlOpposite || selectedOpposite
+  };
+}
+
+function volatileGeminiScriptTimestamp(key) {
+  const normalized = String(key || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return normalized === "fetchedat"
+    || normalized === "capturedat"
+    || normalized === "captureat"
+    || normalized === "capturetimestamp"
+    || normalized === "capturedtimestamp"
+    || normalized === "sourcesnapshotat";
+}
+
+export function canonicalGeminiResumeScript(value) {
+  if (Array.isArray(value)) return value.map(canonicalGeminiResumeScript);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !volatileGeminiScriptTimestamp(key))
+      .map(([key, nested]) => [key, canonicalGeminiResumeScript(nested)]));
+  }
+  return value;
+}
+
+export function canonicalGeminiResumeScriptHash(script) {
+  return hashJson(canonicalGeminiResumeScript(script));
+}
+
 function generationRequest(job, script) {
   return {
     provider: "gemini-browser",
@@ -320,53 +391,83 @@ async function clickVideoTool(browser, format = "vertical") {
   const desiredRatio = format === "vertical" ? "portrait" : "landscape";
   return browser.evaluate(`(async () => {
     const desiredRatio = ${JSON.stringify(desiredRatio)};
+    const requestedFormat = desiredRatio === "portrait" ? "vertical" : "horizontal";
+    const quotaMessageFor = ${geminiVideoQuotaMessage.toString()};
+    const ratioEvidenceFor = ${geminiAspectRatioEvidence.toString()};
     const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const text = (el) => [el.innerText, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').trim().toLowerCase();
-    const quotaPattern = /지금은 동영상을 생성할 수 없습니다|동영상을 다시 생성할 수 있습니다|업그레이드|quota|video generation limit|usage limit|할당량|쿼터|you(?:'|’)re out of videos|videos will be available again/i;
+    const ratioLabel = (el) => /aspect ratio|가로세로|화면비|landscape|portrait|가로 모드|세로 모드|9\\s*[:/x×]\\s*16|16\\s*[:/x×]\\s*9/i.test(text(el));
+    const ratioOptionElement = (el) => el.matches('input-companion-item,[role="menuitemradio"],[role="radio"],[role="option"]')
+      || Boolean(el.closest('[role="menu"],[role="listbox"]'));
+    const findRatioControl = () => {
+      const controls = [...document.querySelectorAll('button,[role="button"]')].filter((el) => visible(el) && !ratioOptionElement(el));
+      return controls.find((el) => /aspect ratio|가로세로|화면비/i.test(text(el))) || controls.find(ratioLabel) || null;
+    };
+    const selected = (el) => {
+      if (typeof el.checked === 'boolean' && el.checked === true) return true;
+      return [el.getAttribute('aria-checked'), el.getAttribute('aria-selected'), el.getAttribute('data-state')]
+        .some((value) => /^(?:true|checked|selected|on)$/i.test(value || ''));
+    };
+    const readRatioEvidence = () => {
+      const ratioControl = findRatioControl();
+      const options = [...document.querySelectorAll('input-companion-item,[role="menuitemradio"],[role="radio"],button,[role="option"]')]
+        .filter((el) => visible(el) && ratioLabel(el))
+        .map((el) => ({ label: text(el), selected: selected(el) }));
+      return ratioEvidenceFor(requestedFormat, { controlLabel: ratioControl ? text(ratioControl) : '', options });
+    };
     const chooseRatio = async () => {
-      const controls = [...document.querySelectorAll('button,[role="button"]')].filter(visible);
-      const ratioControl = controls.find((el) => /aspect ratio|가로세로|landscape|portrait|가로 모드|세로 모드/i.test(text(el)));
-      if (!ratioControl) return false;
-      const current = text(ratioControl);
-      if ((desiredRatio === "portrait" && /portrait|세로|9:16/.test(current)) || (desiredRatio === "landscape" && /landscape|가로|16:9/.test(current))) return true;
+      let ratioControl = null;
+      let verification = readRatioEvidence();
+      if (verification.configured) return verification;
+      for (let attempt = 0; attempt < 10 && !ratioControl; attempt += 1) {
+        ratioControl = findRatioControl();
+        if (!ratioControl) await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      if (!ratioControl) return { ...verification, reason: 'ratio-control-missing' };
       ratioControl.click();
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const options = [...document.querySelectorAll('input-companion-item,[role="menuitemradio"],button,[role="option"]')].filter(visible);
-      const option = options.find((el) => desiredRatio === "portrait"
-        ? /portrait|세로|9:16/i.test(text(el))
-        : /landscape|가로|16:9/i.test(text(el)));
-      if (!option) return false;
+      const options = [...document.querySelectorAll('input-companion-item,[role="menuitemradio"],[role="radio"],button,[role="option"]')].filter(visible);
+      const option = options.find((el) => el !== ratioControl
+        && ratioOptionElement(el)
+        && ratioEvidenceFor(requestedFormat, { options: [{ label: text(el), selected: true }] }).configured);
+      if (!option) return { ...verification, reason: 'ratio-option-missing' };
       option.click();
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      return true;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        verification = readRatioEvidence();
+        if (verification.configured) return verification;
+      }
+      return { ...verification, reason: 'ratio-selection-unverified' };
     };
     let buttons = [];
     let body = "";
     for (let attempt = 0; attempt < 16; attempt += 1) {
       body = (document.body?.innerText || "").slice(-6000);
-      if (quotaPattern.test(body)) return { clicked: false, quota: true, body };
+      const quotaMessage = quotaMessageFor(body);
+      if (quotaMessage) return { clicked: false, quota: true, quotaMessage, body };
       buttons = [...document.querySelectorAll('button,[role="button"],[role="menuitem"],a,div[role="option"]')].filter(visible);
       const signIn = buttons.find((el) => /로그인|sign in/i.test(text(el)) && /accounts\.google\.com/i.test(el.href || el.closest('a')?.href || ''));
       if (signIn) return { clicked: false, authRequired: true };
       const fields = [...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(visible);
       if (/동영상 만들기|create videos?/i.test(body) && fields.length) {
-        const ratioConfigured = await chooseRatio();
-        return { clicked: true, label: "prompt-ready", ratioConfigured };
+        const ratioVerification = await chooseRatio();
+        return { clicked: true, label: "prompt-ready", ratioConfigured: ratioVerification.configured === true, ratioVerification };
       }
       const tryIt = buttons.find((el) => /사용해 보기|try it|create videos?/i.test(text(el)));
       if (tryIt) {
         tryIt.click();
         await new Promise((resolve) => setTimeout(resolve, 1400));
         const after = (document.body?.innerText || "").slice(-6000);
-        if (quotaPattern.test(after)) return { clicked: false, quota: true, body: after };
-        const ratioConfigured = await chooseRatio();
-        return { clicked: true, label: text(tryIt), ratioConfigured };
+        const afterQuotaMessage = quotaMessageFor(after);
+        if (afterQuotaMessage) return { clicked: false, quota: true, quotaMessage: afterQuotaMessage, body: after };
+        const ratioVerification = await chooseRatio();
+        return { clicked: true, label: text(tryIt), ratioConfigured: ratioVerification.configured === true, ratioVerification };
       }
       const video = buttons.find((el) => /동영상 만들기|create videos?/i.test(text(el)) && !/deselect|선택 해제/.test(text(el)));
       if (video) {
         video.click();
-        const ratioConfigured = await chooseRatio();
-        return { clicked: true, label: text(video), ratioConfigured };
+        const ratioVerification = await chooseRatio();
+        return { clicked: true, label: text(video), ratioConfigured: ratioVerification.configured === true, ratioVerification };
       }
       const tools = buttons.find((el) => /도구|tools|더보기|more|모드/.test(text(el)));
       if (tools) {
@@ -375,13 +476,35 @@ async function clickVideoTool(browser, format = "vertical") {
         const menu = [...document.querySelectorAll('button,[role="button"],[role="menuitem"],a,div[role="option"]')].filter(visible).find((el) => /동영상 만들기|create videos?|video/.test(text(el)) && !/deselect|선택 해제/.test(text(el)));
         if (menu) {
           menu.click();
-          const ratioConfigured = await chooseRatio();
-          return { clicked: true, label: text(menu), ratioConfigured };
+          const ratioVerification = await chooseRatio();
+          return { clicked: true, label: text(menu), ratioConfigured: ratioVerification.configured === true, ratioVerification };
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return { clicked: false, buttons: buttons.map(text).filter(Boolean).slice(-40), body };
+  })()`);
+}
+
+async function verifyVideoAspectRatio(browser, format = "vertical") {
+  return browser.evaluate(`(() => {
+    const ratioEvidenceFor = ${geminiAspectRatioEvidence.toString()};
+    const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const text = (el) => [el.innerText, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').trim().toLowerCase();
+    const ratioLabel = (el) => /aspect ratio|가로세로|화면비|landscape|portrait|가로 모드|세로 모드|9\\s*[:/x×]\\s*16|16\\s*[:/x×]\\s*9/i.test(text(el));
+    const ratioOptionElement = (el) => el.matches('input-companion-item,[role="menuitemradio"],[role="radio"],[role="option"]')
+      || Boolean(el.closest('[role="menu"],[role="listbox"]'));
+    const selected = (el) => {
+      if (typeof el.checked === 'boolean' && el.checked === true) return true;
+      return [el.getAttribute('aria-checked'), el.getAttribute('aria-selected'), el.getAttribute('data-state')]
+        .some((value) => /^(?:true|checked|selected|on)$/i.test(value || ''));
+    };
+    const controls = [...document.querySelectorAll('button,[role="button"]')].filter((el) => visible(el) && !ratioOptionElement(el));
+    const ratioControl = controls.find((el) => /aspect ratio|가로세로|화면비/i.test(text(el))) || controls.find(ratioLabel) || null;
+    const options = [...document.querySelectorAll('input-companion-item,[role="menuitemradio"],[role="radio"],button,[role="option"]')]
+      .filter((el) => visible(el) && ratioLabel(el))
+      .map((el) => ({ label: text(el), selected: selected(el) }));
+    return ratioEvidenceFor(${JSON.stringify(format)}, { controlLabel: ratioControl ? text(ratioControl) : '', options });
   })()`);
 }
 
@@ -493,8 +616,8 @@ async function downloadFromPage(browser, url) {
 async function waitForClip(browser, knownMedia, deadline) {
   while (Date.now() < deadline) {
     const media = await inspectMedia(browser);
-    const quotaMessage = media.body.match(/(?:지금은\s*)?동영상을 생성할 수 없습니다[^.。\n]*|동영상 생성 할당량[^.。\n]*|you(?:'|’)re out of videos[^.\n]*|videos will be available again[^.\n]*/i);
-    if (quotaMessage) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${quotaMessage[0].trim()}`);
+    const quotaMessage = geminiVideoQuotaMessage(media.body);
+    if (quotaMessage) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${quotaMessage}`);
     const knownVideos = knownMedia?.videos || new Set();
     const knownLinks = knownMedia?.links || new Set();
     const knownChats = knownMedia?.chats || new Set();
@@ -562,8 +685,9 @@ export async function geminiQuotaStatus(input = {}) {
     browser = await connectBrowser(config);
     await browser.navigate("https://gemini.google.com/videos");
     const observation = await browser.evaluate(`(() => {
+      const quotaMessageFor = ${geminiVideoQuotaMessage.toString()};
       const body = document.body?.innerText || "";
-      const quotaMessage = body.match(/(?:지금은\\s*)?동영상을 생성할 수 없습니다[^.。\\n]*|동영상 생성 할당량[^.。\\n]*|you(?:'|’)re out of videos[^.\\n]*|videos will be available again[^.\\n]*/i)?.[0] || null;
+      const quotaMessage = quotaMessageFor(body);
       const quotaResetText = body.match(/[^\\n]*(?:다시 생성할 수 있습니다|videos will be available again)[^\\n]*/i)?.[0]?.trim() || null;
       const account = [...document.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label") || "").find((value) => /Google (?:Account|계정)(?::|\\s)/i.test(value)) || null;
       const signInRequired = [...document.querySelectorAll("a,button,[role='button']")].some((el) => /로그인|sign in/i.test([el.innerText, el.getAttribute('aria-label')].filter(Boolean).join(' ')) && /accounts\\.google\\.com/i.test(el.href || el.closest('a')?.href || ''));
@@ -610,10 +734,12 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   const clipsDir = join(jobDir, "clips");
   const requestPayload = generationRequest(job, script);
   const scriptHash = hashJson(script);
+  const resumeScriptHash = canonicalGeminiResumeScriptHash(script);
   const launchPolicy = resolveGeminiChromeLaunchPolicy();
   const runtime = assertGeminiChromeRuntime(browser.version, launchPolicy);
   const actualHeadless = runtime.actualHeadless;
   const requestHash = hashJson({ ...requestPayload, scriptHash });
+  const resumeRequestHash = hashJson({ ...requestPayload, scriptHash: resumeScriptHash });
   const providerDecision = {
     requested: "gemini-browser",
     selected: "gemini-browser",
@@ -648,7 +774,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   }
   const previousSegments = new Map((previousGeneration?.segments || []).map((segment) => [segment.index, segment]));
   const generation = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     jobId: job.id,
     provider: "gemini-browser",
     sessionBinding,
@@ -659,6 +785,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     runId: job.runId || null,
     requestHash,
     scriptHash,
+    resumeRequestHash,
+    resumeScriptHash,
     requestScriptHash: requestHash,
     providerAttestation,
     providerAttestationHash,
@@ -670,8 +798,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     rejectedResumes: []
   };
   await mkdir(clipsDir, { recursive: true });
-  const bindingMatches = previousGeneration?.requestHash === requestHash
-    && previousGeneration?.scriptHash === scriptHash;
+  const bindingMatches = previousGeneration?.resumeRequestHash === resumeRequestHash
+    && previousGeneration?.resumeScriptHash === resumeScriptHash;
   const resumeSessionMatches = previousGeneration?.provider === "gemini-browser"
     && previousGeneration.providerDecisionHash === providerDecisionHash
     && previousGeneration.providerAttestationHash === providerAttestationHash
@@ -681,11 +809,15 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     previousGeneration?.runId
     && previousGeneration?.requestHash
     && previousGeneration?.scriptHash
+    && previousGeneration?.resumeRequestHash
+    && previousGeneration?.resumeScriptHash
     && Array.isArray(previousGeneration?.segments)
     && previousGeneration.segments.every((segment) => (
       segment.runId === previousGeneration.runId
       && segment.requestHash === previousGeneration.requestHash
       && segment.scriptHash === previousGeneration.scriptHash
+      && segment.resumeRequestHash === previousGeneration.resumeRequestHash
+      && segment.resumeScriptHash === previousGeneration.resumeScriptHash
       && segment.providerDecisionHash === previousGeneration.providerDecisionHash
       && segment.providerAttestationHash === previousGeneration.providerAttestationHash
       && segment.path === segment.output
@@ -715,6 +847,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
           runId: job.runId || null,
           requestHash,
           scriptHash,
+          resumeRequestHash,
+          resumeScriptHash,
           path,
           output: path,
           sourceRunId: previousGeneration.runId,
@@ -738,14 +872,17 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       await onProgress(Math.round((index / script.segments.length) * 100), `${index + 1}/${script.segments.length} 장면을 Gemini에 요청하는 중입니다.`);
       await browser.navigate("https://gemini.google.com/videos");
       const tool = await clickVideoTool(browser, job.format);
-      const quotaText = String(tool.body || "").match(/동영상을 다시 생성할 수 있습니다[^.。\n]*|동영상 생성 할당량[^.。\n]*|you(?:'|’)re out of videos[^.\n]*|videos will be available again[^.\n]*/i)?.[0];
       if (tool.authRequired) throw new Error("Gemini 전용 프로필의 로그인 세션이 만료되었습니다. GEMINI_CHROME_HEADLESS=0으로 같은 프로필을 열어 직접 로그인한 뒤 headless로 다시 시작하세요.");
-      if (tool.quota) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${quotaText || "계정 업그레이드 또는 할당량 갱신이 필요합니다."}`);
+      if (tool.quota) throw new Error(`Gemini 동영상 생성 할당량이 소진되었습니다. ${tool.quotaMessage || "할당량 갱신이 필요합니다."}`);
       if (!tool.clicked) throw new Error(`Gemini 동영상 도구를 찾지 못했습니다. 화면에 "동영상 만들기"가 활성화되어 있는지 확인하세요. 감지된 버튼: ${(tool.buttons || []).join(", ")}`);
       if (tool.ratioConfigured !== true) throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비를 선택하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
       const prompt = `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, and no third-party logos. Retain any provider-required provenance mark. Korean documentary mood.`;
       const filled = await fillPrompt(browser, prompt);
       if (!filled.filled) throw new Error("Gemini 입력창을 찾지 못했습니다.");
+      const submissionRatio = await verifyVideoAspectRatio(browser, job.format);
+      if (submissionRatio?.configured !== true) {
+        throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비의 선택 상태를 전송 직전에 확인하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
+      }
       const known = await inspectMedia(browser);
       const knownMedia = {
         videos: new Set((known.videos || []).map((video) => video.src).filter(Boolean)),
@@ -765,6 +902,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         runId: job.runId || null,
         requestHash,
         scriptHash,
+        resumeRequestHash,
+        resumeScriptHash,
         durationHint: segment.durationHint || null,
         prompt,
         path: `clips/${String(index + 1).padStart(2, "0")}.mp4`,

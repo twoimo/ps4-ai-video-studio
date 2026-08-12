@@ -271,7 +271,7 @@ function nextQuotaResetAt(observations, now = new Date()) {
   return resets[0] || null;
 }
 
-async function waitForQuotaWindow(observations, reason) {
+async function waitForQuotaWindow(observations, reason, status = "quota-blocked") {
   const resetAt = nextQuotaResetAt(observations);
   const needsFrequentProbe = observations.some((profile) => (
     !profile.available
@@ -285,7 +285,7 @@ async function waitForQuotaWindow(observations, reason) {
       ? Math.max(30_000, resetAt.getTime() - now - quotaWakeLeadMs)
       : pollMs;
   await persist("quota_wait_scheduled", {
-    status: "quota-blocked",
+    status,
     quotaResetAt: resetAt?.toISOString() || null,
     nextQuotaCheckAt: new Date(now + waitMs).toISOString(),
     quotaWaitMs: waitMs,
@@ -297,6 +297,76 @@ async function waitForQuotaWindow(observations, reason) {
 function isQuotaError(value) {
   const text = String(value || "");
   return /you(?:'|’)re out of videos|videos will be available again|동영상 생성 할당량이 소진되었습니다|지금은 동영상을 생성할 수 없습니다|(?:할당량|쿼터).*(?:소진|사용할 수 없)|quota.*(?:exhaust|deplet|available again)/i.test(text);
+}
+
+function isAspectRatioError(value) {
+  const text = String(value || "");
+  return /세로\s*9\s*:\s*16\s*비율의\s*동영상을\s*반환하지\s*않|(?:did\s+not|didn't|failed\s+to)\s+return[^\n]*(?:vertical\s*)?9\s*:\s*16|(?:aspect\s*ratio|orientation)[^\n]*(?:mismatch|invalid|incorrect|not\s+(?:vertical\s*)?9\s*:\s*16)/i.test(text);
+}
+
+export function classifyGeminiFailure(value) {
+  if (isQuotaError(value)) {
+    return {
+      kind: "quota-blocked",
+      code: "quota-exhausted",
+      retryableOnSameProfile: true,
+      preferAlternateProfile: true
+    };
+  }
+  if (isAspectRatioError(value)) {
+    return {
+      kind: "non-retryable",
+      code: "aspect-ratio-mismatch",
+      retryableOnSameProfile: false,
+      preferAlternateProfile: true
+    };
+  }
+  return {
+    kind: "failed",
+    code: "generation-failed",
+    retryableOnSameProfile: true,
+    preferAlternateProfile: false
+  };
+}
+
+export function profileFailoverTransition({ monitorState, currentJob, observations, reason = "selected-profile-unavailable", checkpointedAt = new Date().toISOString() }) {
+  if (!monitorState || !Array.isArray(observations)) {
+    throw new Error("프로필 전환 계획 입력이 유효하지 않습니다.");
+  }
+  const alternate = observations.find((profile) => profile?.available && profile.id !== monitorState.profileId) || null;
+  if (!alternate) return { action: "wait", reason: "no-alternate-profile" };
+
+  const previousJobId = currentJob?.id || monitorState.jobId || null;
+  const previousRunId = currentJob?.runId || monitorState.runId || null;
+  const terminalStatus = currentJob?.status || monitorState.status;
+  const terminal = ["failed", "quota-blocked"].includes(terminalStatus);
+  if (previousRunId && !terminal) {
+    return { action: "preserve", reason: "immutable-active-run" };
+  }
+
+  return {
+    action: "create-new-job",
+    nextProfileId: alternate.id,
+    checkpoint: {
+      checkpointedAt,
+      reason,
+      jobId: previousJobId,
+      runId: previousRunId,
+      profileId: monitorState.profileId || null,
+      jobStatus: currentJob?.status || null,
+      immutableRunBound: Boolean(previousRunId),
+      sessionBindingHash: String(currentJob?.geminiSessionBindingHash || "").trim() || null
+    },
+    reset: {
+      status: "switching-profile",
+      jobId: null,
+      runId: null,
+      profileId: alternate.id,
+      attempts: 0,
+      completion: null,
+      lastError: null
+    }
+  };
 }
 
 function profileFor(id) {
@@ -434,12 +504,23 @@ async function pollJob(deadline) {
     }
     if (job.status === "failed") {
       const detail = job.error || job.message || "Gemini 작업이 실패했습니다.";
-      if (isQuotaError(detail)) {
+      const failure = classifyGeminiFailure(detail);
+      if (failure.kind === "quota-blocked") {
         await persist("quota_blocked_during_job", { status: "quota-blocked", lastError: detail, runId: job.runId || state.runId });
-        return { kind: "quota-blocked", job, error: detail };
+        return { kind: "quota-blocked", job, error: detail, failure };
+      }
+      if (!failure.retryableOnSameProfile) {
+        await persist("job_failed_non_retryable", {
+          status: "failed",
+          lastError: detail,
+          runId: job.runId || state.runId,
+          failureCode: failure.code,
+          nextAction: "create a new job on an alternate profile without mutating this immutable run"
+        });
+        return { kind: "non-retryable", job, error: detail, failure };
       }
       await persist("job_failed", { status: "failed", lastError: detail, runId: job.runId || state.runId });
-      return { kind: "failed", job, error: detail };
+      return { kind: "failed", job, error: detail, failure };
     }
     await sleep(jobPollMs);
   }
@@ -447,27 +528,28 @@ async function pollJob(deadline) {
   return { kind: "timeout" };
 }
 
-async function switchToAvailableProfile(observations) {
-  if (state.jobId) {
-    const current = await api(`/api/jobs/${encodeURIComponent(state.jobId)}`).catch(() => null);
-    if (current?.runId) {
-      await persist("profile_failover_blocked", {
-        status: "quota-blocked",
-        jobId: state.jobId,
-        runId: current.runId,
-        profileId: state.profileId,
-        nextAction: "keep this immutable run bound to its original persisted Chrome profile; create a new job manually for another profile"
-      });
-      return false;
-    }
-  }
-  const alternate = observations.find((profile) => profile.available && profile.id !== state.profileId);
-  if (!alternate) return false;
-  await persist("profile_failover", { status: "switching-profile", previousProfileId: state.profileId, nextProfileId: alternate.id, previousJobId: state.jobId });
-  state.jobId = null;
-  state.runId = null;
-  state.profileId = alternate.id;
-  await createJob(profileFor(alternate.id));
+async function switchToAvailableProfile(observations, reason = "selected-profile-unavailable", knownCurrentJob) {
+  const current = knownCurrentJob === undefined && state.jobId
+    ? await api(`/api/jobs/${encodeURIComponent(state.jobId)}`).catch(() => null)
+    : knownCurrentJob || null;
+  const transition = profileFailoverTransition({
+    monitorState: state,
+    currentJob: current,
+    observations,
+    reason
+  });
+  if (transition.action !== "create-new-job") return false;
+
+  await persist("profile_failover_checkpointed", {
+    ...transition.reset,
+    failoverCheckpoint: transition.checkpoint,
+    previousJobId: transition.checkpoint.jobId,
+    previousRunId: transition.checkpoint.runId,
+    previousProfileId: transition.checkpoint.profileId,
+    nextProfileId: transition.nextProfileId,
+    nextAction: "create_new_job_on_alternate_profile"
+  });
+  await createJob(profileFor(transition.nextProfileId));
   return true;
 }
 
@@ -528,9 +610,23 @@ export async function main() {
           return;
         }
         if (current.status === "failed") {
+          const failure = classifyGeminiFailure(current.error || current.message || "");
+          if (!failure.retryableOnSameProfile) {
+            if (await switchToAvailableProfile(observations, failure.code, current)) continue;
+            await persist("non_retryable_profile_wait", {
+              status: "waiting-alternate-profile",
+              jobId: state.jobId,
+              runId: current.runId || state.runId,
+              profileId: state.profileId,
+              failureCode: failure.code,
+              nextAction: "wait for an alternate profile and create a new job; never resume this immutable run"
+            });
+            await waitForQuotaWindow(observations, "non_retryable_failure_needs_alternate_profile", "waiting-alternate-profile");
+            continue;
+          }
           const currentObservation = observations.find((profile) => profile.id === state.profileId);
           if (!currentObservation?.available) {
-            if (await switchToAvailableProfile(observations)) continue;
+            if (await switchToAvailableProfile(observations, failure.code, current)) continue;
             await persist("selected_profile_quota_blocked", { status: "quota-blocked", profileId: state.profileId, jobId: state.jobId });
             await waitForQuotaWindow(observations, "selected_profile_quota_blocked");
             continue;
@@ -566,9 +662,21 @@ export async function main() {
       }
       let waitObservations = observations;
       let waitReason = "monitor_cycle";
-      if (result.kind === "quota-blocked") {
+      if (["quota-blocked", "non-retryable"].includes(result.kind)) {
         waitObservations = await observeProfiles();
-        if (await switchToAvailableProfile(waitObservations)) continue;
+        if (await switchToAvailableProfile(waitObservations, result.failure?.code || result.kind, result.job)) continue;
+        if (result.kind === "non-retryable") {
+          await persist("non_retryable_profile_wait", {
+            status: "waiting-alternate-profile",
+            jobId: state.jobId,
+            runId: result.job?.runId || state.runId,
+            profileId: state.profileId,
+            failureCode: result.failure?.code || "non-retryable",
+            nextAction: "wait for an alternate profile and create a new job; never resume this immutable run"
+          });
+          await waitForQuotaWindow(waitObservations, "non_retryable_failure_needs_alternate_profile", "waiting-alternate-profile");
+          continue;
+        }
         waitReason = "all_profiles_quota_blocked";
       }
       await waitForQuotaWindow(waitObservations, waitReason);

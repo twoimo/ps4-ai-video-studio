@@ -770,7 +770,10 @@ function rankEvidenceSpans(text, terms = [], options = {}) {
   return sentenceSpans(text).flatMap((span) => {
     const quote = span.quote;
     const length = [...quote].length;
-    if (length < 18 || length > 220) return [];
+    // Concise source propositions such as "... 이유다." are useful, fully
+    // attributable hooks. Do not discard them merely for being one character
+    // shorter than an ordinary narration sentence.
+    if (length < 15 || length > 220) return [];
     if (!/다[.!。]+$/u.test(quote)) return [];
     if (/[!?！？]/u.test(quote) || SOURCE_BOILERPLATE_PATTERN.test(quote) || SOURCE_TECHNICAL_PATTERN.test(quote) || SOURCE_STAGE_DIRECTION_PATTERN.test(quote) || SOURCE_PROMOTIONAL_PATTERN.test(quote)) return [];
     if (/[|{}<>_=]/u.test(quote) || repeatedTokenCount(quote) >= 4) return [];
@@ -884,11 +887,37 @@ function captionFromEvidence(quote) {
   return String(quote || "").trim().replace(/[.!。]+$/u, "");
 }
 
+export function hasEvidenceHookFraming(value) {
+  const text = String(value || "").normalize("NFKC");
+  return /(?:이유|왜|방법|비밀|사실|숨어|어떻게|어디서|그러나|그런데|하지만|반면|의외로|때문|통해|따라|아니(?:다|라|며|지만)|아닙니다|않(?:다|는다|습니다)|없(?:다|는|습니다)|[0-9]+)/u.test(text);
+}
+
+function evidenceHookScore(value) {
+  const text = String(value || "").normalize("NFKC");
+  const explicitQuestion = /(?:이유|왜|방법|비밀|어떻게|어디서)/u.test(text);
+  const contrast = /(?:사실|그러나|그런데|하지만|반면|의외로|아니(?:다|라|며|지만)|아닙니다|않(?:다|는다|습니다)|없(?:다|는|습니다))/u.test(text);
+  const causal = /(?:때문|통해|따라)/u.test(text);
+  const scale = /[0-9]+/u.test(text);
+  return explicitQuestion * 8 + contrast * 4 + causal * 2 + scale;
+}
+
+function selectFallbackEvidence(candidates, clipCount) {
+  const hook = [...candidates].sort((left, right) => evidenceHookScore(right.quote) - evidenceHookScore(left.quote)
+    || right.score - left.score
+    || left.sourceIndex - right.sourceIndex
+    || left.evidenceIndex - right.evidenceIndex
+    || left.start - right.start)[0];
+  if (!hook || !hasEvidenceHookFraming(hook.quote)) return candidates.slice(0, clipCount);
+  return [hook, ...candidates.filter((candidate) => candidate !== hook)].slice(0, clipCount);
+}
+
 export function evidenceFallbackScript(topic, clipCount, sourceEntries = [], targetDurationSec = 78) {
   const candidates = fallbackEvidenceCandidates(topic, sourceEntries);
   if (candidates.length < clipCount) throw new Error(`유효한 검증 근거 문장이 부족합니다: ${candidates.length}/${clipCount}. 메뉴·식별자가 아닌 주제 관련 설명문이 있는 출처를 추가하거나 Gemini 텍스트 API를 설정하세요.`);
   const durationHint = Math.max(3, Number((targetDurationSec / clipCount).toFixed(2)));
-  const selected = candidates.slice(0, clipCount);
+  // The hook remains a complete captured sentence; only its editorial order is
+  // changed. Claims, citations, and extractive verification stay byte-bound.
+  const selected = selectFallbackEvidence(candidates, clipCount);
   const parsed = {
     title: selected[0].quote,
     hook: selected[0].quote,
@@ -1288,7 +1317,7 @@ function segmentWindowsForDuration(script, duration) {
   });
 }
 
-function captionEntriesForDuration(script, duration, voiceoverSync = null) {
+export function captionEntriesForDuration(script, duration, voiceoverSync = null) {
   const entries = [];
   const maxChars = captionMaxChars(script, duration);
   for (const { segment, index, start: segmentStart, end: segmentEnd } of segmentWindowsForDuration(script, duration)) {
@@ -1315,14 +1344,22 @@ function captionCueEnd(entry, nextEntry = null) {
   return Number(Math.min(nextEntry?.start ?? minimumEnd, minimumEnd).toFixed(3));
 }
 
-const BENCHMARK_CAPTION_CUES_PER_MINUTE = 62.6;
+const BENCHMARK_CAPTION_CUES_PER_MINUTE = 60.59;
+const MINIMUM_BENCHMARK_CAPTION_DENSITY_RATIO = 0.5;
 
 function captionMaxChars(script, duration) {
   const segments = script?.segments || [];
-  const totalTextChars = segments.reduce((sum, segment) => sum + [...String(segment.narration || segment.caption || "").replace(/\s+/g, " ").trim()].length, 0);
-  const targetCueCount = Math.max(segments.length, Math.round((Number(duration) || 0) / 60 * BENCHMARK_CAPTION_CUES_PER_MINUTE));
-  if (!totalTextChars || !targetCueCount) return 8;
-  return Math.max(8, Math.min(12, Math.ceil(totalTextChars / targetCueCount) + 1));
+  const texts = segments.map((segment) => String(segment.narration || segment.caption || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  const targetCueCount = Math.max(segments.length, Math.ceil((Number(duration) || 0) / 60 * BENCHMARK_CAPTION_CUES_PER_MINUTE * MINIMUM_BENCHMARK_CAPTION_DENSITY_RATIO));
+  if (!texts.length || !targetCueCount) return 8;
+  // Choose the widest readable chunks that still reach the measured benchmark
+  // range. This avoids both deterministic under-density and artificial
+  // character-by-character flashing.
+  for (let maxChars = 12; maxChars >= 4; maxChars -= 1) {
+    const cueCount = texts.reduce((sum, text) => sum + splitCaptionText(text, maxChars).length, 0);
+    if (cueCount >= targetCueCount) return maxChars;
+  }
+  return 4;
 }
 
 function captionsForDuration(script, duration, voiceoverSync = null) {

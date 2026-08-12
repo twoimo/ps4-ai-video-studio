@@ -4,7 +4,10 @@ import { join } from "node:path";
 import {
   assertGeminiChromeRuntime,
   buildGeminiChromeLaunchArgs,
+  canonicalGeminiResumeScriptHash,
+  geminiAspectRatioEvidence,
   geminiChromeMajorVersion,
+  geminiVideoQuotaMessage,
   isHeadlessChromeVersion,
   resolveGeminiChromeLaunchPolicy
 } from "../src/gemini-browser.mjs";
@@ -98,5 +101,63 @@ describe("Gemini Chrome runtime mode attestation", () => {
       "User-Agent": "HeadlessChrome/108.0.0.0"
     }, { headless: true, mode: "headless" })).toThrow("Chrome 109 이상");
     expect(() => assertGeminiChromeRuntime({ Browser: "Unknown/1" }, { headless: true, mode: "headless" })).toThrow("확인할 수 없습니다");
+  });
+});
+
+describe("Gemini browser generation safety", () => {
+  test("requires an authoritative aspect-ratio label or selected state", () => {
+    expect(geminiAspectRatioEvidence("vertical", { controlLabel: "Aspect ratio: Portrait" })).toMatchObject({
+      configured: true,
+      method: "control-label"
+    });
+    expect(geminiAspectRatioEvidence("vertical", { controlLabel: "가로세로 비율: 세로 모드" }).configured).toBe(true);
+    expect(geminiAspectRatioEvidence("vertical", {
+      controlLabel: "Aspect ratio",
+      options: [{ label: "Portrait 9:16", selected: true }]
+    })).toMatchObject({ configured: true, method: "selected-state" });
+    expect(geminiAspectRatioEvidence("vertical", { controlLabel: "Aspect ratio" }).configured).toBe(false);
+    expect(geminiAspectRatioEvidence("vertical", { controlLabel: "Landscape 16:9" })).toMatchObject({
+      configured: false,
+      contradiction: true
+    });
+  });
+
+  test("detects precise video quota messages without treating upgrade copy as exhaustion", () => {
+    expect(geminiVideoQuotaMessage("동영상을 다시 생성할 수 있습니다: 오늘 오후 8:20")).toContain("동영상을 다시 생성할 수 있습니다");
+    expect(geminiVideoQuotaMessage("Video generation limit reached. Videos will be available again tomorrow.")).toContain("Video generation limit reached");
+    expect(geminiVideoQuotaMessage("업그레이드하여 더 많은 기능을 이용하세요")).toBeNull();
+    expect(geminiVideoQuotaMessage("Manage quota and billing in settings")).toBeNull();
+  });
+
+  test("canonical resume hash ignores capture timestamps but binds prompts, evidence, and source hashes", () => {
+    const script = {
+      title: "박석 배수 구조",
+      capturedAt: "2026-08-12T10:00:00.000Z",
+      sources: [{
+        url: "https://example.test/source",
+        sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        fetchedAt: "2026-08-12T10:00:01.000Z",
+        evidence: [{ id: "excerpt-1", quote: "박석 사이로 물이 빠집니다." }]
+      }],
+      segments: [{
+        visualPrompt: "vertical documentary close-up of stone drainage",
+        narration: "박석 사이로 물이 빠집니다.",
+        sourceEvidence: [{ sourceId: "https://example.test/source", quote: "박석 사이로 물이 빠집니다." }]
+      }]
+    };
+    const timestampOnlyChange = structuredClone(script);
+    timestampOnlyChange.capturedAt = "2026-08-12T11:00:00.000Z";
+    timestampOnlyChange.sources[0].fetchedAt = "2026-08-12T11:00:01.000Z";
+    expect(canonicalGeminiResumeScriptHash(timestampOnlyChange)).toBe(canonicalGeminiResumeScriptHash(script));
+
+    for (const mutate of [
+      (value) => { value.segments[0].visualPrompt += " in rain"; },
+      (value) => { value.sources[0].evidence[0].quote = "다른 근거"; },
+      (value) => { value.sources[0].sha256 = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
+    ]) {
+      const changed = structuredClone(script);
+      mutate(changed);
+      expect(canonicalGeminiResumeScriptHash(changed)).not.toBe(canonicalGeminiResumeScriptHash(script));
+    }
   });
 });
