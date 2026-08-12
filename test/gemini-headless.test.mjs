@@ -5,21 +5,31 @@ import { join } from "node:path";
 import {
   assertGeminiChromeRuntime,
   buildGeminiChromeLaunchArgs,
+  canonicalGeminiEditorText,
   canonicalGeminiConversationUrl,
   canonicalGeminiResumeScriptHash,
   confirmGeminiPromptSubmission,
+  createGeminiSubmissionBaseline,
   geminiAspectRatioEvidence,
   geminiChromeMajorVersion,
   geminiPromptRetryDecision,
+  geminiPromptReadiness,
   geminiPendingRecoveryDecision,
   geminiPromptSubmissionDomState,
   geminiPromptSubmissionEvidence,
+  inspectGeminiSubmitIntent,
+  readGeminiGenerationReceipt,
+  retainLegacyGeminiAbandonmentProvenance,
   geminiVideoQuotaMessage,
   isHeadlessChromeVersion,
   resolveGeminiChromeLaunchPolicy,
   resolveGeminiVideoTimeoutMs,
-  selectGeminiRecoveryTarget
+  selectGeminiRecoveryTarget,
+  waitForGeminiConversationUrl,
+  waitForGeminiPromptReady,
+  writeGeminiGenerationCheckpoint
 } from "../src/gemini-browser.mjs";
+import { canonicalJsonHash } from "../src/provenance.mjs";
 
 const HEADLESS_151 = {
   Browser: "Chrome/151.0.7922.109",
@@ -31,6 +41,60 @@ const HEADED_151 = {
   "User-Agent": "Mozilla/5.0 Chrome/151.0.0.0 Safari/537.36"
 };
 const DEDICATED_PROFILE = join(homedir(), ".ps4-ai-video-studio", "headless-test");
+
+function currentGenerationReceipt(overrides = {}) {
+  const sessionBinding = {
+    schemaVersion: 1,
+    cdpOrigin: "http://127.0.0.1:9222",
+    profileBasename: "headless-test",
+    profilePathHash: `sha256:${"1".repeat(64)}`
+  };
+  const sessionBindingHash = canonicalJsonHash(sessionBinding);
+  const providerDecision = {
+    requested: "gemini-browser",
+    selected: "gemini-browser",
+    fallbackUsed: false,
+    policy: "no-local-video-fallback"
+  };
+  const providerAttestation = {
+    type: "gemini-chrome-session",
+    provider: "gemini-browser",
+    sessionBinding,
+    sessionBindingHash,
+    persistentProfile: true,
+    headless: true
+  };
+  return {
+    schemaVersion: 4,
+    provider: "gemini-browser",
+    jobId: "job-current",
+    runId: "run-current",
+    status: "failed",
+    startedAt: "2026-08-12T13:00:00.000Z",
+    completedAt: "2026-08-12T13:01:00.000Z",
+    request: { provider: "gemini-browser", clipCount: 1, segments: [{}] },
+    requestHash: `sha256:${"2".repeat(64)}`,
+    requestScriptHash: `sha256:${"2".repeat(64)}`,
+    scriptHash: `sha256:${"3".repeat(64)}`,
+    resumeRequestHash: `sha256:${"4".repeat(64)}`,
+    resumeScriptHash: `sha256:${"5".repeat(64)}`,
+    sessionBinding,
+    sessionBindingHash,
+    providerDecision,
+    providerDecisionHash: canonicalJsonHash(providerDecision),
+    providerAttestation,
+    providerAttestationHash: canonicalJsonHash(providerAttestation),
+    segments: [],
+    pendingSegment: null,
+    recoveryAttempts: [],
+    recoveredPendingSegments: [],
+    rejectedResumes: [],
+    legacySubmissionAbandonment: null,
+    legacySubmissionAbandonmentEvidence: null,
+    legacySubmissionAbandonmentConsumptions: [],
+    ...overrides
+  };
+}
 
 describe("Gemini Chrome headless launch policy", () => {
   test("defaults to the new headless mode without a background window", () => {
@@ -123,6 +187,209 @@ describe("Gemini long-running result recovery", () => {
     }
   });
 
+  test("waits the full bounded thirty seconds for a delayed conversation URL", async () => {
+    let now = 0;
+    let reads = 0;
+    const delayed = await waitForGeminiConversationUrl({
+      readHref: async () => {
+        reads += 1;
+        return now >= 6_000 ? "https://gemini.google.com/app/late-conversation?hl=ko" : "https://gemini.google.com/videos";
+      },
+      nowFn: () => now,
+      sleepFn: async (milliseconds) => { now += milliseconds; }
+    });
+    expect(delayed).toBe("https://gemini.google.com/app/late-conversation");
+    expect(now).toBe(6_000);
+    expect(reads).toBe(13);
+
+    now = 0;
+    reads = 0;
+    const missing = await waitForGeminiConversationUrl({
+      readHref: async () => { reads += 1; return "https://gemini.google.com/videos"; },
+      nowFn: () => now,
+      sleepFn: async (milliseconds) => { now += milliseconds; }
+    });
+    expect(missing).toBeNull();
+    expect(now).toBe(30_000);
+    expect(reads).toBe(60);
+  });
+
+  test("removes an atomic checkpoint temp file when rename fails", async () => {
+    const operations = [];
+    await expect(writeGeminiGenerationCheckpoint("/virtual/generation.json", { status: "running" }, {
+      tempId: "deterministic",
+      writeFileFn: async (path, body) => { operations.push(["write", path, JSON.parse(body).status]); },
+      openFn: async (path) => ({
+        sync: async () => { operations.push(["sync", path]); },
+        close: async () => { operations.push(["close", path]); }
+      }),
+      renameFn: async (source, target) => { operations.push(["rename", source, target]); throw new Error("disk-full"); },
+      unlinkFn: async (path) => { operations.push(["unlink", path]); }
+    })).rejects.toThrow("disk-full");
+    expect(operations).toEqual([
+      ["write", "/virtual/generation.json.deterministic.tmp", "running"],
+      ["sync", "/virtual/generation.json.deterministic.tmp"],
+      ["close", "/virtual/generation.json.deterministic.tmp"],
+      ["rename", "/virtual/generation.json.deterministic.tmp", "/virtual/generation.json"],
+      ["unlink", "/virtual/generation.json.deterministic.tmp"]
+    ]);
+  });
+
+  test("fsyncs the checkpoint file and parent directory around atomic rename", async () => {
+    const operations = [];
+    await writeGeminiGenerationCheckpoint("/virtual/generation.json", { status: "running" }, {
+      tempId: "durable",
+      writeFileFn: async () => { operations.push("write"); },
+      openFn: async (path) => ({
+        sync: async () => { operations.push(`sync:${path}`); },
+        close: async () => { operations.push(`close:${path}`); }
+      }),
+      renameFn: async () => { operations.push("rename"); },
+      unlinkFn: async () => { operations.push("unlink"); }
+    });
+    expect(operations).toEqual([
+      "write",
+      "sync:/virtual/generation.json.durable.tmp",
+      "close:/virtual/generation.json.durable.tmp",
+      "rename",
+      "sync:/virtual",
+      "close:/virtual",
+      "unlink"
+    ]);
+  });
+
+  test("fails closed on unreadable or malformed generation receipts", async () => {
+    await expect(readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => { throw new Error("permission denied"); }
+    })).rejects.toThrow("새 요청을 전송하지 않습니다");
+    await expect(readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from("{broken")
+    })).rejects.toThrow("손상되었습니다");
+    await expect(readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from("{}")
+    })).rejects.toThrow("손상되었습니다");
+    const malformedLegacyCompleted = {
+      schemaVersion: 3,
+      provider: "gemini-browser",
+      jobId: "legacy-completed",
+      runId: "legacy-run",
+      status: "completed",
+      completedAt: "2026-08-12T13:01:00.000Z",
+      segments: []
+    };
+    await expect(readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from(JSON.stringify(malformedLegacyCompleted))
+    })).rejects.toThrow("새 요청을 전송하지 않습니다");
+    const legacyFailedForExplicitAbandonment = {
+      ...malformedLegacyCompleted,
+      status: "failed",
+      segments: []
+    };
+    expect(await readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from(JSON.stringify(legacyFailedForExplicitAbandonment))
+    })).toEqual(legacyFailedForExplicitAbandonment);
+    const valid = currentGenerationReceipt();
+    expect(await readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from(JSON.stringify(valid))
+    })).toEqual(valid);
+    for (const corrupt of [
+      (value) => { delete value.request; },
+      (value) => { delete value.recoveryAttempts; },
+      (value) => { value.sessionBindingHash = `sha256:${"0".repeat(64)}`; },
+      (value) => { value.providerAttestation.sessionBindingHash = `sha256:${"0".repeat(64)}`; },
+      (value) => { value.status = "completed"; }
+    ]) {
+      const malformed = structuredClone(valid);
+      corrupt(malformed);
+      await expect(readGeminiGenerationReceipt("/receipt", {
+        existsFn: () => true,
+        readFileFn: async () => Buffer.from(JSON.stringify(malformed))
+      })).rejects.toThrow("손상되었습니다");
+    }
+    const orphanedConsumption = currentGenerationReceipt({
+      legacySubmissionAbandonmentConsumptions: [{ segmentIndex: 1 }]
+    });
+    await expect(readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from(JSON.stringify(orphanedConsumption))
+    })).rejects.toThrow("손상되었습니다");
+    const safePromptReadinessFailure = currentGenerationReceipt({
+      errorCode: "GEMINI_PROMPT_FILL_MISMATCH",
+      promptReadinessFailure: {
+        schemaVersion: 1,
+        code: "GEMINI_PROMPT_FILL_MISMATCH",
+        recordedAt: "2026-08-12T14:00:00.000Z",
+        promptFieldVisible: true,
+        expectedLength: 1457,
+        observedLength: 1000,
+        expectedCanonicalLength: 1455,
+        observedCanonicalLength: 998,
+        expectedCanonicalHash: `sha256:${"6".repeat(64)}`,
+        observedCanonicalHash: `sha256:${"7".repeat(64)}`,
+        expectedNewlineCount: 2,
+        observedNewlineCount: 1
+      }
+    });
+    expect(await readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from(JSON.stringify(safePromptReadinessFailure))
+    })).toEqual(safePromptReadinessFailure);
+    const leakedPromptReadinessFailure = structuredClone(safePromptReadinessFailure);
+    leakedPromptReadinessFailure.promptReadinessFailure.promptValue = "provider prompt body must not be stored here";
+    await expect(readGeminiGenerationReceipt("/receipt", {
+      existsFn: () => true,
+      readFileFn: async () => Buffer.from(JSON.stringify(leakedPromptReadinessFailure))
+    })).rejects.toThrow("손상되었습니다");
+    expect(await readGeminiGenerationReceipt("/receipt", { existsFn: () => false })).toBeNull();
+  });
+
+  test("retains exact legacy abandonment provenance across repeated recovery runs", () => {
+    const receipt = {
+      path: "gemini-legacy-abandonment.json",
+      receiptHash: `sha256:${"a".repeat(64)}`,
+      sourceGenerationSha256: `sha256:${"b".repeat(64)}`,
+      authorizedAt: "2026-08-12T13:00:00.000Z",
+      authorization: "explicit-operator-cli",
+      operatorAssertion: "no-live-recoverable-conversation-target",
+      liveCdpObservation: {
+        observedAt: "2026-08-12T13:00:00.000Z",
+        cdpOriginHash: `sha256:${"c".repeat(64)}`,
+        targetCount: 1,
+        prohibitedTargetCount: 0,
+        targetSetHash: `sha256:${"d".repeat(64)}`,
+        headless: true
+      }
+    };
+    const evidence = {
+      schemaVersion: 1,
+      generationPath: "legacy-gemini-evidence/abandoned-gemini-generation.json",
+      generationSha256: receipt.sourceGenerationSha256,
+      receiptPath: "legacy-gemini-evidence/abandonment-receipt.json",
+      receiptSha256: `sha256:${"e".repeat(64)}`,
+      receiptHash: receipt.receiptHash
+    };
+    const first = retainLegacyGeminiAbandonmentProvenance({}, { required: true, receipt }, evidence);
+    const second = retainLegacyGeminiAbandonmentProvenance({
+      legacySubmissionAbandonment: first.receipt,
+      legacySubmissionAbandonmentEvidence: first.evidence,
+      legacySubmissionAbandonmentConsumptions: []
+    }, { required: false, receipt: null }, null);
+    expect(second).toEqual(first);
+
+    const corrupted = structuredClone(evidence);
+    corrupted.generationPath = "../unbound-generation.json";
+    expect(() => retainLegacyGeminiAbandonmentProvenance({
+      legacySubmissionAbandonment: receipt,
+      legacySubmissionAbandonmentEvidence: corrupted
+    }, { required: false, receipt: null }, null)).toThrow("안전하게 이어받을 수 없습니다");
+  });
+
   test("selects only the single exact live conversation target", () => {
     const checkpoint = {
       targetId: "target-1",
@@ -144,7 +411,15 @@ describe("Gemini long-running result recovery", () => {
       url: "https://gemini.google.com/app/conversation-1"
     }])).toMatchObject({ status: "target-id-mismatch" });
     expect(selectGeminiRecoveryTarget({ ...checkpoint, conversationUrl: "https://example.test/app/conversation-1" }, [])).toMatchObject({
-      status: "invalid-checkpoint"
+      status: "missing"
+    });
+    expect(selectGeminiRecoveryTarget({ targetId: "target-1", conversationUrl: null }, [{
+      targetId: "target-1",
+      type: "page",
+      url: "https://gemini.google.com/app/late-bound"
+    }])).toMatchObject({
+      status: "exact-unbound",
+      conversationUrl: "https://gemini.google.com/app/late-bound"
     });
   });
 
@@ -181,11 +456,13 @@ describe("Gemini long-running result recovery", () => {
       sessionBinding,
       providerDecision,
       providerAttestation,
+      recoveryAttempts: [],
       pendingSegment: {
         schemaVersion: 1,
         status: "submitted-awaiting-result",
         index: 1,
         runId: "run-1",
+        submissionRunId: "run-1",
         requestHash: "request-1",
         scriptHash: "script-1",
         resumeRequestHash: current.resumeRequestHash,
@@ -195,6 +472,7 @@ describe("Gemini long-running result recovery", () => {
         providerAttestationHash: current.providerAttestationHash,
         prompt,
         promptHash,
+        submittedToProvider: true,
         submittedAt: "2026-08-12T12:00:00.000Z",
         timeoutMs: 1_200_000,
         conversationUrl: "https://gemini.google.com/app/conversation-1",
@@ -209,6 +487,51 @@ describe("Gemini long-running result recovery", () => {
       eligible: true,
       reason: "exact-pending-recovery"
     });
+    const ambiguous = structuredClone(previous);
+    ambiguous.pendingSegment.status = "ambiguous-submitted";
+    ambiguous.pendingSegment.conversationUrl = null;
+    expect(geminiPendingRecoveryDecision(ambiguous, current)).toMatchObject({ eligible: true, reason: "exact-pending-recovery" });
+
+    const intent = structuredClone(previous);
+    intent.pendingSegment = {
+      ...intent.pendingSegment,
+      schemaVersion: 2,
+      status: "submit-intent",
+      submittedToProvider: null,
+      submissionMayHaveOccurred: true,
+      intentCreatedAt: "2026-08-12T12:00:00.000Z",
+      conversationUrl: null,
+      submissionAcknowledgement: null,
+      submissionBaseline: createGeminiSubmissionBaseline(prompt, {
+        promptFieldVisible: true,
+        promptValue: prompt,
+        sendEnabled: true,
+        userMessageMatchCount: 0,
+        stopResponseCount: 0,
+        generationEvidenceCount: 0,
+        generationEvidenceKeys: [],
+        conversationUrl: null
+      }, "2026-08-12T12:00:00.000Z")
+    };
+    expect(geminiPendingRecoveryDecision(intent, current)).toMatchObject({
+      eligible: true,
+      reason: "exact-submit-intent-recovery"
+    });
+    intent.pendingSegment.submissionBaseline.baselineHash = `sha256:${"0".repeat(64)}`;
+    expect(geminiPendingRecoveryDecision(intent, current)).toMatchObject({ eligible: false, reason: "submit-intent-baseline-invalid" });
+
+    const secondRecovery = structuredClone(previous);
+    secondRecovery.runId = "recovery-run-1";
+    secondRecovery.pendingSegment.runId = "recovery-run-1";
+    secondRecovery.recoveryAttempts = [{
+      attempt: 1,
+      runId: "recovery-run-1",
+      submissionRunId: "run-1",
+      startedAt: "2026-08-12T12:30:00.000Z",
+      status: "timed-out"
+    }];
+    expect(geminiPendingRecoveryDecision(secondRecovery, current)).toMatchObject({ eligible: true });
+    expect(secondRecovery.pendingSegment.submissionRunId).toBe("run-1");
     for (const mutate of [
       (value) => { value.pendingSegment.runId = "different-run"; },
       (value) => { value.pendingSegment.prompt += " altered"; },
@@ -384,6 +707,124 @@ describe("Gemini browser generation safety", () => {
     }, state)).toMatchObject({ verified: true, promptCleared: true, evidenceTypes: ["user-message", "generation"] });
   });
 
+  test("accepts Quill paragraph whitespace while retaining the exact original prompt hash", async () => {
+    const prompt = "First evidence line\nSecond evidence line";
+    const quillRenderedPrompt = "First\u00a0evidence line\r\n\r\nSecond evidence line";
+    expect(canonicalGeminiEditorText(quillRenderedPrompt)).toBe(canonicalGeminiEditorText(prompt));
+
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: quillRenderedPrompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    const after = { ...baseline, promptValue: "", userMessageMatchCount: 1 };
+    const observations = [baseline, after];
+    let clicks = 0;
+    let checkpoint = null;
+    const result = await confirmGeminiPromptSubmission({
+      prompt,
+      observe: async () => observations.shift(),
+      initialClick: async () => { clicks += 1; return { clicked: true, method: "button" }; },
+      retryClick: async () => ({ clicked: false }),
+      onBeforeInitialClick: async (observation) => {
+        checkpoint = createGeminiSubmissionBaseline(prompt, observation, "2026-08-12T14:00:00.000Z");
+      },
+      sleepFn: async () => {},
+      pollsPerWindow: 1,
+      maxClickAttempts: 1
+    });
+
+    expect(result).toMatchObject({ submitted: true, verified: true, clickCount: 1 });
+    expect(clicks).toBe(1);
+    expect(checkpoint.promptHash).toBe(canonicalJsonHash({ prompt }));
+    expect(checkpoint.promptHash).not.toBe(canonicalJsonHash({ prompt: quillRenderedPrompt }));
+  });
+
+  test("binds the durable submit baseline to raw prompt bytes, not display normalization", () => {
+    const rawPrompt = "\u200B  First evidence line\nSecond evidence line \uFEFF ";
+    const displayNormalizedPrompt = rawPrompt.replace(/[\u200B\uFEFF]/g, "").trim();
+    const observation = {
+      promptFieldVisible: true,
+      promptValue: "First evidence line\n\nSecond evidence line",
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    const baseline = createGeminiSubmissionBaseline(rawPrompt, observation, "2026-08-12T14:00:00.000Z");
+    expect(baseline.promptHash).toBe(canonicalJsonHash({ prompt: rawPrompt }));
+    expect(baseline.promptHash).not.toBe(canonicalJsonHash({ prompt: displayNormalizedPrompt }));
+    expect(inspectGeminiSubmitIntent({ status: "submit-intent", submissionBaseline: baseline }, rawPrompt, observation))
+      .toMatchObject({ promotable: false, reason: "post-click-outcome-ambiguous" });
+    expect(inspectGeminiSubmitIntent({ status: "submit-intent", submissionBaseline: baseline }, displayNormalizedPrompt, observation))
+      .toMatchObject({ promotable: false, reason: "submit-intent-invalid" });
+  });
+
+  test("polls after filling until the canonical Quill prompt is complete", async () => {
+    const prompt = "Evidence-bound scene\nSlow camera reveal";
+    const observations = [
+      { promptFieldVisible: true, promptValue: "Evidence-bound scene\nSlow camera" },
+      { promptFieldVisible: true, promptValue: "Evidence-bound scene\n\nSlow camera reveal" }
+    ];
+    const readiness = await waitForGeminiPromptReady({
+      prompt,
+      observe: async () => observations.shift(),
+      sleepFn: async () => {},
+      maxPolls: 2
+    });
+    expect(readiness).toMatchObject({ ready: true, attempts: 2 });
+    expect(readiness.diagnostics).toMatchObject({
+      expectedLength: prompt.length,
+      observedLength: prompt.length + 1,
+      expectedNewlineCount: 1,
+      observedNewlineCount: 2
+    });
+  });
+
+  test("rejects word, punctuation, and truncation mutations before any click with sanitized diagnostics", async () => {
+    const prompt = "Stone courtyard drains rain.\nKeep one slow reveal.";
+    const mismatches = [
+      "Brick courtyard drains rain.\nKeep one slow reveal.",
+      "Stone courtyard drains rain!\nKeep one slow reveal.",
+      "Stone courtyard drains rain.\nKeep one slow"
+    ];
+    for (const promptValue of mismatches) {
+      const readiness = geminiPromptReadiness(prompt, { promptFieldVisible: true, promptValue });
+      expect(readiness.ready).toBe(false);
+      let beforeClick = 0;
+      let clicks = 0;
+      const result = await confirmGeminiPromptSubmission({
+        prompt,
+        observe: async () => ({
+          promptFieldVisible: true,
+          promptValue,
+          sendEnabled: true,
+          userMessageMatchCount: 0,
+          stopResponseCount: 0,
+          generationEvidenceCount: 0,
+          generationEvidenceKeys: [],
+          conversationUrl: null
+        }),
+        initialClick: async () => { clicks += 1; return { clicked: true }; },
+        retryClick: async () => { clicks += 1; return { clicked: true }; },
+        onBeforeInitialClick: async () => { beforeClick += 1; }
+      });
+      expect(result).toMatchObject({ submitted: false, reason: "exact-prompt-not-ready", clickCount: 0 });
+      expect(result.diagnostics.expectedCanonicalHash).not.toBe(result.diagnostics.observedCanonicalHash);
+      expect(JSON.stringify(result.diagnostics)).not.toContain(prompt);
+      expect(JSON.stringify(result)).not.toContain(promptValue);
+      expect(beforeClick).toBe(0);
+      expect(clicks).toBe(0);
+    }
+  });
+
   test("requires both a cleared editor and post-click acknowledgement evidence", () => {
     const prompt = "exact prompt";
     const baseline = {
@@ -494,6 +935,88 @@ describe("Gemini browser generation safety", () => {
     expect(result).toMatchObject({ submitted: true, verified: true, clickCount: 1 });
     expect(result.evidenceTypes).toContain("stop-response");
     expect(retryCalls).toBe(0);
+  });
+
+  test("durably checkpoints verified acknowledgement before returning submission", async () => {
+    const prompt = "checkpoint before return";
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    const observations = [baseline, { ...baseline, promptValue: "", userMessageMatchCount: 1 }];
+    const order = [];
+    const result = await confirmGeminiPromptSubmission({
+      prompt,
+      observe: async () => observations.shift(),
+      initialClick: async () => ({ clicked: true, method: "button" }),
+      retryClick: async () => ({ clicked: false }),
+      onVerified: async (acknowledgement) => {
+        order.push("checkpoint");
+        expect(acknowledgement).toMatchObject({ submitted: true, verified: true, clickCount: 1 });
+      },
+      sleepFn: async () => {},
+      pollsPerWindow: 1,
+      maxClickAttempts: 1
+    });
+    order.push("returned");
+    expect(result.verified).toBe(true);
+    expect(order).toEqual(["checkpoint", "returned"]);
+
+    const failedObservations = [baseline, { ...baseline, promptValue: "", stopResponseCount: 1 }];
+    await expect(confirmGeminiPromptSubmission({
+      prompt,
+      observe: async () => failedObservations.shift(),
+      initialClick: async () => ({ clicked: true, method: "button" }),
+      retryClick: async () => ({ clicked: false }),
+      onVerified: async () => { throw new Error("checkpoint-write-failed"); },
+      sleepFn: async () => {},
+      pollsPerWindow: 1,
+      maxClickAttempts: 1
+    })).rejects.toThrow("checkpoint-write-failed");
+  });
+
+  test("a crash immediately after the first click leaves a recoverable intent and permits no second click", async () => {
+    const prompt = "single click crash fence";
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    let checkpoint = null;
+    let clicks = 0;
+    await expect(confirmGeminiPromptSubmission({
+      prompt,
+      observe: async () => baseline,
+      onBeforeInitialClick: async (observation) => {
+        checkpoint = {
+          status: "submit-intent",
+          submissionBaseline: createGeminiSubmissionBaseline(prompt, observation, "2026-08-12T13:00:00.000Z")
+        };
+      },
+      initialClick: async () => {
+        clicks += 1;
+        throw new Error("fault-after-click");
+      },
+      retryClick: async () => { clicks += 1; return { clicked: true }; }
+    })).rejects.toThrow("fault-after-click");
+    expect(clicks).toBe(1);
+    expect(checkpoint.status).toBe("submit-intent");
+    expect(inspectGeminiSubmitIntent(checkpoint, prompt, baseline)).toMatchObject({
+      promotable: false,
+      reason: "post-click-outcome-ambiguous"
+    });
+    expect(clicks).toBe(1);
   });
 
   test("fails closed before result waiting when acknowledgement cannot be verified", async () => {

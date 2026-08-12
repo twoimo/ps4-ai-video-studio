@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import {
   assertLiveBudget,
   dryRunReceipt,
@@ -17,6 +18,16 @@ import {
 const fixture = JSON.parse(await readFile(new URL("./fixtures/bfl-flux-video-request.json", import.meta.url), "utf8"));
 const API_KEY = "bfl-test-key/with+symbols";
 let temporaryDirectories;
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
+  return value;
+}
+
+function testHashJson(value) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
+}
 
 function requestFor(directory, overrides = {}) {
   return structuredClone({ ...fixture, jobWorkingDirectory: directory, ...overrides });
@@ -334,5 +345,60 @@ describe("paid submission checkpoint and resume", () => {
       sleep: async () => {}
     })).rejects.toThrow("automatic paid resubmission is disabled");
     expect(postAttempts).toBe(1);
+  });
+
+  it("copies an actual provider shot-pattern binding into completed segment receipts", async () => {
+    const directory = await temporaryDirectory();
+    const providerVisualPrompt = `${fixture.segments[0].prompt}\nCamera-only direction: fixed tripod`;
+    const request = requestFor(directory, {
+      segments: [{
+        ...fixture.segments[0],
+        prompt: providerVisualPrompt,
+        providerVisualPrompt,
+        providerVisualPromptHash: testHashJson(providerVisualPrompt),
+        shotPattern: { patternId: "locked-static-evidence", submittedToProvider: false }
+      }],
+      targetDurationSec: 5
+    });
+    const receipt = await generate(request, API_KEY, {
+      env: liveEnvironment(),
+      fetchImpl: async (url, options = {}) => {
+        if (options.method === "POST") return jsonResponse({ id: "task-pattern-1", polling_url: "https://api.bfl.ai/v1/get_result?id=task-pattern-1", cost: 1 });
+        if (String(url).startsWith("https://api.bfl.ai/")) return jsonResponse({ id: "task-pattern-1", status: "Ready", result: { video: { url: "https://delivery-us1.bfl.ai/results/task-pattern-1.mp4?sig=temporary" } } });
+        return new Response(new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]), { headers: { "content-type": "video/mp4", "content-length": "8" } });
+      },
+      sleep: async () => {}
+    });
+    expect(receipt.segments[0]).toMatchObject({
+      providerVisualPrompt,
+      providerVisualPromptHash: testHashJson(providerVisualPrompt),
+      submittedToProvider: true,
+      shotPattern: request.segments[0].shotPattern
+    });
+    expect(receipt.segments[0].submittedPromptHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(receipt.segments[0].submittedRequestBodyHash).toBe(receipt.tasks[0].requestBodyHash);
+    expect(receipt.tasks[0].request.prompt).toBe(providerVisualPrompt);
+  });
+
+  it("rejects a mismatched shot-pattern prompt before any paid BFL request", async () => {
+    const directory = await temporaryDirectory();
+    let fetchCount = 0;
+    const providerVisualPrompt = `${fixture.segments[0].prompt}\nCamera-only direction: fixed tripod`;
+    const request = requestFor(directory, {
+      segments: [{
+        ...fixture.segments[0],
+        prompt: "different prompt that must never be submitted",
+        providerVisualPrompt,
+        providerVisualPromptHash: `sha256:${"a".repeat(64)}`,
+        shotPattern: { patternId: "locked-static-evidence" }
+      }],
+      targetDurationSec: 5
+    });
+    await expect(generate(request, API_KEY, {
+      env: liveEnvironment(),
+      fetchImpl: async () => { fetchCount += 1; throw new Error("must not be called"); },
+      sleep: async () => {}
+    })).rejects.toThrow("providerVisualPrompt must equal the submitted prompt");
+    expect(fetchCount).toBe(0);
   });
 });

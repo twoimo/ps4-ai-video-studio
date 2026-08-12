@@ -1,17 +1,27 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { JOBS_DIR } from "./pipeline.mjs";
 import { hashFile } from "./run-ledger.mjs";
 import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
+import { buildGeminiClipPrompt, providerPromptBindingForSegment, providerRequestFieldsForSegment } from "./shot-patterns.mjs";
+import {
+  attestLegacyGeminiAbandonmentConsumption,
+  preserveLegacyGeminiAbandonmentEvidence,
+  readLegacyGeminiAbandonmentDecision,
+  validateLegacyGeminiAbandonmentConsumption
+} from "./gemini-legacy-abandonment.mjs";
+export { buildGeminiClipPrompt } from "./shot-patterns.mjs";
 
 const DEFAULT_CDP = process.env.CHROME_CDP_URL || "http://127.0.0.1:9222";
 const PROFILE_DIR = process.env.CHROME_PROFILE_DIR || join(process.env.HOME || "/tmp", ".ps4-ai-video-studio", "chrome-profile");
 const DEFAULT_VIDEO_TIMEOUT_MS = 1_200_000;
 const MIN_VIDEO_TIMEOUT_MS = 300_000;
 const MAX_VIDEO_TIMEOUT_MS = 3_600_000;
+const CONVERSATION_BINDING_TIMEOUT_MS = 30_000;
+const CONVERSATION_BINDING_POLL_MS = 500;
 const MIN_NEW_HEADLESS_CHROME_MAJOR = 109;
 
 export function resolveGeminiVideoTimeoutMs(environment = process.env) {
@@ -136,6 +146,64 @@ function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
 }
 
+function exactGeminiPromptText(value) {
+  return String(value ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
+}
+
+export function canonicalGeminiEditorText(value) {
+  return exactGeminiPromptText(value)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/gu, " ")
+    .replace(/ *\n+ */g, "\n")
+    .trim();
+}
+
+function editorNewlineCount(value) {
+  return (exactGeminiPromptText(value).replace(/\r\n?/g, "\n").match(/\n/g) || []).length;
+}
+
+export function geminiPromptReadiness(prompt, observation = {}) {
+  const expected = exactGeminiPromptText(prompt);
+  const observed = observation.promptValue == null ? null : exactGeminiPromptText(observation.promptValue);
+  const canonicalExpected = canonicalGeminiEditorText(expected);
+  const canonicalObserved = observed == null ? null : canonicalGeminiEditorText(observed);
+  const diagnostics = {
+    promptFieldVisible: observation.promptFieldVisible === true,
+    expectedLength: expected.length,
+    observedLength: observed == null ? null : observed.length,
+    expectedCanonicalLength: canonicalExpected.length,
+    observedCanonicalLength: canonicalObserved == null ? null : canonicalObserved.length,
+    expectedCanonicalHash: hashJson({ editorText: canonicalExpected }),
+    observedCanonicalHash: canonicalObserved == null ? null : hashJson({ editorText: canonicalObserved }),
+    expectedNewlineCount: editorNewlineCount(expected),
+    observedNewlineCount: observed == null ? null : editorNewlineCount(observed)
+  };
+  return {
+    ready: diagnostics.promptFieldVisible && canonicalObserved === canonicalExpected,
+    diagnostics
+  };
+}
+
+export async function waitForGeminiPromptReady({
+  prompt,
+  observe,
+  sleepFn = sleep,
+  maxPolls = 12,
+  pollIntervalMs = 125
+} = {}) {
+  if (typeof observe !== "function" || typeof sleepFn !== "function") {
+    throw new TypeError("Gemini prompt 준비 확인에는 observe와 sleepFn 함수가 필요합니다.");
+  }
+  const polls = Math.max(1, Number(maxPolls) || 1);
+  let readiness = geminiPromptReadiness(prompt, {});
+  for (let attempt = 0; attempt < polls; attempt += 1) {
+    readiness = geminiPromptReadiness(prompt, await observe());
+    if (readiness.ready) return { ...readiness, attempts: attempt + 1 };
+    if (attempt + 1 < polls) await sleepFn(pollIntervalMs);
+  }
+  return { ...readiness, attempts: polls };
+}
+
 export function canonicalGeminiConversationUrl(value) {
   let parsed;
   try {
@@ -158,8 +226,18 @@ export function canonicalGeminiConversationUrl(value) {
 export function selectGeminiRecoveryTarget(checkpoint = {}, targets = []) {
   const conversationUrl = canonicalGeminiConversationUrl(checkpoint.conversationUrl);
   const checkpointTargetId = String(checkpoint.targetId || "").trim();
-  if (!conversationUrl || !checkpointTargetId) {
+  if (!checkpointTargetId) {
     return { status: "invalid-checkpoint", target: null, conversationUrl };
+  }
+  if (!conversationUrl) {
+    const matches = (Array.isArray(targets) ? targets : []).filter((target) => (
+      String(target?.type || "").toLowerCase() === "page"
+      && String(target?.targetId || "") === checkpointTargetId
+      && /^https:\/\/gemini\.google\.com\/(?:app(?:\/[^/?#]+)?|videos)(?:[?#]|$)/i.test(String(target?.url || ""))
+    ));
+    if (matches.length === 0) return { status: "missing", target: null, conversationUrl: null };
+    if (matches.length !== 1) return { status: "ambiguous", target: null, conversationUrl: null, matchCount: matches.length };
+    return { status: "exact-unbound", target: matches[0], conversationUrl: canonicalGeminiConversationUrl(matches[0].url) };
   }
   const matches = (Array.isArray(targets) ? targets : []).filter((target) => (
     String(target?.type || "").toLowerCase() === "page"
@@ -187,10 +265,24 @@ export function geminiPendingRecoveryDecision(previousGeneration, current = {}) 
   if (hashJson(previousGeneration.sessionBinding) !== current.sessionBindingHash) return reject("session-receipt-integrity-mismatch");
   if (hashJson(previousGeneration.providerDecision) !== current.providerDecisionHash) return reject("provider-decision-receipt-integrity-mismatch");
   if (hashJson(previousGeneration.providerAttestation) !== current.providerAttestationHash) return reject("provider-attestation-receipt-integrity-mismatch");
-  if (pending.schemaVersion !== 1) return reject("pending-checkpoint-version-invalid");
-  if (pending.status !== "submitted-awaiting-result") return reject("pending-status-not-recoverable");
+  if (![1, 2].includes(pending.schemaVersion)) return reject("pending-checkpoint-version-invalid");
+  if (!["submit-intent", "ambiguous-submitted", "submitted-awaiting-result"].includes(pending.status)) return reject("pending-status-not-recoverable");
+  const intentOnly = pending.status === "submit-intent";
+  if (intentOnly) {
+    if (pending.schemaVersion !== 2 || pending.submissionMayHaveOccurred !== true || pending.submittedToProvider !== null) {
+      return reject("submit-intent-marker-invalid");
+    }
+  } else if (pending.submittedToProvider !== true) return reject("provider-submission-marker-missing");
   if (!Number.isInteger(pending.index) || pending.index < 1 || pending.index !== current.index) return reject("segment-index-mismatch");
   if (!previousGeneration.runId || pending.runId !== previousGeneration.runId) return reject("run-binding-mismatch");
+  if (!String(pending.submissionRunId || "").trim()) return reject("submission-run-binding-missing");
+  if (!Array.isArray(previousGeneration.recoveryAttempts)) return reject("recovery-attempt-history-invalid");
+  if (previousGeneration.recoveryAttempts.some((attempt, index) => (
+    attempt?.attempt !== index + 1
+    || attempt.submissionRunId !== pending.submissionRunId
+    || !String(attempt.runId || "").trim()
+    || !Number.isFinite(Date.parse(attempt.startedAt))
+  ))) return reject("recovery-attempt-history-invalid");
   if (!previousGeneration.requestHash || pending.requestHash !== previousGeneration.requestHash) return reject("request-binding-mismatch");
   if (!previousGeneration.scriptHash || pending.scriptHash !== previousGeneration.scriptHash) return reject("script-binding-mismatch");
   if (pending.resumeRequestHash !== previousGeneration.resumeRequestHash || pending.resumeRequestHash !== current.resumeRequestHash) {
@@ -210,26 +302,31 @@ export function geminiPendingRecoveryDecision(previousGeneration, current = {}) 
   }
   const prompt = String(current.prompt || "");
   if (!prompt || pending.prompt !== prompt || pending.promptHash !== hashJson({ prompt })) return reject("prompt-binding-mismatch");
-  if (
+  if (!intentOnly && (
     pending.submissionAcknowledgement?.verified !== true
-    || ![1, 2].includes(pending.submissionAcknowledgement?.clickCount)
+    || (pending.schemaVersion === 2
+      ? pending.submissionAcknowledgement?.clickCount !== 1
+      : ![1, 2].includes(pending.submissionAcknowledgement?.clickCount))
     || !Array.isArray(pending.submissionAcknowledgement?.evidenceTypes)
     || pending.submissionAcknowledgement.evidenceTypes.length === 0
     || pending.submissionAcknowledgement.evidenceTypes.some((type) => !["user-message", "stop-response", "generation"].includes(type))
-  ) return reject("submission-acknowledgement-missing");
+  )) return reject("submission-acknowledgement-missing");
+  if (intentOnly && !validGeminiSubmissionBaseline(pending.submissionBaseline, prompt)) {
+    return reject("submit-intent-baseline-invalid");
+  }
   if (
-    !Number.isFinite(Date.parse(pending.submittedAt))
+    !(intentOnly ? Number.isFinite(Date.parse(pending.intentCreatedAt)) : Number.isFinite(Date.parse(pending.submittedAt)))
     || !Number.isInteger(pending.timeoutMs)
     || pending.timeoutMs < MIN_VIDEO_TIMEOUT_MS
     || pending.timeoutMs > MAX_VIDEO_TIMEOUT_MS
   ) return reject("pending-timing-checkpoint-invalid");
-  if (
-    !canonicalGeminiConversationUrl(pending.conversationUrl)
-    || !String(pending.targetId || "").trim()
-    || String(pending.targetId).length > 256
-  ) {
+  if (!String(pending.targetId || "").trim() || String(pending.targetId).length > 256) {
     return reject("conversation-target-binding-missing");
   }
+  if (pending.status === "submitted-awaiting-result" && !canonicalGeminiConversationUrl(pending.conversationUrl)) {
+    return reject("conversation-target-binding-missing");
+  }
+  if (["submit-intent", "ambiguous-submitted"].includes(pending.status) && pending.conversationUrl !== null) return reject("ambiguous-conversation-binding-invalid");
   for (const key of ["videos", "links", "chats"]) {
     if (
       !Array.isArray(pending.knownMedia?.[key])
@@ -242,7 +339,7 @@ export function geminiPendingRecoveryDecision(previousGeneration, current = {}) 
   return {
     applicable: true,
     eligible: true,
-    reason: "exact-pending-recovery",
+    reason: intentOnly ? "exact-submit-intent-recovery" : "exact-pending-recovery",
     checkpoint: pending,
     conversationUrl: canonicalGeminiConversationUrl(pending.conversationUrl)
   };
@@ -319,7 +416,7 @@ export function canonicalGeminiResumeScriptHash(script) {
   return hashJson(canonicalGeminiResumeScript(script));
 }
 
-function generationRequest(job, script) {
+export function buildGeminiGenerationRequest(job, script) {
   return {
     provider: "gemini-browser",
     topic: job.topic || "",
@@ -333,7 +430,8 @@ function generationRequest(job, script) {
       durationHint: segment.durationHint || null,
       visualPrompt: segment.visualPrompt || "",
       caption: segment.caption || "",
-      narration: segment.narration || ""
+      narration: segment.narration || "",
+      ...providerRequestFieldsForSegment(segment, "gemini-browser")
     }))
   };
 }
@@ -446,10 +544,11 @@ class CdpBrowser {
     if (options.resumeTarget) {
       const listed = await this.command("Target.getTargets");
       const selection = selectGeminiRecoveryTarget(options.resumeTarget, listed.targetInfos || []);
-      if (selection.status !== "exact") {
+      if (!["exact", "exact-unbound"].includes(selection.status)) {
         throw new Error(`Gemini 대기 결과의 기존 대화 탭을 안전하게 복구하지 못했습니다 (${selection.status}). 중복 생성을 막기 위해 새 요청을 전송하지 않습니다.`);
       }
       this.targetId = selection.target.targetId;
+      this.recoveryTargetSelection = selection;
     } else {
       const created = await this.command("Target.createTarget", { url: "https://gemini.google.com/app", newWindow: true });
       this.targetId = created.targetId;
@@ -674,8 +773,14 @@ async function verifyVideoAspectRatio(browser, format = "vertical") {
 }
 
 export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
-  const normalizeEditorText = (value) => String(value ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
-  const expectedPrompt = normalizeEditorText(prompt);
+  const exactEditorText = (value) => String(value ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
+  const canonicalEditorText = (value) => exactEditorText(value)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/gu, " ")
+    .replace(/ *\n+ */g, "\n")
+    .trim();
+  const expectedPrompt = exactEditorText(prompt);
+  const canonicalExpectedPrompt = canonicalEditorText(expectedPrompt);
   const query = (selector) => {
     try {
       return [...root.querySelectorAll(selector)];
@@ -707,7 +812,7 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
     });
   const field = fields[0] || null;
   const promptValue = field
-    ? normalizeEditorText(field.tagName === "TEXTAREA" || field.tagName === "INPUT" ? field.value || "" : field.innerText ?? field.textContent ?? "")
+    ? exactEditorText(field.tagName === "TEXTAREA" || field.tagName === "INPUT" ? field.value || "" : field.innerText ?? field.textContent ?? "")
     : null;
   const buttons = query('button,[role="button"]').filter(visible);
   const send = buttons.find(exactSendLabel) || null;
@@ -723,8 +828,8 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
   ].join(","));
   const userMessageMatchCount = userMessageNodes.filter((element) => {
     if (!visible(element) || element === field || element.contains?.(field)) return false;
-    const value = normalizeEditorText(element.innerText ?? element.textContent ?? "");
-    return value === expectedPrompt;
+    const value = exactEditorText(element.innerText ?? element.textContent ?? "");
+    return canonicalEditorText(value) === canonicalExpectedPrompt;
   }).length;
   const generationNodes = query([
     "model-response",
@@ -747,6 +852,7 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
   return {
     promptFieldVisible: Boolean(field),
     promptValue,
+    promptMatchesExpected: Boolean(field) && canonicalEditorText(promptValue) === canonicalExpectedPrompt,
     sendPresent: Boolean(send),
     sendEnabled: Boolean(send && !disabled(send)),
     sendLabel: send ? labels(send).join(" ") : null,
@@ -759,7 +865,14 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
 }
 
 export function geminiPromptSubmissionEvidence(prompt, baseline = {}, observation = {}) {
-  const expectedPrompt = String(prompt ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
+  const canonicalEditorText = (value) => String(value ?? "")
+    .replace(/[\u200B\uFEFF]/g, "")
+    .trim()
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/gu, " ")
+    .replace(/ *\n+ */g, "\n")
+    .trim();
+  const expectedPrompt = canonicalEditorText(prompt);
   const baselineKeys = new Set(Array.isArray(baseline.generationEvidenceKeys) ? baseline.generationEvidenceKeys : []);
   const currentKeys = Array.isArray(observation.generationEvidenceKeys) ? observation.generationEvidenceKeys : [];
   const userMessageAppeared = Number(observation.userMessageMatchCount || 0) > Number(baseline.userMessageMatchCount || 0);
@@ -772,8 +885,9 @@ export function geminiPromptSubmissionEvidence(prompt, baseline = {}, observatio
     stopResponseAppeared ? "stop-response" : null,
     generationEvidenceAppeared ? "generation" : null
   ].filter(Boolean);
-  const promptCleared = observation.promptFieldVisible === true && observation.promptValue === "";
-  const exactPromptRetained = observation.promptFieldVisible === true && observation.promptValue === expectedPrompt;
+  const observedPrompt = canonicalEditorText(observation.promptValue);
+  const promptCleared = observation.promptFieldVisible === true && observedPrompt === "";
+  const exactPromptRetained = observation.promptFieldVisible === true && observedPrompt === expectedPrompt;
   return {
     verified: promptCleared && evidenceTypes.length > 0,
     promptCleared,
@@ -782,6 +896,68 @@ export function geminiPromptSubmissionEvidence(prompt, baseline = {}, observatio
     evidenceTypes,
     sendEnabled: observation.sendEnabled === true
   };
+}
+
+function submissionEvidenceKeyHash(value) {
+  return /^sha256:[a-f0-9]{64}$/i.test(String(value || ""))
+    ? String(value).toLowerCase()
+    : hashJson({ type: "gemini-submission-evidence-key", value: String(value || "") });
+}
+
+export function createGeminiSubmissionBaseline(prompt, observation = {}, capturedAt = new Date().toISOString()) {
+  const rawPrompt = String(prompt ?? "");
+  if (!exactGeminiPromptText(rawPrompt) || !geminiPromptReadiness(rawPrompt, observation).ready) {
+    throw new Error("Gemini submit intent에는 전송 직전의 정확한 prompt 상태가 필요합니다.");
+  }
+  const payload = {
+    schemaVersion: 1,
+    capturedAt,
+    promptHash: hashJson({ prompt: rawPrompt }),
+    promptFieldVisible: true,
+    sendEnabled: observation.sendEnabled === true,
+    userMessageMatchCount: Math.max(0, Number(observation.userMessageMatchCount) || 0),
+    stopResponseCount: Math.max(0, Number(observation.stopResponseCount) || 0),
+    generationEvidenceCount: Math.max(0, Number(observation.generationEvidenceCount) || 0),
+    generationEvidenceKeys: [...new Set((observation.generationEvidenceKeys || []).map(submissionEvidenceKeyHash))].sort(),
+    conversationUrl: canonicalGeminiConversationUrl(observation.conversationUrl)
+  };
+  return { ...payload, baselineHash: hashJson(payload) };
+}
+
+function validGeminiSubmissionBaseline(baseline, prompt) {
+  if (!baseline || baseline.schemaVersion !== 1 || !Number.isFinite(Date.parse(baseline.capturedAt))) return false;
+  const { baselineHash, ...payload } = baseline;
+  if (baselineHash !== hashJson(payload) || baseline.promptHash !== hashJson({ prompt: String(prompt ?? "") })) return false;
+  if (baseline.promptFieldVisible !== true || baseline.sendEnabled !== true) return false;
+  if (!["userMessageMatchCount", "stopResponseCount", "generationEvidenceCount"].every((key) => Number.isInteger(baseline[key]) && baseline[key] >= 0)) return false;
+  if (!Array.isArray(baseline.generationEvidenceKeys)
+    || baseline.generationEvidenceKeys.some((key) => !/^sha256:[a-f0-9]{64}$/.test(key))) return false;
+  return baseline.conversationUrl === null || Boolean(canonicalGeminiConversationUrl(baseline.conversationUrl));
+}
+
+export function inspectGeminiSubmitIntent(checkpoint, prompt, observation = {}) {
+  if (checkpoint?.status !== "submit-intent" || !validGeminiSubmissionBaseline(checkpoint.submissionBaseline, prompt)) {
+    return { promotable: false, reason: "submit-intent-invalid", evidence: null };
+  }
+  const baseline = checkpoint.submissionBaseline;
+  const normalizedObservation = {
+    ...observation,
+    generationEvidenceKeys: (observation.generationEvidenceKeys || []).map(submissionEvidenceKeyHash),
+    conversationUrl: canonicalGeminiConversationUrl(observation.conversationUrl)
+  };
+  const evidence = geminiPromptSubmissionEvidence(prompt, {
+    promptFieldVisible: true,
+    promptValue: prompt,
+    sendEnabled: baseline.sendEnabled,
+    userMessageMatchCount: baseline.userMessageMatchCount,
+    stopResponseCount: baseline.stopResponseCount,
+    generationEvidenceCount: baseline.generationEvidenceCount,
+    generationEvidenceKeys: baseline.generationEvidenceKeys,
+    conversationUrl: baseline.conversationUrl
+  }, normalizedObservation);
+  return evidence.verified
+    ? { promotable: true, reason: "strong-post-click-evidence", evidence }
+    : { promotable: false, reason: "post-click-outcome-ambiguous", evidence };
 }
 
 export function geminiPromptRetryDecision(prompt, format, baseline = {}, observation = {}, ratioEvidence = {}) {
@@ -808,16 +984,19 @@ export async function confirmGeminiPromptSubmission({
   sleepFn = sleep,
   pollsPerWindow = 32,
   pollIntervalMs = 250,
-  maxClickAttempts = 2
+  maxClickAttempts = 2,
+  onVerified = null,
+  onBeforeInitialClick = null
 }) {
   if (typeof observe !== "function" || typeof initialClick !== "function" || typeof retryClick !== "function") {
     throw new TypeError("Gemini 제출 확인에는 observe, initialClick, retryClick 함수가 필요합니다.");
   }
   const baseline = await observe();
-  const expectedPrompt = String(prompt ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
-  if (baseline?.promptFieldVisible !== true || baseline.promptValue !== expectedPrompt) {
-    return { submitted: false, reason: "exact-prompt-not-ready", clickCount: 0, baseline };
+  const readiness = geminiPromptReadiness(prompt, baseline);
+  if (!readiness.ready) {
+    return { submitted: false, reason: "exact-prompt-not-ready", clickCount: 0, diagnostics: readiness.diagnostics };
   }
+  if (typeof onBeforeInitialClick === "function") await onBeforeInitialClick(baseline);
   const firstClick = await initialClick();
   if (firstClick?.clicked !== true) {
     return { submitted: false, reason: firstClick?.reason || "initial-submit-control-unavailable", clickCount: 0, baseline, click: firstClick || null };
@@ -838,7 +1017,7 @@ export async function confirmGeminiPromptSubmission({
       for (const type of lastSubmission.evidenceTypes) evidenceTypes.add(type);
       evidenceObserved ||= lastSubmission.hasNewEvidence;
       if (lastSubmission.promptCleared && evidenceObserved) {
-        return {
+        const result = {
           submitted: true,
           verified: true,
           method: firstClick.method || "button",
@@ -846,6 +1025,8 @@ export async function confirmGeminiPromptSubmission({
           evidenceTypes: [...evidenceTypes],
           observation: lastObservation
         };
+        if (typeof onVerified === "function") await onVerified(result);
+        return result;
       }
       if (pollIndex + 1 < polls) await sleepFn(pollIntervalMs);
     }
@@ -926,8 +1107,17 @@ async function fillPrompt(browser, prompt) {
       return true;
     })()`);
   }
-  await sleep(250);
-  return prepared;
+  const readiness = await waitForGeminiPromptReady({
+    prompt,
+    observe: () => inspectPromptSubmission(browser, prompt)
+  });
+  return {
+    ...prepared,
+    promptReady: readiness.ready,
+    reason: readiness.ready ? "exact-prompt-ready" : "exact-prompt-not-ready",
+    attempts: readiness.attempts,
+    diagnostics: readiness.diagnostics
+  };
 }
 
 async function inspectPromptSubmission(browser, prompt) {
@@ -942,7 +1132,7 @@ async function clickPromptSubmit(browser, prompt) {
     const stateFor = ${geminiPromptSubmissionDomState.toString()};
     const expectedPrompt = ${JSON.stringify(String(prompt))};
     const observation = stateFor(expectedPrompt, document, location.href);
-    if (!observation.promptFieldVisible || observation.promptValue !== expectedPrompt) {
+    if (!observation.promptFieldVisible || observation.promptMatchesExpected !== true) {
       return { clicked: false, reason: 'exact-prompt-not-ready', observation };
     }
     if (!observation.sendEnabled) {
@@ -999,13 +1189,16 @@ async function retryPromptSubmit(browser, prompt, format, baseline) {
   })()`);
 }
 
-async function submitPrompt(browser, prompt, format) {
+async function submitPrompt(browser, prompt, format, { onBeforeInitialClick = null, onVerified = null } = {}) {
   return confirmGeminiPromptSubmission({
     prompt,
     format,
     observe: () => inspectPromptSubmission(browser, prompt),
     initialClick: () => clickPromptSubmit(browser, prompt),
-    retryClick: ({ baseline }) => retryPromptSubmit(browser, prompt, format, baseline)
+    retryClick: ({ baseline }) => retryPromptSubmit(browser, prompt, format, baseline),
+    onBeforeInitialClick,
+    onVerified,
+    maxClickAttempts: 1
   });
 }
 
@@ -1034,20 +1227,276 @@ function deserializeKnownMedia(knownMedia = {}) {
   return Object.fromEntries(["videos", "links", "chats"].map((key) => [key, new Set(knownMedia[key] || [])]));
 }
 
-async function waitForConversationBinding(browser, initialObservation = {}) {
-  let conversationUrl = canonicalGeminiConversationUrl(initialObservation.conversationUrl);
-  for (let attempt = 0; !conversationUrl && attempt < 120; attempt += 1) {
-    const href = await browser.evaluate("location.href").catch(() => null);
-    conversationUrl = canonicalGeminiConversationUrl(href);
-    if (!conversationUrl && attempt < 119) await sleep(250);
+export async function waitForGeminiConversationUrl({
+  initialUrl = null,
+  readHref,
+  nowFn = Date.now,
+  sleepFn = sleep,
+  timeoutMs = CONVERSATION_BINDING_TIMEOUT_MS,
+  pollIntervalMs = CONVERSATION_BINDING_POLL_MS
+} = {}) {
+  if (typeof readHref !== "function" || typeof nowFn !== "function" || typeof sleepFn !== "function") {
+    throw new TypeError("Gemini 대화 URL 대기 함수가 올바르지 않습니다.");
   }
-  return conversationUrl;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || !Number.isInteger(pollIntervalMs) || pollIntervalMs < 1) {
+    throw new TypeError("Gemini 대화 URL 대기 시간은 양의 정수여야 합니다.");
+  }
+  let conversationUrl = canonicalGeminiConversationUrl(initialUrl);
+  if (conversationUrl) return conversationUrl;
+  const startedAt = nowFn();
+  const deadline = startedAt + timeoutMs;
+  while (nowFn() < deadline) {
+    conversationUrl = canonicalGeminiConversationUrl(await readHref().catch(() => null));
+    if (conversationUrl) return conversationUrl;
+    const remainingMs = deadline - nowFn();
+    if (remainingMs <= 0) break;
+    await sleepFn(Math.min(pollIntervalMs, remainingMs));
+  }
+  return null;
 }
 
-async function writeGenerationCheckpoint(path, generation) {
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporary, JSON.stringify(generation, null, 2));
-  await rename(temporary, path);
+async function waitForConversationBinding(browser, initialObservation = {}) {
+  return waitForGeminiConversationUrl({
+    initialUrl: initialObservation.conversationUrl,
+    readHref: () => browser.evaluate("location.href")
+  });
+}
+
+export async function writeGeminiGenerationCheckpoint(path, generation, dependencies = {}) {
+  const writeFileFn = dependencies.writeFileFn || writeFile;
+  const renameFn = dependencies.renameFn || rename;
+  const unlinkFn = dependencies.unlinkFn || unlink;
+  const openFn = dependencies.openFn || open;
+  const tempId = typeof dependencies.tempId === "string" && dependencies.tempId
+    ? dependencies.tempId
+    : `${process.pid}-${randomUUID()}`;
+  const temporary = `${path}.${tempId}.tmp`;
+  try {
+    await writeFileFn(temporary, JSON.stringify(generation, null, 2));
+    const temporaryHandle = await openFn(temporary, "r");
+    try {
+      await temporaryHandle.sync();
+    } finally {
+      await temporaryHandle.close();
+    }
+    await renameFn(temporary, path);
+    const directoryHandle = await openFn(dirname(path), "r");
+    try {
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
+  } finally {
+    await unlinkFn(temporary).catch(() => {});
+  }
+}
+
+function isSha256(value) {
+  return /^sha256:[a-f0-9]{64}$/.test(String(value || ""));
+}
+
+function validLegacyAbandonmentEvidenceReference(value) {
+  if (value == null) return true;
+  return value?.schemaVersion === 1
+    && value.generationPath === "legacy-gemini-evidence/abandoned-gemini-generation.json"
+    && value.receiptPath === "legacy-gemini-evidence/abandonment-receipt.json"
+    && isSha256(value.generationSha256)
+    && isSha256(value.receiptSha256)
+    && isSha256(value.receiptHash);
+}
+
+function validLegacyAbandonmentReceiptReference(value) {
+  if (value == null) return true;
+  return value?.path === "gemini-legacy-abandonment.json"
+    && value.authorization === "explicit-operator-cli"
+    && value.operatorAssertion === "no-live-recoverable-conversation-target"
+    && Number.isFinite(Date.parse(value.authorizedAt))
+    && isSha256(value.receiptHash)
+    && isSha256(value.sourceGenerationSha256)
+    && value.liveCdpObservation?.headless === true
+    && value.liveCdpObservation?.prohibitedTargetCount === 0
+    && Number.isInteger(value.liveCdpObservation?.targetCount)
+    && value.liveCdpObservation.targetCount >= 0
+    && Number.isFinite(Date.parse(value.liveCdpObservation?.observedAt))
+    && isSha256(value.liveCdpObservation?.cdpOriginHash)
+    && isSha256(value.liveCdpObservation?.targetSetHash);
+}
+
+function validPromptReadinessFailure(value) {
+  if (value == null) return true;
+  const expectedKeys = [
+    "code",
+    "expectedCanonicalHash",
+    "expectedCanonicalLength",
+    "expectedLength",
+    "expectedNewlineCount",
+    "observedCanonicalHash",
+    "observedCanonicalLength",
+    "observedLength",
+    "observedNewlineCount",
+    "promptFieldVisible",
+    "recordedAt",
+    "schemaVersion"
+  ];
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys.sort())
+    || value.schemaVersion !== 1
+    || !/^GEMINI_PROMPT_[A-Z_]+$/.test(String(value.code || ""))
+    || !Number.isFinite(Date.parse(value.recordedAt))
+    || typeof value.promptFieldVisible !== "boolean"
+    || !isSha256(value.expectedCanonicalHash)
+    || (value.observedCanonicalHash !== null && !isSha256(value.observedCanonicalHash))) return false;
+  for (const key of ["expectedLength", "expectedCanonicalLength", "expectedNewlineCount"]) {
+    if (!Number.isInteger(value[key]) || value[key] < 0) return false;
+  }
+  for (const key of ["observedLength", "observedCanonicalLength", "observedNewlineCount"]) {
+    if (value[key] !== null && (!Number.isInteger(value[key]) || value[key] < 0)) return false;
+  }
+  return true;
+}
+
+function validCurrentGeminiGenerationReceipt(generation) {
+  if (generation.schemaVersion !== 4) {
+    // Historical failed receipts with no completed segments remain eligible
+    // for the explicit legacy-abandonment flow. A legacy receipt that claims
+    // completion must contain at least one segment; otherwise treating it as
+    // an ordinary previous run can fall through to a blind fresh submission.
+    return generation.schemaVersion < 4
+      && Array.isArray(generation.segments)
+      && (generation.status !== "completed" || (
+        generation.segments.length > 0
+        && Number.isFinite(Date.parse(generation.completedAt))
+      ));
+  }
+  if (!generation.request || typeof generation.request !== "object" || Array.isArray(generation.request)
+    || generation.request.provider !== "gemini-browser"
+    || !Number.isInteger(generation.request.clipCount) || generation.request.clipCount < 1
+    || !Array.isArray(generation.request.segments)
+    || generation.request.segments.length !== generation.request.clipCount) return false;
+  if (!Number.isFinite(Date.parse(generation.startedAt))
+    || (["failed", "completed"].includes(generation.status) && !Number.isFinite(Date.parse(generation.completedAt)))) return false;
+  if (!validPromptReadinessFailure(generation.promptReadinessFailure)
+    || (generation.promptReadinessFailure != null
+      && (generation.status !== "failed" || generation.errorCode !== generation.promptReadinessFailure.code))) return false;
+  if (!["requestHash", "scriptHash", "resumeRequestHash", "resumeScriptHash", "sessionBindingHash", "providerDecisionHash", "providerAttestationHash"]
+    .every((key) => isSha256(generation[key]))) return false;
+  if (!generation.sessionBinding || hashJson(generation.sessionBinding) !== generation.sessionBindingHash
+    || !generation.providerDecision || hashJson(generation.providerDecision) !== generation.providerDecisionHash
+    || !generation.providerAttestation || hashJson(generation.providerAttestation) !== generation.providerAttestationHash
+    || generation.providerAttestation.sessionBindingHash !== generation.sessionBindingHash) return false;
+  if (!Array.isArray(generation.segments)
+    || !Array.isArray(generation.recoveryAttempts)
+    || !Array.isArray(generation.recoveredPendingSegments)
+    || !Array.isArray(generation.rejectedResumes)
+    || (generation.pendingSegment != null && (typeof generation.pendingSegment !== "object" || Array.isArray(generation.pendingSegment)))) return false;
+  if (generation.segments.length > generation.request.clipCount) return false;
+  const segmentIndexes = new Set();
+  for (const [position, segment] of generation.segments.entries()) {
+    if (!Number.isInteger(segment?.index) || segment.index < 1 || segment.index > generation.request.clipCount
+      || segment.index !== position + 1
+      || segmentIndexes.has(segment.index)
+      || segment.runId !== generation.runId
+      || segment.requestHash !== generation.requestHash
+      || segment.scriptHash !== generation.scriptHash
+      || segment.resumeRequestHash !== generation.resumeRequestHash
+      || segment.resumeScriptHash !== generation.resumeScriptHash
+      || segment.providerDecisionHash !== generation.providerDecisionHash
+      || segment.providerAttestationHash !== generation.providerAttestationHash
+      || segment.submittedToProvider !== true
+      || segment.submissionAcknowledgement?.verified !== true
+      || !String(segment.submissionRunId || "").trim()
+      || !String(segment.prompt || "").trim()
+      || segment.promptHash !== hashJson({ prompt: segment.prompt })
+      || !isSha256(segment.providerVisualPromptHash)
+      || !isSha256(segment.sha256)
+      || segment.path !== segment.output
+      || segment.path !== `clips/${String(segment.index).padStart(2, "0")}.mp4`) return false;
+    segmentIndexes.add(segment.index);
+  }
+  if (generation.pendingSegment != null && generation.pendingSegment.index !== generation.segments.length + 1) return false;
+  if (generation.recoveryAttempts.some((attempt, index) => (
+    attempt?.attempt !== index + 1
+    || !String(attempt.runId || "").trim()
+    || !String(attempt.submissionRunId || "").trim()
+    || !Number.isFinite(Date.parse(attempt.startedAt))
+    || (attempt.completedAt != null && !Number.isFinite(Date.parse(attempt.completedAt)))
+  ))) return false;
+  if (generation.status === "completed"
+    && (generation.pendingSegment != null || generation.segments.length !== generation.request.clipCount)) return false;
+  const hasLegacyReceipt = generation.legacySubmissionAbandonment != null;
+  const hasLegacyEvidence = generation.legacySubmissionAbandonmentEvidence != null;
+  if (hasLegacyReceipt !== hasLegacyEvidence
+    || !validLegacyAbandonmentReceiptReference(generation.legacySubmissionAbandonment)
+    || !validLegacyAbandonmentEvidenceReference(generation.legacySubmissionAbandonmentEvidence)
+    || (hasLegacyReceipt
+      && generation.legacySubmissionAbandonment.receiptHash !== generation.legacySubmissionAbandonmentEvidence.receiptHash
+      || hasLegacyReceipt
+      && generation.legacySubmissionAbandonment.sourceGenerationSha256 !== generation.legacySubmissionAbandonmentEvidence.generationSha256)) return false;
+  if (!Array.isArray(generation.legacySubmissionAbandonmentConsumptions)) return false;
+  if (!hasLegacyReceipt && generation.legacySubmissionAbandonmentConsumptions.length !== 0) return false;
+  const submittedSegmentIndexes = new Set(generation.segments.map((segment) => segment.index));
+  if (generation.pendingSegment) submittedSegmentIndexes.add(generation.pendingSegment.index);
+  const consumedSegments = new Set();
+  for (const attestation of generation.legacySubmissionAbandonmentConsumptions) {
+    if (!submittedSegmentIndexes.has(attestation?.segmentIndex)
+      || consumedSegments.has(attestation?.segmentIndex)
+      || !validateLegacyGeminiAbandonmentConsumption({
+        attestation,
+        abandonmentReceipt: generation.legacySubmissionAbandonment,
+        generation
+      })) return false;
+    consumedSegments.add(attestation.segmentIndex);
+  }
+  if (hasLegacyReceipt && [...submittedSegmentIndexes].some((index) => !consumedSegments.has(index))) return false;
+  return true;
+}
+
+export async function readGeminiGenerationReceipt(path, dependencies = {}) {
+  const existsFn = dependencies.existsFn || existsSync;
+  const readFileFn = dependencies.readFileFn || readFile;
+  if (!existsFn(path)) return null;
+  let bytes;
+  try {
+    bytes = await readFileFn(path);
+  } catch (error) {
+    throw new Error(`기존 Gemini generation 영수증을 읽을 수 없습니다. 새 요청을 전송하지 않습니다 (${error.message}).`);
+  }
+  try {
+    const generation = JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : String(bytes));
+    if (!generation || typeof generation !== "object" || Array.isArray(generation)) throw new Error("object expected");
+    if (!Number.isInteger(generation.schemaVersion) || generation.schemaVersion < 1
+      || generation.provider !== "gemini-browser"
+      || !String(generation.jobId || "").trim()
+      || !String(generation.runId || "").trim()
+      || !["running", "failed", "completed"].includes(generation.status)
+      || !validCurrentGeminiGenerationReceipt(generation)) {
+      throw new Error("required generation fields are invalid");
+    }
+    return generation;
+  } catch (error) {
+    throw new Error(`기존 Gemini generation 영수증이 손상되었습니다. 새 요청을 전송하지 않습니다 (${error.message}).`);
+  }
+}
+
+export function retainLegacyGeminiAbandonmentProvenance(previousGeneration, legacyDecision, newlyPreservedEvidence) {
+  const receipt = legacyDecision?.required === true
+    ? legacyDecision.receipt
+    : previousGeneration?.legacySubmissionAbandonment || null;
+  const evidence = legacyDecision?.required === true
+    ? newlyPreservedEvidence
+    : previousGeneration?.legacySubmissionAbandonmentEvidence || null;
+  const consumptions = legacyDecision?.required === true
+    ? []
+    : previousGeneration?.legacySubmissionAbandonmentConsumptions || [];
+  if ((receipt == null) !== (evidence == null)
+    || !validLegacyAbandonmentReceiptReference(receipt)
+    || !validLegacyAbandonmentEvidenceReference(evidence)
+    || (receipt && receipt.receiptHash !== evidence.receiptHash)
+    || (receipt && receipt.sourceGenerationSha256 !== evidence.generationSha256)) {
+    throw new Error("legacy Gemini 폐기 provenance를 안전하게 이어받을 수 없습니다.");
+  }
+  if (!Array.isArray(consumptions)) throw new Error("legacy Gemini 폐기 소비 provenance가 올바르지 않습니다.");
+  return { receipt, evidence, consumptions };
 }
 
 async function downloadFromPage(browser, url) {
@@ -1192,17 +1641,13 @@ export async function geminiQuotaStatus(input = {}) {
   }
 }
 
-function geminiClipPrompt(job, script, segment) {
-  return `Create a ${job.format === "vertical" ? "vertical 9:16" : "16:9"} cinematic documentary video clip, exactly about ${segment.durationHint || Math.round(job.targetDurationSec / Math.max(1, script.segments.length))} seconds. ${segment.visualPrompt}. Keep the subject physically plausible and visually consistent across clips. Use the same camera language, color grade, subject identity, and documentary pacing as the other clips. No on-screen text, no subtitles, and no third-party logos. Retain any provider-required provenance mark. Korean documentary mood.`;
-}
-
 export async function generateGeminiClips(job, script, onProgress = async () => {}) {
   const config = browserConfig({ cdpUrl: job.geminiCdpUrl, profileDir: job.geminiProfileDir });
   const jobDir = join(JOBS_DIR, job.id);
   const clipsDir = join(jobDir, "clips");
   const generationPath = join(jobDir, "gemini-generation.json");
   const timeoutMs = resolveGeminiVideoTimeoutMs();
-  const requestPayload = generationRequest(job, script);
+  const requestPayload = buildGeminiGenerationRequest(job, script);
   const scriptHash = hashJson(script);
   const resumeScriptHash = canonicalGeminiResumeScriptHash(script);
   const requestHash = hashJson({ ...requestPayload, scriptHash });
@@ -1218,13 +1663,112 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   const sessionBindingHash = geminiSessionBindingHash(job);
   if (!sessionBinding || !sessionBindingHash) throw new Error("Gemini 실행 세션을 안전하게 결속할 수 없습니다.");
 
-  let previousGeneration = null;
-  if (existsSync(generationPath)) {
-    try {
-      previousGeneration = JSON.parse(await readFile(generationPath, "utf8"));
-    } catch {
-      previousGeneration = null;
+  const previousGeneration = await readGeminiGenerationReceipt(generationPath);
+  const legacyAbandonment = previousGeneration
+    ? await readLegacyGeminiAbandonmentDecision({ jobId: job.id, jobDir, generation: previousGeneration, generationPath })
+    : { required: false, allowed: true, receipt: null };
+  if (legacyAbandonment.required && !legacyAbandonment.allowed) {
+    throw new Error(`Legacy Gemini 실패 영수증의 제출 여부를 판별할 수 없습니다 (${legacyAbandonment.reason}). 정확한 영수증 SHA-256와 기존 대화 탭 부재를 확인한 뒤 명시적 폐기 CLI를 실행해야 합니다.`);
+  }
+  const legacyAbandonmentEvidence = legacyAbandonment.required
+    ? await preserveLegacyGeminiAbandonmentEvidence({ jobId: job.id, jobDir, generationPath })
+    : null;
+  const retainedLegacyAbandonment = retainLegacyGeminiAbandonmentProvenance(
+    previousGeneration,
+    legacyAbandonment,
+    legacyAbandonmentEvidence
+  );
+
+  if (job.resumeCompletedGenerationRunId) {
+    const expectedRunId = String(job.resumeCompletedGenerationRunId);
+    const receiptIntegrity = previousGeneration?.status === "completed"
+      && previousGeneration.runId === expectedRunId
+      && previousGeneration.jobId === job.id
+      && previousGeneration.provider === "gemini-browser"
+      && previousGeneration.pendingSegment == null
+      && previousGeneration.requestHash === requestHash
+      && previousGeneration.scriptHash === scriptHash
+      && previousGeneration.resumeRequestHash === resumeRequestHash
+      && previousGeneration.resumeScriptHash === resumeScriptHash
+      && previousGeneration.sessionBindingHash === sessionBindingHash
+      && hashJson(previousGeneration.sessionBinding) === sessionBindingHash
+      && previousGeneration.providerDecisionHash === providerDecisionHash
+      && hashJson(previousGeneration.providerDecision) === providerDecisionHash
+      && previousGeneration.providerAttestationHash === hashJson(previousGeneration.providerAttestation)
+      && previousGeneration.providerAttestation?.sessionBindingHash === sessionBindingHash
+      && Array.isArray(previousGeneration.segments)
+      && previousGeneration.segments.length === script.segments.length;
+    if (!receiptIntegrity) {
+      throw new Error("중단된 pipeline의 완료 Gemini generation 영수증을 현재 요청·대본·세션에 결속할 수 없습니다. 새 요청을 전송하지 않습니다.");
     }
+    const resumedAt = new Date().toISOString();
+    const resumedSegments = [];
+    for (let index = 0; index < script.segments.length; index += 1) {
+      const segmentNumber = index + 1;
+      const prior = previousGeneration.segments[index];
+      const prompt = buildGeminiClipPrompt(job, script, script.segments[index]);
+      const relativePath = `clips/${String(segmentNumber).padStart(2, "0")}.mp4`;
+      const absolutePath = join(jobDir, relativePath);
+      const providerPromptBinding = providerPromptBindingForSegment(script.segments[index], "gemini-browser");
+      const bound = prior?.index === segmentNumber
+        && prior.path === relativePath && prior.output === relativePath
+        && prior.runId === expectedRunId
+        && prior.requestHash === previousGeneration.requestHash
+        && prior.scriptHash === previousGeneration.scriptHash
+        && prior.resumeRequestHash === previousGeneration.resumeRequestHash
+        && prior.resumeScriptHash === previousGeneration.resumeScriptHash
+        && prior.providerDecisionHash === previousGeneration.providerDecisionHash
+        && prior.providerAttestationHash === previousGeneration.providerAttestationHash
+        && prior.prompt === prompt && prior.promptHash === hashJson({ prompt })
+        && prior.providerVisualPromptHash === providerPromptBinding.providerVisualPromptHash
+        && /^sha256:[a-f0-9]{64}$/.test(String(prior.sha256 || ""))
+        && existsSync(absolutePath)
+        && await hashFile(absolutePath).catch(() => null) === prior.sha256
+        && await clipMatchesFormat(absolutePath, job.format);
+      if (!bound) {
+        throw new Error(`${segmentNumber}번 완료 Gemini 클립의 provenance·파일 결속을 확인할 수 없습니다. 새 요청을 전송하지 않습니다.`);
+      }
+      resumedSegments.push({
+        ...prior,
+        runId: job.runId || null,
+        submissionRunId: prior.submissionRunId || prior.sourceRunId || expectedRunId,
+        sourceRunId: prior.sourceRunId || expectedRunId,
+        resumeHops: [
+          ...(Array.isArray(prior.resumeHops) ? prior.resumeHops : []),
+          { fromRunId: expectedRunId, toRunId: job.runId || null, resumedAt }
+        ],
+        resumedCompletedGeneration: true
+      });
+    }
+    const completedResume = {
+      ...previousGeneration,
+      startedAt: resumedAt,
+      completedAt: resumedAt,
+      runId: job.runId || null,
+      status: "completed",
+      request: requestPayload,
+      requestHash,
+      scriptHash,
+      resumeRequestHash,
+      resumeScriptHash,
+      segments: resumedSegments,
+      resumedFromCompletedGeneration: {
+        sourceRunId: expectedRunId,
+        sourceGenerationHash: hashJson(previousGeneration),
+        resumedAt,
+        providerRequestSent: false
+      },
+      legacySubmissionAbandonment: retainedLegacyAbandonment.receipt,
+      legacySubmissionAbandonmentEvidence: retainedLegacyAbandonment.evidence,
+      legacySubmissionAbandonmentConsumptions: retainedLegacyAbandonment.consumptions
+    };
+    await writeGeminiGenerationCheckpoint(generationPath, completedResume);
+    await onProgress(100, `${script.segments.length}/${script.segments.length} 완료 Gemini 클립을 provider 요청 없이 복구했습니다.`);
+    return completedResume;
+  }
+
+  if (job.providerRequestsForbidden === true) {
+    throw new Error("이 실행은 Gemini provider 요청 0회로 봉인되어 새 요청을 전송할 수 없습니다.");
   }
 
   const version = await resolveBrowserVersion(config);
@@ -1246,7 +1790,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   const providerAttestationHash = hashJson(providerAttestation);
   const pendingIndex = Number(previousGeneration?.pendingSegment?.index);
   const pendingScriptSegment = Number.isInteger(pendingIndex) ? script.segments[pendingIndex - 1] : null;
-  const pendingPrompt = pendingScriptSegment ? geminiClipPrompt(job, script, pendingScriptSegment) : "";
+  const pendingPrompt = pendingScriptSegment ? buildGeminiClipPrompt(job, script, pendingScriptSegment) : "";
   const recoveryDecision = geminiPendingRecoveryDecision(previousGeneration, {
     jobId: job.id,
     index: pendingIndex,
@@ -1265,6 +1809,14 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     version,
     resumeTarget: recoveryDecision.eligible ? recoveryDecision.checkpoint : null
   });
+  const previousRecoveryAttempts = Array.isArray(previousGeneration?.recoveryAttempts)
+    ? previousGeneration.recoveryAttempts.map((attempt) => attempt?.completedAt ? attempt : {
+      ...attempt,
+      completedAt: new Date().toISOString(),
+      status: "interrupted-before-checkpoint-completion",
+      errorCode: "GEMINI_RECOVERY_PROCESS_INTERRUPTED"
+    })
+    : [];
   const previousSegments = new Map((previousGeneration?.segments || []).map((segment) => [segment.index, segment]));
   const generation = {
     schemaVersion: 4,
@@ -1286,6 +1838,9 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     providerDecision,
     providerDecisionHash,
     request: requestPayload,
+    legacySubmissionAbandonment: retainedLegacyAbandonment.receipt,
+    legacySubmissionAbandonmentEvidence: retainedLegacyAbandonment.evidence,
+    legacySubmissionAbandonmentConsumptions: [...retainedLegacyAbandonment.consumptions],
     resultWaitPolicy: {
       timeoutMs,
       minimumMs: MIN_VIDEO_TIMEOUT_MS,
@@ -1297,7 +1852,10 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       ? previousGeneration.completedAt || previousGeneration.startedAt || null
       : null,
     pendingSegment: null,
-    recoveredPendingSegments: [],
+    recoveryAttempts: previousRecoveryAttempts,
+    recoveredPendingSegments: Array.isArray(previousGeneration?.recoveredPendingSegments)
+      ? previousGeneration.recoveredPendingSegments
+      : [],
     segments: [],
     rejectedResumes: []
   };
@@ -1342,28 +1900,38 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       throw new Error(`Gemini가 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 비율의 영상을 반환하지 않았습니다.`);
     }
     const path = `clips/${String(index).padStart(2, "0")}.mp4`;
+    const providerPromptBinding = providerPromptBindingForSegment(segment, "gemini-browser");
     const completedSegment = {
       index,
       runId: job.runId || null,
+      submissionRunId: recoverySource?.submissionRunId || recoverySource?.runId || job.runId || null,
       requestHash,
       scriptHash,
       resumeRequestHash,
       resumeScriptHash,
       durationHint: segment.durationHint || null,
       prompt,
+      promptHash: hashJson({ prompt }),
+      providerVisualPromptHash: providerPromptBinding.providerVisualPromptHash,
+      shotPattern: providerPromptBinding.shotPattern,
+      submittedToProvider: true,
       submissionAcknowledgement: acknowledgement,
       path,
       output: path,
       sha256: await hashFile(target).catch(() => null),
       providerDecisionHash,
       providerAttestationHash,
-      ...(recovered ? { recovered: true, sourceRunId: recoverySource?.runId || null, sourceSubmittedAt: recoverySource?.submittedAt || null } : {})
+      ...(recovered ? {
+        recovered: true,
+        sourceRunId: recoverySource?.submissionRunId || recoverySource?.runId || null,
+        sourceSubmittedAt: recoverySource?.submittedAt || null
+      } : {})
     };
     const pendingBeforeCompletion = generation.pendingSegment;
     generation.segments.push(completedSegment);
     generation.pendingSegment = null;
     try {
-      await writeGenerationCheckpoint(generationPath, generation);
+      await writeGeminiGenerationCheckpoint(generationPath, generation);
     } catch (error) {
       generation.segments.pop();
       generation.pendingSegment = pendingBeforeCompletion;
@@ -1375,7 +1943,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     for (let index = 0; index < script.segments.length; index += 1) {
       const segmentNumber = index + 1;
       const segment = script.segments[index];
-      const prompt = geminiClipPrompt(job, script, segment);
+      const prompt = buildGeminiClipPrompt(job, script, segment);
       const target = join(clipsDir, `${String(segmentNumber).padStart(2, "0")}.mp4`);
       const previousSegment = previousSegments.get(segmentNumber);
       const existingHashMatches = canResumePartial
@@ -1395,9 +1963,14 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
           resumeScriptHash,
           path,
           output: path,
-          sourceRunId: previousGeneration.runId,
+          submissionRunId: previousSegment.submissionRunId || previousSegment.sourceRunId || previousGeneration.runId,
+          sourceRunId: previousSegment.sourceRunId || previousGeneration.runId,
           sourceRequestHash: previousGeneration.requestHash,
           sourceScriptHash: previousGeneration.scriptHash,
+          resumeHops: [
+            ...(Array.isArray(previousSegment.resumeHops) ? previousSegment.resumeHops : []),
+            { fromRunId: previousGeneration.runId, toRunId: job.runId || null, resumedAt: new Date().toISOString() }
+          ],
           providerDecisionHash,
           providerAttestationHash,
           resumed: true
@@ -1419,8 +1992,19 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
 
       if (recoveryDecision.eligible && segmentNumber === pendingIndex) {
         const checkpoint = recoveryDecision.checkpoint;
+        const submissionRunId = checkpoint.submissionRunId || checkpoint.runId;
+        const recoveryAttempt = {
+          attempt: generation.recoveryAttempts.length + 1,
+          runId: job.runId || null,
+          submissionRunId,
+          startedAt: new Date().toISOString(),
+          checkpointStatus: checkpoint.status,
+          targetId: checkpoint.targetId
+        };
+        generation.recoveryAttempts.push(recoveryAttempt);
         generation.pendingSegment = {
           ...checkpoint,
+          submissionRunId,
           runId: job.runId || null,
           requestHash,
           scriptHash,
@@ -1429,25 +2013,78 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
           sessionBindingHash,
           providerDecisionHash,
           providerAttestationHash,
-          recoverySourceRunId: checkpoint.runId,
+          recoverySourceRunId: submissionRunId,
           recoveryStartedAt: new Date().toISOString(),
           timeoutMs
         };
-        await writeGenerationCheckpoint(generationPath, generation);
+        preserveTarget = true;
+        await writeGeminiGenerationCheckpoint(generationPath, generation);
+        let recoveredConversationUrl = canonicalGeminiConversationUrl(checkpoint.conversationUrl);
+        if (checkpoint.status === "submit-intent") {
+          const observation = await inspectPromptSubmission(browser, prompt);
+          const intentInspection = inspectGeminiSubmitIntent(checkpoint, prompt, observation);
+          generation.pendingSegment.lastIntentInspection = {
+            inspectedAt: new Date().toISOString(),
+            result: intentInspection.reason,
+            promptCleared: intentInspection.evidence?.promptCleared === true,
+            evidenceTypes: intentInspection.evidence?.evidenceTypes || [],
+            observationHash: hashJson({
+              promptFieldVisible: observation.promptFieldVisible === true,
+              promptValueHash: hashJson({ promptValue: String(observation.promptValue || "") }),
+              userMessageMatchCount: Number(observation.userMessageMatchCount || 0),
+              stopResponseCount: Number(observation.stopResponseCount || 0),
+              generationEvidenceCount: Number(observation.generationEvidenceCount || 0),
+              generationEvidenceKeys: (observation.generationEvidenceKeys || []).map(submissionEvidenceKeyHash).sort(),
+              conversationUrl: canonicalGeminiConversationUrl(observation.conversationUrl)
+            })
+          };
+          if (!intentInspection.promotable) {
+            await writeGeminiGenerationCheckpoint(generationPath, generation);
+            throw new Error("Gemini submit intent의 기존 탭에서 강한 post-click 증거를 확인하지 못했습니다. 클릭하거나 새 요청을 보내지 않고 탭을 보존합니다.");
+          }
+          generation.pendingSegment.status = "ambiguous-submitted";
+          generation.pendingSegment.submittedToProvider = true;
+          generation.pendingSegment.submittedAt = new Date().toISOString();
+          generation.pendingSegment.submissionAcknowledgement = {
+            verified: true,
+            clickCount: 1,
+            evidenceTypes: intentInspection.evidence.evidenceTypes,
+            recoveredFromPreClickIntent: true
+          };
+          recoveredConversationUrl = canonicalGeminiConversationUrl(observation.conversationUrl);
+          await writeGeminiGenerationCheckpoint(generationPath, generation);
+        }
+        if (!recoveredConversationUrl) {
+          recoveredConversationUrl = await waitForConversationBinding(browser, {
+            conversationUrl: browser.recoveryTargetSelection?.conversationUrl || null
+          });
+          if (!recoveredConversationUrl) {
+            recoveryAttempt.completedAt = new Date().toISOString();
+            recoveryAttempt.status = "conversation-url-unresolved";
+            await writeGeminiGenerationCheckpoint(generationPath, generation);
+            throw new Error("Gemini 전송 가능성 체크포인트의 기존 탭은 찾았지만 30초 안에 대화 URL을 결속하지 못했습니다. 새 요청을 전송하지 않습니다.");
+          }
+        }
+        generation.pendingSegment.status = "submitted-awaiting-result";
+        generation.pendingSegment.conversationUrl = recoveredConversationUrl;
+        generation.pendingSegment.conversationBoundAt ||= new Date().toISOString();
+        await writeGeminiGenerationCheckpoint(generationPath, generation);
         await onProgress(Math.round((index / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 제출된 Gemini 대화에서 늦게 도착한 결과를 회수하는 중입니다.`);
         const waitStartedAt = Date.now();
         generation.pendingSegment.waitStartedAt = new Date(waitStartedAt).toISOString();
         generation.pendingSegment.waitDeadlineAt = new Date(waitStartedAt + timeoutMs).toISOString();
-        await writeGenerationCheckpoint(generationPath, generation);
-        const bytes = await waitForClip(browser, deserializeKnownMedia(checkpoint.knownMedia), waitStartedAt + timeoutMs, timeoutMs, checkpoint.conversationUrl);
+        await writeGeminiGenerationCheckpoint(generationPath, generation);
+        const bytes = await waitForClip(browser, deserializeKnownMedia(checkpoint.knownMedia), waitStartedAt + timeoutMs, timeoutMs, recoveredConversationUrl);
         const acknowledgement = {
-          ...checkpoint.submissionAcknowledgement,
+          ...generation.pendingSegment.submissionAcknowledgement,
           recoveredFromCheckpoint: true,
-          sourceRunId: checkpoint.runId
+          sourceRunId: submissionRunId
         };
         await completeSegment({ index: segmentNumber, segment, target, prompt, acknowledgement, bytes, recovered: true, recoverySource: checkpoint });
-        generation.recoveredPendingSegments.push({ index: segmentNumber, sourceRunId: checkpoint.runId, recoveredAt: new Date().toISOString() });
-        await writeGenerationCheckpoint(generationPath, generation);
+        recoveryAttempt.completedAt = new Date().toISOString();
+        recoveryAttempt.status = "recovered";
+        generation.recoveredPendingSegments.push({ index: segmentNumber, sourceRunId: submissionRunId, recoveredAt: new Date().toISOString() });
+        await writeGeminiGenerationCheckpoint(generationPath, generation);
         await onProgress(Math.round((segmentNumber / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 기존 Gemini 대화의 결과를 회수했습니다.`);
         continue;
       }
@@ -1461,6 +2098,12 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       if (tool.ratioConfigured !== true) throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비를 선택하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
       const filled = await fillPrompt(browser, prompt);
       if (!filled.filled) throw new Error("Gemini 입력창을 찾지 못했습니다.");
+      if (filled.promptReady !== true) {
+        const promptError = new Error("Gemini 입력창에 원문 prompt가 완전히 반영되지 않았습니다. 요청을 전송하지 않습니다.");
+        promptError.code = "GEMINI_PROMPT_FILL_MISMATCH";
+        promptError.promptReadinessDiagnostics = filled.diagnostics;
+        throw promptError;
+      }
       const submissionRatio = await verifyVideoAspectRatio(browser, job.format);
       if (submissionRatio?.configured !== true) {
         throw new Error(`Gemini에서 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 화면비의 선택 상태를 전송 직전에 확인하지 못했습니다. 생성 요청을 보내지 않고 재시도합니다.`);
@@ -1471,46 +2114,109 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         links: new Set((known.links || []).map((item) => item.href).filter(Boolean)),
         chats: new Set((known.chats || []).map((item) => item.href).filter(Boolean))
       }));
-      const submitted = await submitPrompt(browser, prompt, job.format);
-      if (!submitted.submitted || submitted.verified !== true) {
-        throw new Error(`Gemini 영상 요청 전송을 확인하지 못했습니다 (${submitted.reason || "authoritative-submit-evidence-missing"}). 입력창 초기화와 사용자 메시지·응답 중지·생성 상태 중 하나를 함께 확인해야 합니다.`);
-      }
-      const submittedAt = new Date().toISOString();
-      const conversationUrl = await waitForConversationBinding(browser, submitted.observation || {});
-      generation.pendingSegment = {
-        schemaVersion: 1,
-        status: "submitted-awaiting-result",
-        index: segmentNumber,
-        runId: job.runId || null,
-        requestHash,
-        scriptHash,
-        resumeRequestHash,
-        resumeScriptHash,
-        sessionBindingHash,
-        providerDecisionHash,
-        providerAttestationHash,
-        durationHint: segment.durationHint || null,
-        prompt,
-        promptHash: hashJson({ prompt }),
-        submittedAt,
-        conversationUrl,
-        targetId: browser.targetId,
-        knownMedia: serializeKnownMedia(knownMedia),
-        submissionAcknowledgement: {
-          verified: true,
-          clickCount: submitted.clickCount,
-          evidenceTypes: submitted.evidenceTypes
+      let submittedAt = null;
+      const providerPromptBinding = providerPromptBindingForSegment(segment, "gemini-browser");
+      const submitted = await submitPrompt(browser, prompt, job.format, {
+        onBeforeInitialClick: async (baselineObservation) => {
+          if (retainedLegacyAbandonment.receipt) {
+            const legacyConsumption = await attestLegacyGeminiAbandonmentConsumption({
+              job,
+              generation: { ...generation, pendingSegment: {
+                index: segmentNumber,
+                submissionRunId: job.runId || null,
+                promptHash: hashJson({ prompt })
+              } },
+              abandonmentReceipt: retainedLegacyAbandonment.receipt,
+              currentTargetId: browser.targetId,
+              runId: job.runId || null,
+              requestHash,
+              resumeRequestHash,
+              segmentIndex: segmentNumber,
+              promptHash: hashJson({ prompt })
+            });
+            generation.legacySubmissionAbandonmentConsumptions.push(legacyConsumption);
+          }
+          generation.pendingSegment = {
+            schemaVersion: 2,
+            status: "submit-intent",
+            index: segmentNumber,
+            runId: job.runId || null,
+            submissionRunId: job.runId || null,
+            requestHash,
+            scriptHash,
+            resumeRequestHash,
+            resumeScriptHash,
+            sessionBindingHash,
+            providerDecisionHash,
+            providerAttestationHash,
+            durationHint: segment.durationHint || null,
+            prompt,
+            promptHash: hashJson({ prompt }),
+            providerVisualPromptHash: providerPromptBinding.providerVisualPromptHash,
+            shotPattern: providerPromptBinding.shotPattern,
+            submittedToProvider: null,
+            submissionMayHaveOccurred: true,
+            intentCreatedAt: new Date().toISOString(),
+            clickPolicy: "single-attempt-no-automatic-retry",
+            conversationUrl: null,
+            targetId: browser.targetId,
+            knownMedia: serializeKnownMedia(knownMedia),
+            submissionBaseline: createGeminiSubmissionBaseline(prompt, baselineObservation),
+            submissionAcknowledgement: null,
+            timeoutMs
+          };
+          preserveTarget = true;
+          try {
+            await writeGeminiGenerationCheckpoint(generationPath, generation);
+          } catch (checkpointError) {
+            checkpointError.code = "GEMINI_SUBMIT_INTENT_CHECKPOINT_FAILED";
+            throw checkpointError;
+          }
         },
-        timeoutMs
-      };
-      await writeGenerationCheckpoint(generationPath, generation);
+        onVerified: async (verifiedSubmission) => {
+          if (generation.pendingSegment?.status !== "submit-intent") {
+            throw new Error("Gemini submit intent 체크포인트가 없습니다.");
+          }
+          submittedAt = new Date().toISOString();
+          generation.pendingSegment.status = "ambiguous-submitted";
+          generation.pendingSegment.submittedToProvider = true;
+          generation.pendingSegment.submittedAt = submittedAt;
+          generation.pendingSegment.submissionAcknowledgement = {
+            verified: true,
+            clickCount: verifiedSubmission.clickCount,
+            evidenceTypes: verifiedSubmission.evidenceTypes
+          };
+          try {
+            await writeGeminiGenerationCheckpoint(generationPath, generation);
+          } catch (checkpointError) {
+            checkpointError.code = "GEMINI_SUBMISSION_CHECKPOINT_FAILED";
+            throw checkpointError;
+          }
+        }
+      });
+      if (!submitted.submitted || submitted.verified !== true) {
+        const submissionError = new Error(`Gemini 영상 요청 전송을 확인하지 못했습니다 (${submitted.reason || "authoritative-submit-evidence-missing"}). 입력창 초기화와 사용자 메시지·응답 중지·생성 상태 중 하나를 함께 확인해야 합니다.`);
+        if (submitted.diagnostics) {
+          submissionError.code = "GEMINI_PROMPT_SUBMISSION_NOT_READY";
+          submissionError.promptReadinessDiagnostics = submitted.diagnostics;
+        }
+        throw submissionError;
+      }
+      if (!submittedAt || generation.pendingSegment?.status !== "ambiguous-submitted") {
+        throw new Error("Gemini 제출 확인 체크포인트가 저장되지 않았습니다. 대화 탭을 보존하고 중복 요청을 차단합니다.");
+      }
+      const conversationUrl = await waitForConversationBinding(browser, submitted.observation || {});
       if (!conversationUrl) {
         throw new Error("Gemini 요청은 전송됐지만 대화 URL을 안전하게 결속하지 못했습니다. 대화 탭을 보존하고 중복 요청을 차단합니다.");
       }
+      generation.pendingSegment.status = "submitted-awaiting-result";
+      generation.pendingSegment.conversationUrl = conversationUrl;
+      generation.pendingSegment.conversationBoundAt = new Date().toISOString();
+      await writeGeminiGenerationCheckpoint(generationPath, generation);
       const waitStartedAt = Date.now();
       generation.pendingSegment.waitStartedAt = new Date(waitStartedAt).toISOString();
       generation.pendingSegment.waitDeadlineAt = new Date(waitStartedAt + timeoutMs).toISOString();
-      await writeGenerationCheckpoint(generationPath, generation);
+      await writeGeminiGenerationCheckpoint(generationPath, generation);
       const bytes = await waitForClip(browser, knownMedia, waitStartedAt + timeoutMs, timeoutMs, conversationUrl);
       await completeSegment({
         index: segmentNumber,
@@ -1527,6 +2233,20 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     generation.status = "failed";
     generation.error = error.message;
     generation.errorCode = error.code || null;
+    if (error.promptReadinessDiagnostics) {
+      generation.promptReadinessFailure = {
+        schemaVersion: 1,
+        code: error.code || "GEMINI_PROMPT_NOT_READY",
+        recordedAt: new Date().toISOString(),
+        ...error.promptReadinessDiagnostics
+      };
+    }
+    const recoveryAttempt = generation.recoveryAttempts.at(-1);
+    if (recoveryAttempt?.runId === (job.runId || null) && !recoveryAttempt.completedAt) {
+      recoveryAttempt.completedAt = new Date().toISOString();
+      recoveryAttempt.status = "failed";
+      recoveryAttempt.errorCode = error.code || "GEMINI_PENDING_RESULT_FAILURE";
+    }
     if (generation.pendingSegment) {
       generation.pendingSegment.lastFailureAt = new Date().toISOString();
       generation.pendingSegment.lastFailureCode = error.code || "GEMINI_PENDING_RESULT_FAILURE";
@@ -1546,7 +2266,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     }
     if (generation.status === "running") generation.status = "completed";
     generation.completedAt = new Date().toISOString();
-    await writeGenerationCheckpoint(generationPath, generation);
+    await writeGeminiGenerationCheckpoint(generationPath, generation);
   }
   return generation;
 }

@@ -343,7 +343,17 @@ function validateRequest(request) {
     if (!segment || typeof segment !== "object" || Array.isArray(segment)) throw new Error(`segment ${index + 1} is malformed`);
     const segmentIndex = Number(segment.index ?? index + 1);
     if (!Number.isInteger(segmentIndex) || segmentIndex !== index + 1) throw new Error("segments must have contiguous 1-based indices");
-    requiredString(segment.prompt ?? segment.visualPrompt, `segments[${index + 1}].prompt`);
+    const prompt = requiredString(segment.prompt ?? segment.visualPrompt, `segments[${index + 1}].prompt`);
+    if (segment.providerVisualPromptHash !== undefined) {
+      const providerVisualPrompt = requiredString(segment.providerVisualPrompt, `segments[${index + 1}].providerVisualPrompt`);
+      if (prompt !== providerVisualPrompt) throw new Error(`segment ${index + 1} providerVisualPrompt must equal the submitted prompt`);
+      if (segment.providerVisualPromptHash !== hashJson(providerVisualPrompt)) {
+        throw new Error(`segment ${index + 1} providerVisualPromptHash does not match providerVisualPrompt`);
+      }
+      if (!segment.shotPattern || typeof segment.shotPattern !== "object" || Array.isArray(segment.shotPattern)) {
+        throw new Error(`segment ${index + 1} shotPattern is required when providerVisualPromptHash is present`);
+      }
+    }
   }
   return request;
 }
@@ -855,7 +865,20 @@ function assertBudgetBeforeSubmission(plan, checkpoints, taskOffset) {
   }
 }
 
-function segmentFromCheckpoint(checkpoint, task) {
+function segmentFromCheckpoint(checkpoint, task, request) {
+  const requestSegment = request.segments[task.index - 1];
+  if (checkpoint.requestBodyHash !== hashJson(checkpoint.request)) {
+    throw new Error(`BFL task ${task.index} checkpoint request body hash is invalid`);
+  }
+  if (checkpoint.request?.prompt !== task.body.prompt || checkpoint.request?.prompt !== requestSegment.prompt) {
+    throw new Error(`BFL task ${task.index} submitted prompt does not match the immutable local-video request`);
+  }
+  if (requestSegment.providerVisualPromptHash && (
+    requestSegment.providerVisualPrompt !== checkpoint.request.prompt
+    || requestSegment.providerVisualPrompt !== requestSegment.prompt
+  )) {
+    throw new Error(`BFL task ${task.index} provider shot-pattern prompt was not the submitted POST body`);
+  }
   return {
     index: task.index,
     path: task.relativePath,
@@ -875,7 +898,15 @@ function segmentFromCheckpoint(checkpoint, task) {
     modelVersion: MODEL_VERSION,
     providerCostCredits: checkpoint.providerCostCredits,
     estimatedCredits: task.estimatedCredits,
-    resumed: Boolean(checkpoint.resumed)
+    submittedRequestBodyHash: checkpoint.requestBodyHash,
+    submittedPromptHash: hashJson({ prompt: checkpoint.request.prompt }),
+    resumed: Boolean(checkpoint.resumed),
+    ...(requestSegment.providerVisualPromptHash ? {
+      providerVisualPrompt: checkpoint.request.prompt,
+      providerVisualPromptHash: requestSegment.providerVisualPromptHash,
+      shotPattern: requestSegment.shotPattern,
+      submittedToProvider: true
+    } : {})
   };
 }
 
@@ -916,7 +947,7 @@ async function generate(request, apiKey, runtime = {}) {
     let checkpoint = checkpoints[taskOffset];
     const existing = await completedCheckpointFile(checkpoint, task, plan.clipsDirectory);
     if (existing) {
-      segments.push(segmentFromCheckpoint(checkpoint, task));
+      segments.push(segmentFromCheckpoint(checkpoint, task, request));
       continue;
     }
     if (checkpoint.phase === "prepared") {
@@ -942,7 +973,7 @@ async function generate(request, apiKey, runtime = {}) {
     };
     await writeJsonAtomic(task.checkpointPath, completed);
     checkpoints[taskOffset] = completed;
-    segments.push(segmentFromCheckpoint(completed, task));
+    segments.push(segmentFromCheckpoint(completed, task, request));
   }
 
   if (segments.length !== request.segments.length) throw new Error("BFL output count does not match request");
@@ -989,6 +1020,12 @@ async function generate(request, apiKey, runtime = {}) {
       completedAt: segment.completedAt,
       providerCostCredits: segment.providerCostCredits,
       estimatedCredits: segment.estimatedCredits,
+      request: {
+        prompt: segment.providerVisualPrompt || request.segments[segment.index - 1]?.prompt,
+        requestBodyHash: segment.submittedRequestBodyHash
+      },
+      requestBodyHash: segment.submittedRequestBodyHash,
+      submittedPromptHash: segment.submittedPromptHash,
       resumed: segment.resumed
     })),
     segments: orderedSegments,

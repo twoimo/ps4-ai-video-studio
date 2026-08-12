@@ -84,5 +84,5 @@ export function providerReadinessMarkup(payload) {
   const providers = payload?.providers && typeof payload.providers === "object" ? payload.providers : {};
   const ids = ["gemini", "bfl", "higgsfield", "veed"];
   const ready = ids.filter((id) => ["READY", "CONFIGURED"].includes(providers[id]?.status)).length;
-  return `<div class="provider-readiness-head"><div><span class="panel-kicker">PROVIDER READINESS · GET-ONLY</span><h3>생성 제공자 준비상태</h3></div><span class="provider-readiness-summary">${ready}/${ids.length} READY OR CONFIGURED</span></div><p class="provider-readiness-note">설정 및 TTL 내 관측 영수증만 표시합니다. BFL CONFIGURED는 로컬 설정 확인이며 라이브 API 연결 증명이 아닙니다.</p><div class="provider-grid">${ids.map((id) => providerCard(providers[id], id)).join("")}</div>`;
+  return `<div class="provider-readiness-head"><div><span class="panel-kicker">PROVIDER PROBE · GET-ONLY</span><h3>생성 제공자 관측·구성 상태</h3></div><span class="provider-readiness-summary">${ready}/${ids.length} FRESH OR CONFIGURED</span></div><p class="provider-readiness-note">TTL 내 관측 영수증과 로컬 설정만 표시합니다. 외부 provider의 READY는 probe 가용성일 뿐 이 파이프라인의 생성 어댑터 통합 또는 실생성 성공을 뜻하지 않습니다. BFL CONFIGURED도 라이브 API 연결 증명이 아닙니다.</p><div class="provider-grid">${ids.map((id) => providerCard(providers[id], id)).join("")}</div>`;
 }

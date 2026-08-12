@@ -4,7 +4,7 @@
 
 PS4 AI Video Studio는 “AI가 영상을 만들었다”는 주장보다 **어떤 요청이 어떤 provider·입력·출처·산출물로 이어졌는지 재검증할 수 있는가**를 우선합니다. 로컬 웹 UI는 제어면(control plane)이고, 파일시스템의 run 디렉터리와 해시 영수증이 증거면(evidence plane)입니다.
 
-2026-08-12 로컬 실행에서 Gemini Headless Chrome은 서로 다른 2개 세로 클립을 생성했고, 파이프라인은 20.033초 최종 MP4·한국어 번인 자막·내레이션·불변 영수증까지 무인으로 완주했습니다. 이미 봉인된 해당 실행의 기술 증거 gate는 100/100이고 의미 gate는 닫힌 상태로 유지합니다. 이후 새 실행은 loopback OMLX 시각/OCR와 결정론적 결속 영수증을 render 직후 추가하며, 증거 부재·오류 시 fail-closed 합니다. 같은 날짜 BFL은 API 키·크레딧 설정이 없어 실제 생성 호출을 하지 않았습니다.
+2026-08-12 로컬 실행에서 Gemini Headless Chrome은 서로 다른 2개 세로 클립을 생성했고, 파이프라인은 20.033초 최종 MP4·한국어 번인 자막·내레이션·불변 영수증까지 무인으로 완주했습니다. source run `2026-08-12T15-03-35-456Z-4d0599`의 클립을 새 provider 요청 없이 복원한 schema v2 `purpose-aware-semantic-verdict` child run `2026-08-12T16-47-14-022Z-c73889`는 append-only revision `revision-2026-08-12T16-51-28-075Z-09cf7d27`에서 100/100, `technicalEvidenceGate:true`, `semanticGate:true`, `blockers:[]`로 통과했습니다. child 재검수의 `providerRequests`는 0입니다. 5개 reviewer는 모두 결정론적 software method이며 `human:false`, `independentPrincipal:false`입니다. 같은 날짜 BFL은 로컬 API 키가 없어 실제 생성 호출을 하지 않았고, 잔액 0 표시는 불변 run에 봉인되지 않은 운영 UI 관측입니다.
 
 ## 2. System context
 
@@ -90,7 +90,7 @@ stateDiagram-v2
   [*] --> queued
   queued --> running: run starts
   running --> verifying: final media rendered
-  verifying --> completed: future content-semantic verification passed
+  verifying --> completed: technical + semantic gates pass and blockers are empty
   verifying --> needs_improvement: gate closed or score below threshold
   queued --> failed: initialization error
   running --> failed: provider/render/validation error
@@ -111,6 +111,10 @@ stateDiagram-v2
 8. 프레임·오디오·자막 검사와 AHP 평가를 수행합니다.
 9. 산출물을 `runs/<run-id>/artifacts/`로 복사하고 바이트 수·SHA-256을 manifest에 봉인합니다.
 10. reviewer payload가 나중에 제출되면 기존 base를 바꾸지 않고 `runs/<run-id>/revisions/<revision-id>/`에 append-only revision을 만듭니다.
+
+봉인된 Gemini `needs-improvement` 실행의 의미 정책만 업그레이드할 때는 일반 `/run`을 사용하지 않습니다. `POST /api/jobs/:id/semantic/revalidate`가 부모 manifest와 모든 immutable artifact를 재검증하고 새 child run을 만든 뒤, 완료 provider 영수증과 동일 clip SHA-256을 복원해 Gemini 요청 0회로 결정론적 재편집·schema v2 검수를 수행합니다. 부모 run은 바꾸지 않으며 reviewer payload 없이 완료 상태를 만들지 않습니다.
+
+현재 검증된 chain은 job `2026-08-12T12-30-22-674Z-f0418e` 아래의 source run `2026-08-12T15-03-35-456Z-4d0599` → child run `2026-08-12T16-47-14-022Z-c73889` → revision `revision-2026-08-12T16-51-28-075Z-09cf7d27`입니다. source의 720×1280·10.005초 클립 2개는 SHA-256이 서로 다르고 temporal aHash 거리는 32.375입니다. child base manifest는 당시 `needs-improvement` snapshot으로 불변 유지되고, sequence 1 revision이 5-method payload를 append해 최신 판정을 `passed`로 만들었습니다. 따라서 “완료”는 base 파일을 덮어썼다는 뜻이 아니라, 해시 결속된 최신 revision을 포함한 job projection이 `completed`/`verified`라는 뜻입니다.
 
 실행 도중 mutable 파일은 다시 만들어질 수 있지만, 기술 증거 판정은 현재 run ID와 일치하는 해시 검증된 snapshot만 신뢰합니다.
 
@@ -170,7 +174,7 @@ BFL adapter는 generic 계약을 구현하는 독립 실행 파일입니다.
 - delivery: HTTPS, 무자격증명, 기본 포트, 승인된 `delivery-<region>.bfl.ai`/`delivery.<region>.bfl.ai` 또는 명시 allowlist
 - download: redirect 거부, video content type, 기본 최대 512 MiB, atomic rename, SHA-256
 
-비용 guard는 예상 총 credits가 상한보다 큰 경우 첫 유료 제출 전에 중단하고, 각 다음 장면 전에도 관측 비용과 잔여 추정을 다시 계산합니다. BFL 가격 자체는 provider가 바꿀 수 있으므로 사용자가 현재 단가를 environment에 넣어야 합니다.
+비용 guard는 예상 총 credits가 상한보다 큰 경우 첫 유료 제출 전에 중단하고, 각 다음 장면 전에도 관측 비용과 잔여 추정을 다시 계산합니다. README 예시는 HD 110초 × 17 credits/초 = 1,870 credits이고 `BFL_MAX_CREDITS=2000`으로 작은 여유를 둡니다. 1 credit = USD 0.01 가정에서는 USD 18.70이며, 가격 자체는 provider가 바꿀 수 있으므로 사용자가 실행 직전 현재 단가를 environment에 넣어야 합니다. 2026-08-12의 잔액 0 표시는 불변 BFL 영수증이 아니라 운영 UI에서 본 시점성 관측이므로 아키텍처 검증 사실로 사용하지 않습니다.
 
 ### 6.4 Local upload
 
@@ -227,9 +231,9 @@ AHP 가중치는 다음과 같습니다.
 | 출처 텍스트 결속·벤치마크 적합성 | 10 |
 | 자동화 재현성·실패 복구 | 10 |
 
-총점 98점만으로 기술 증거 검사를 통과하지 않습니다. 승인 provider provenance, current run 결속, 입력 manifest, benchmark 영수증, 불변 evidence, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 서로 다른 id/role/method를 가진 5개 software-method payload와 현재 evidence·decision에 대한 canonical attestation hash가 모두 필요합니다. extractive binding은 사실 함의 판정이 아니며, 이 해시는 payload 무결성을 검증할 뿐 실제 전문가 참여, 신원, 전문성 또는 독립성을 인증하지 않습니다.
+총점 98점만으로 기술 증거 검사를 통과하지 않습니다. 승인 provider provenance, current run 결속, 입력 manifest, benchmark 영수증, 불변 evidence, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 서로 다른 id/role/method를 가진 5개 software-method payload와 현재 evidence·decision에 대한 canonical attestation hash가 모두 필요합니다. 현재 통과 revision의 5개 항목은 각각 `human:false`, `independentPrincipal:false`입니다. extractive binding은 사실 함의 판정이 아니며, 이 해시는 payload 무결성을 검증할 뿐 실제 전문가 참여, 신원, 전문성 또는 독립성을 인증하지 않습니다.
 
-새 실행은 최종 렌더 뒤 첫 quality snapshot 전에 `runs/<runId>/semantic/` 영수증을 만듭니다. Qwen3.6-27B-8bit를 loopback OMLX의 strict JSON schema·`temperature:0`·`chat_template_kwargs.enable_thinking:false`로 호출해 장면 관련성과 모든 번인 자막 cue의 blind OCR을 관찰하고, 같은 입력 프레임에서 FFmpeg `blackframe` 및 최종 영상 재추출 raw-pixel hash를 재계산합니다. 별도로 대본의 extractive 출처 binding과 macOS `say`에 전달한 정확한 텍스트·실제 PCM WAV·생성 오디오 파일 해시를 `narrationGenerationBinding`으로 결속합니다. 이것은 ASR이 아니며 영수증에도 `asrPerformed:false`로 기록합니다. 검증·정제된 응답, 입력 프레임, 입력 manifest, 영수증 및 WAV가 모두 run-bound canonical hash와 불변 복사본에 일치할 때만 `contentSemanticsVerified`가 열립니다. OMLX 원응답 본문은 저장하지 않고 SHA-256만 기록합니다.
+새 실행은 최종 렌더 뒤 첫 quality snapshot 전에 `runs/<runId>/semantic/` schema v2 `purpose-aware-semantic-verdict` 영수증을 만듭니다. Qwen3.6-27B-8bit를 loopback OMLX의 strict JSON schema·`temperature:0`·`chat_template_kwargs.enable_thinking:false`로 호출합니다. 모든 프레임에 transport/schema/exact-model/finish/confidence/unexpected-text와 FFmpeg black-frame 조건을 적용하고, `scene` 목적에는 장면 관련성만, `caption-cue` 목적에는 blind exact OCR만 적용합니다. 목적별 segment/cue coverage는 정확한 일대일 집합이어야 합니다. 별도로 최종 영상 재추출 raw-pixel hash, 대본의 extractive 출처 binding, macOS `say`에 전달한 정확한 텍스트·실제 PCM WAV·생성 오디오 파일 해시를 `narrationGenerationBinding`으로 결속합니다. 이것은 ASR이 아니며 영수증에도 `asrPerformed:false`로 기록합니다. 검증·정제된 응답, 입력 프레임, 입력 manifest, policy hash, 영수증 및 WAV가 모두 run-bound canonical hash와 불변 복사본에 일치할 때만 `contentSemanticsVerified`가 열립니다. OMLX 원응답 본문은 저장하지 않고 SHA-256만 기록합니다. schema v1 봉인 영수증은 당시의 모든-frame scene 정책으로 재검증되어 소급 재해석되지 않습니다.
 
 ## 10. Threat model
 
@@ -268,14 +272,14 @@ AHP 가중치는 다음과 같습니다.
 제출 가능한 E2E run은 최소한 다음을 함께 보여야 합니다.
 
 - 실제 Gemini 또는 BFL `completed` provider 영수증
-- 요청한 수만큼의 서로 다른 9:16 클립과 통과한 diversity manifest
+- 요청한 수만큼의 서로 다른 작업 format(9:16 또는 16:9) 클립과 통과한 diversity manifest
 - 모든 장면 claim의 exact quote/source binding
 - `final.mp4`, `captions.srt`, `script.json`, `thumbnail.jpg`
 - frame/audio/caption 검사와 단일 오디오 스트림
 - benchmark generation이 일치하는 세 snapshot
 - 오류 없는 JSONL event ledger와 해시 검증된 run manifest
-- current evidence에 결속된 5-method software attestation payload(사람 명단이나 독립 기관 증명 아님)
+- current evidence에 결속된 5-method software attestation payload(각각 `human:false`, `independentPrincipal:false`; 사람 명단이나 독립 기관 증명 아님)
 - `quality.json`의 `technicalEvidenceGate: true`
-- 새 run의 불변 OMLX 장면/OCR·FFmpeg black-frame·extractive entailment·`narrationGenerationBinding` 영수증(ASR 아님), 그리고 게시 전 사람 콘텐츠 검토
+- schema v2 policy hash에 결속된 불변 OMLX 목적별 장면/OCR·FFmpeg black-frame·extractive entailment·`narrationGenerationBinding` 영수증(ASR 아님), 그리고 게시 전 사람 콘텐츠 검토
 
 기존 봉인 run은 소급 수정하지 않습니다. 새 run에서 OMLX가 꺼져 있거나 비정상 JSON을 반환하거나 어느 결속이라도 어긋나면 최종 영상은 보존하되 `contentSemanticsVerified:false`, `status:needs-improvement`를 유지합니다.

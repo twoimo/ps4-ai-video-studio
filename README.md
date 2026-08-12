@@ -2,7 +2,7 @@
 
 플스포컴퍼니의 AI Shorts 제작 과제를 염두에 둔 로컬 우선 제작·검증 웹앱입니다. 공개 YouTube 채널 `신비한 건축사전`의 메타데이터와 제목 패턴을 벤치마킹하고, 새 주제의 근거 수집, AI 장면 생성, FFmpeg 편집, 한국어 자막·내레이션, 품질 증거 봉인을 하나의 작업(run)으로 연결합니다.
 
-> 이 저장소는 현재 **제출 준비 중인 엔지니어링 프로토타입**입니다. 2026-08-12에 Headless Chrome의 Gemini가 만든 서로 다른 2개 클립에서 20초 세로 MP4·한국어 자막·내레이션까지 무인 E2E를 완주했습니다. 이미 봉인된 해당 run의 기술 증거 gate는 100/100이지만 의미 gate는 닫혀 있습니다. 이후 새 run은 loopback OMLX 영수증을 추가하며, 모든 의미 증거가 통과한 새 run에 한해서만 gate 승격 대상이 됩니다.
+> 이 저장소는 현재 **제출 준비 중인 엔지니어링 프로토타입**입니다. 2026-08-12에 Headless Chrome의 Gemini가 만든 서로 다른 2개 클립에서 20초 세로 MP4·한국어 자막·내레이션까지 무인 E2E를 완주했습니다. source run `2026-08-12T15-03-35-456Z-4d0599`를 provider 요청 없이 재사용한 schema v2 `purpose-aware-semantic-verdict` child run `2026-08-12T16-47-14-022Z-c73889`는 append-only revision `revision-2026-08-12T16-51-28-075Z-09cf7d27`에서 자동 품질 계약을 통과했습니다. 최신 revision은 100/100, `technicalEvidenceGate:true`, `semanticGate:true`, `blockers:[]`이며 child 재검수의 `providerRequests`는 0입니다. 이 판정의 5개 review는 모두 결정론적 software method이고 `human:false`, `independentPrincipal:false`이므로 사람 또는 독립 기관 검토로 표현하지 않습니다.
 
 ## 현재 검증 상태
 
@@ -15,9 +15,9 @@
 | 전수 분석 범위 | 255개 제목·조회수·길이·해상도 메타데이터와 휴리스틱 제목 분류 |
 | 미디어 분석 범위 | 시간축 분산 12개 컨테이너 분석: 영상 12, 오디오 11, 자막 11, 완전한 LUFS/true-peak 측정 2. 전 채널을 대표하지 않음 |
 | 로컬 웹앱 | 채널 탐색, 작업 생성, 진행 상태, 산출물, AHP 계측·기술 증거 gate 표시 구현 |
-| Gemini | Chrome 151 Headless, 전용 프로필, 2개 720×1280·10.005초 클립을 생성해 1080×1920·20.033초 최종 MP4까지 완주. 입력 SHA-256 고유, temporal aHash 거리 39.125, motion gate 2/2 통과 |
-| FLUX 3 | 공식 BFL API용 `local-video` 어댑터, 비용 상한, 체크포인트·재개, 다운로드 검증 구현. 2026-08-12 확인 당시 API 키 미설정·대시보드 잔액 0이며 유료 호출 및 생성 E2E 미수행 |
-| 최종 판정 | 실제 Gemini 고유 다중 클립 + 출처 결속 + 불변 run + 5-method software payload의 기술 gate를 검증. 새 run은 Qwen3.6-27B-8bit 장면/OCR, FFmpeg black-frame, extractive 출처, TTS 생성 provenance 영수증까지 모두 통과해야 의미 gate 후보가 되며 실패·부재 시 `needs-improvement` |
+| Gemini | Chrome 151 Headless, 전용 프로필, 2개 720×1280·10.005초 클립을 생성해 1080×1920·20.033초 최종 MP4까지 완주. 입력 SHA-256 고유, temporal aHash 거리 32.375, motion gate 2/2 통과 |
+| FLUX 3 | 공식 BFL API용 `local-video` 어댑터, 비용 상한, 체크포인트·재개, 다운로드 검증 구현. 2026-08-12 로컬 환경에서 API 키가 설정되지 않아 유료 호출 및 생성 E2E는 미수행. 대시보드 잔액 0은 불변 run에 봉인되지 않은 시점성 운영 관측 |
+| 최종 판정 | job `2026-08-12T12-30-22-674Z-f0418e`의 최신 append-only revision은 `passed`, 100/100, 기술 gate `true`, 의미 gate `true`, blocker 0개이며 job은 `completed`/`verified`. child 재검수는 provider 요청 0회. 5-method panel은 사람이나 독립 기관이 아닌 software attestation |
 
 `data/channel-analysis.json`의 “전수 분석”은 공개 메타데이터와 제목 문맥 규칙 분석입니다. `editorialHypothesis`의 서사·시각 언어는 이 제목 분석에서 세운 제작 가설이며 측정된 시청각 관측값이 아닙니다. 모든 영상 내용을 사람이 시청했거나 모든 프레임을 분석했다는 뜻이 아닙니다. 표본 미디어 분석은 별도 영수증으로 분리되어 있습니다.
 
@@ -26,11 +26,12 @@
 - `yt-dlp`로 Videos/Shorts 목록을 각각 수집하고 누락된 조회수·길이·해상도가 있으면 스냅샷 저장을 중단합니다.
 - 최근 30개 Shorts의 110초 프로필을 새 작업의 기본 목표 길이로 사용합니다.
 - 검증 출처를 가져와 SHA-256, 바이트 수, 본문 위치와 인용문을 저장합니다. 대본의 각 주장은 저장된 인용문과 정확히 결속되어야 합니다.
+- 공식 Higgsfield MIT 자료와 공개 학습 문서를 출처로 한 provider-neutral shot pattern을 결정론적으로 선택합니다. extractive `visualPrompt`는 변경하지 않고 카메라·연속성 suffix를 별도 `providerVisualPrompt`로 생성해 Gemini/`local-video` 요청과 불변 영수증에 결속합니다. 공개 웹 프롬프트·미디어·에셋은 복제하지 않습니다.
 - 세 가지 입력 모드를 지원합니다: Gemini Chrome 생성, 영수증 기반 `local-video` 생성기, 사용자가 제공한 로컬 클립 편집.
 - 입력 클립마다 SHA-256과 시간축 perceptual fingerprint를 계산하여 동일·유사 클립을 렌더 전에 차단합니다.
-- FFmpeg/ffprobe로 9:16 정규화, 이어붙이기, 음성 합성, 자막 번인, 썸네일 추출, 프레임·음량·무음·자막 검사를 수행합니다.
+- FFmpeg/ffprobe로 작업 설정에 맞춘 9:16/16:9 정규화, 이어붙이기, 음성 합성, 자막 번인, 썸네일 추출, 프레임·음량·무음·자막 검사를 수행합니다.
 - 작업별 이벤트 로그, 입력 manifest, provider 영수증, 벤치마크 스냅샷과 최종 산출물을 run ID에 묶어 저장합니다.
-- AHP 계측과 별도로 provider provenance, 출처 텍스트, 불변 산출물, 5-method software attestation payload를 요구하는 기술 증거 gate를 둡니다. 이 스키마는 실제 전문가 참여나 신원·독립성, 영상의 주제 관련성·사실성·미학을 증명하지 않습니다.
+- AHP 계측과 별도로 provider provenance, 출처 텍스트, 불변 산출물, 5-method software attestation payload를 요구하는 기술 증거 gate를 둡니다. 현재 통과 revision의 5개 reviewer는 모두 `human:false`, `independentPrincipal:false`입니다. 이 스키마는 실제 전문가 참여나 신원·독립성, 영상의 주제 관련성·사실성·미학을 증명하지 않습니다.
 
 ```mermaid
 flowchart LR
@@ -49,7 +50,7 @@ flowchart LR
   Q --> R["불변 run 산출물"]
 ```
 
-자세한 구성과 위협 모델은 [`docs/architecture.md`](docs/architecture.md), 오픈소스 선택 근거는 [`docs/oss-decisions.md`](docs/oss-decisions.md)를 참고하세요.
+자세한 구성과 위협 모델은 [`docs/architecture.md`](docs/architecture.md), 오픈소스 선택 근거는 [`docs/oss-decisions.md`](docs/oss-decisions.md), Higgsfield 학습 자료의 권리·재사용 경계는 [`docs/higgsfield-learning-sources.md`](docs/higgsfield-learning-sources.md)를 참고하세요.
 
 ## 요구 사항
 
@@ -85,7 +86,7 @@ bun run dev
 
 ### 제작 모드
 
-1. **Gemini · Chrome 자동 조작**: 웹앱에서 `Gemini Chrome 연결`을 누르고 전용 Chrome 프로필에 직접 로그인합니다. 자동화는 로그인, CAPTCHA, 쿼터를 우회하지 않습니다.
+1. **Gemini · Chrome 자동 조작**: 최초 로그인이나 세션 갱신은 `GEMINI_CHROME_HEADLESS=0`으로 전용 프로필을 한 번 띄워 사람이 직접 완료합니다. Chrome을 완전히 종료한 뒤 기본값인 headless 모드로 돌아오면 같은 프로필의 쿠키·세션을 재사용합니다. 자동화는 로그인, CAPTCHA, 쿼터를 우회하지 않습니다.
 2. **local-video 생성기**: 절대 경로의 실행 파일을 `PS4_LOCAL_VIDEO_GENERATOR`에 지정합니다. 생성기는 stdin 요청과 현재 run에 결속된 JSON 영수증을 반환해야 합니다.
 3. **로컬 클립 업로드**: 작업 생성 후 여러 클립을 업로드하고 편집을 시작합니다. 이 모드는 편집 검증용이며 AI provider 기술 증거 gate 통과를 주장할 수 없습니다.
 
@@ -137,6 +138,16 @@ GEMINI_CHROME_BACKGROUND=0
 
 영상 1개 결과 대기 기본값은 20분이며 `GEMINI_VIDEO_TIMEOUT_MS`에는 5분~60분 범위의 정수 밀리초만 허용됩니다. 타이머는 제출 확인과 체크포인트 저장 뒤 시작됩니다. 결과가 늦어 시간 초과되면 제출된 Gemini 대화 탭을 닫지 않고 CDP만 분리합니다. 같은 작업·대본·프로필 결속으로 재실행할 때 정확히 하나의 기존 대화 탭이 확인되어야 그 결과부터 회수하며, 탭이 없거나 중복되어 모호하면 중복 생성을 막기 위해 새 요청을 보내지 않습니다.
 
+체크포인트 기능 도입 전의 legacy 실패 영수증은 실제 제출 여부를 증명하지 못하므로 자동 재전송하지 않습니다. 운영자가 폐기를 명시적으로 승인하면 CLI가 저장된 job의 loopback CDP를 읽기 전용으로 조회합니다. 저장된 세션과 결속된 live headless Chrome, 정확한 `gemini-generation.json` SHA-256, Gemini 대화·생성 target 0개가 모두 확인될 때만 1회성 폐기 영수증을 생성합니다. 관측에는 origin·브라우저·target 집합의 해시와 개수·시각만 남기며 target URL/ID는 저장하지 않습니다. 이는 로컬 target 부재에 대한 증거이지 provider 측 생성 취소를 보장하지 않습니다. 승인된 legacy generation 원본과 폐기 영수증은 덮어쓰기 전에 `legacy-gemini-evidence/`에 그대로 보존됩니다. 이 명령은 영상 생성 요청을 보내거나 Chrome UI를 조작하지 않습니다.
+
+```bash
+bun run gemini:abandon-legacy -- \
+  --job '<job-id>' \
+  --expected-generation-sha256 'sha256:<64-hex>' \
+  --assert-no-live-target \
+  --reason '기존 Gemini 대화 target이 없음을 운영자가 확인함'
+```
+
 최초 로그인 또는 세션 갱신이 필요할 때만 `GEMINI_CHROME_HEADLESS=0`과 `GEMINI_CHROME_BACKGROUND=0`으로 같은 전용 프로필을 열어 사람이 로그인합니다. 로그인 후 그 전용 Chrome을 **완전히 종료**하고 `GEMINI_CHROME_HEADLESS=1`로 되돌린 다음 서버와 모니터를 재시작하세요. 동일한 `CHROME_PROFILE_DIR`의 쿠키·세션이 재사용되지만, 만료된 로그인이나 CAPTCHA는 headless에서 우회하지 않고 명시적으로 실패합니다. `GEMINI_API_KEY`는 근거 결속 대본 생성을 위한 선택 설정이며 Chrome 영상 생성 세션과는 별개입니다.
 
 서버가 실행 중일 때 쿼터 감시와 자동 재개를 시작할 수 있습니다.
@@ -153,7 +164,7 @@ bun run monitor:gemini
 
 Gemini와 `local-video` 생성 클립은 편집 전에 `ffmpeg-luma-motion-32x32-v1` 검사를 통과해야 합니다. FFmpeg가 디코딩한 32×32 grayscale 프레임으로 첫 1초의 동작 시작 시점과 전체 구간의 움직이는 전환율, 고유 프레임율, 인접 근중복률, 최장 정지 구간을 계산합니다. 파일 SHA-256만 다른 단색 정지 영상이나 소수 프레임 반복 영상은 통과하지 못합니다.
 
-측정값과 고정 threshold는 input manifest schema v3에 저장되고, quality 평가가 원본 클립에서 다시 계산한 영수증과 바이트 단위 canonical hash로 일치해야 `inputMotionGateBinding`이 열립니다. 로컬 업로드 모드는 편집 fixture이므로 같은 지표를 표시하지만 제출용 provider gate로 강제하지 않습니다. 이 기술 검사는 콘텐츠 의미를 판정하지 않으며 `semanticGate=false` 정책을 바꾸지 않습니다.
+측정값과 고정 threshold는 input manifest schema v3에 저장되고, quality 평가가 원본 클립에서 다시 계산한 영수증과 바이트 단위 canonical hash로 일치해야 `inputMotionGateBinding`이 열립니다. 로컬 업로드 모드는 편집 fixture이므로 같은 지표를 표시하지만 제출용 provider gate로 강제하지 않습니다. 이 기술 검사만으로 `semanticGate`가 열리지는 않으며, schema v2 목적별 의미 영수증을 별도로 통과해야 합니다.
 
 ## FLUX 3 / BFL 어댑터
 
@@ -164,14 +175,14 @@ PS4_LOCAL_VIDEO_GENERATOR=/absolute/path/to/scripts/bfl-flux-video-generator.mjs
 BFL_API_KEY=
 BFL_VIDEO_RESOLUTION=hd
 BFL_ESTIMATED_CREDITS_PER_SECOND=17
-BFL_MAX_CREDITS=1400
+BFL_MAX_CREDITS=2000
 ```
 
-실호출에는 **API 키뿐 아니라 양수 비용 추정치와 최대 크레딧 상한이 모두 필요**합니다. 예시는 HD 80초를 1 credit = USD 0.01, 17 credits/초로 가정한 1,360 credits(USD 13.60)에 작은 여유를 둔 값입니다. 가격은 바뀔 수 있으므로 실행 직전에 [BFL 문서](https://docs.bfl.ai/flux_3/flux3_overview)와 대시보드에서 확인하세요. FHD는 별도 단가를 넣어야 합니다.
+실호출에는 **API 키뿐 아니라 양수 비용 추정치와 최대 크레딧 상한이 모두 필요**합니다. 예시는 웹 UI의 `local-video` 기본 목표인 HD 110초를 1 credit = USD 0.01, 17 credits/초로 가정한 1,870 credits(USD 18.70)에 작은 여유를 둔 값입니다. 가격은 바뀔 수 있으므로 실행 직전에 [BFL 문서](https://docs.bfl.ai/flux_3/flux3_overview)와 대시보드에서 확인하세요. FHD는 별도 단가를 넣어야 합니다.
 
 `BFL_DRY_RUN=1`은 stdin 요청을 검증하고 네트워크 요청 0건의 계획 영수증을 출력합니다. dry-run 영수증은 의도적으로 완성 클립 영수증이 아니므로 웹 파이프라인의 완료 run으로 받아들여지지 않습니다.
 
-2026-08-12 확인 당시 이 개발 환경에는 BFL API 키가 설정되지 않았고 대시보드 잔액은 0이었습니다. 이는 외부 계정의 시점성 상태이며 저장소 영수증이 아닙니다. 저장소의 테스트와 CI는 BFL/Gemini 실서비스를 호출하지 않습니다.
+2026-08-12 확인 당시 이 개발 환경에는 BFL API 키가 설정되지 않았습니다. 대시보드 잔액 0은 당시 UI에서 본 시점성 운영 관측일 뿐 불변 run이나 저장소 영수증에 봉인되지 않았습니다. 저장소의 테스트와 CI는 BFL/Gemini 실서비스를 호출하지 않습니다.
 
 ## 테스트
 
@@ -199,14 +210,16 @@ CI는 Bun 테스트, Node 구문 검사, `git diff --check`만 수행합니다. 
 
 ## 알려진 한계와 다음 완료 조건
 
-- 2026-08-12 Gemini 저장 스냅샷은 다중 계정 모두 쿼터 차단이었고, 완전한 고유 클립 세트를 받지 못했습니다.
-- 같은 날짜 확인 당시 BFL 키 미설정·잔액 0이어서 실제 provider E2E를 실행하지 않았습니다.
+- 2026-08-12 초반의 다중 계정 시도는 쿼터·UI 변경으로 실패했지만, 이후 Headless Chrome source run은 서로 다른 2개 클립과 20.033초 최종본을 완주했습니다. schema v2 child run과 append-only 5-method revision도 통과했으며, child 재검수는 Gemini에 새 요청을 보내지 않았습니다.
+- 같은 날짜 로컬 환경에 BFL 키가 없어 실제 provider E2E를 실행하지 않았습니다. 잔액 0 표시는 봉인되지 않은 운영 UI 관측이므로 재현 가능한 저장소 증거로 취급하지 않습니다.
 - 현재 저장된 채널 미디어 분석은 시간축으로 분산 선택한 12개 표본뿐입니다. 전체 255개 콘텐츠의 시청각 의미를 일반화할 수 없습니다.
 - 자막 타이밍은 현재 대본/내레이션 기반 추정 경로를 포함합니다. ASR 강제 정렬을 사용한 사람 수준의 싱크를 아직 보장하지 않습니다.
-- 기술 증거 gate에는 실제 승인 provider의 완성 영수증, 서로 다른 모든 클립, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 불변 run 폐쇄, 요구된 5-method software attestation payload가 필요합니다. extractive binding은 텍스트 변형을 허용하지 않지만 사실 함의를 판정하지 않습니다. 현재 검증은 payload·파일·계측의 무결성이지 사람의 신원·전문성·독립성 또는 콘텐츠 의미 품질 인증이 아닙니다.
-- 새 run은 `runs/<runId>/semantic/`에 loopback OMLX의 검증·정제된 응답, 입력 프레임, canonical 영수증을 남깁니다. 원응답 본문은 비밀값 반사를 막기 위해 저장하지 않고 SHA-256만 기록합니다. 장면 관련성·모든 번인 자막 cue의 blind OCR·FFmpeg black-frame·extractive 출처 결속·`narrationGenerationBinding`이 모두 재검증되고 불변 산출물에 봉인된 경우에만 `contentSemanticsVerified`가 열립니다. 이는 ASR이 아니며(`asrPerformed:false`), OMLX 부재나 JSON 오류는 영상 생성을 폐기하지 않고 `needs-improvement`로 닫힙니다. 기존 봉인 run은 소급 변경하지 않습니다.
+- 기술 증거 gate에는 실제 승인 provider의 완성 영수증, 서로 다른 모든 클립, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 불변 run 폐쇄, 요구된 5-method software attestation payload가 필요합니다. 최신 revision은 이를 충족하지만, 5개 방법은 모두 `human:false`, `independentPrincipal:false`입니다. extractive binding은 텍스트 변형을 허용하지 않지만 사실 함의를 판정하지 않습니다. 현재 검증은 payload·파일·계측의 무결성이지 사람의 신원·전문성·독립성 또는 콘텐츠 의미 품질 인증이 아닙니다.
+- schema v2 `purpose-aware-semantic-verdict` run은 `runs/<runId>/semantic/`에 loopback OMLX의 검증·정제된 응답, 입력 프레임, canonical 영수증과 exact policy hash를 남깁니다. 모든 프레임에 transport/schema/exact-model/finish/confidence/unexpected-text와 black-frame 조건을 적용하고, `scene` 프레임에는 장면 관련성만, `caption-cue` 프레임에는 blind exact OCR만 적용합니다. 원응답 본문은 비밀값 반사를 막기 위해 저장하지 않고 SHA-256만 기록합니다. extractive 출처 결속과 `narrationGenerationBinding`까지 불변 산출물에 봉인된 경우에만 `contentSemanticsVerified`가 열립니다. 이는 ASR이 아니며(`asrPerformed:false`), OMLX 부재나 JSON 오류는 영상을 보존한 채 `needs-improvement`로 닫힙니다. schema v1 봉인 run은 기존 의미를 유지하며 소급 재해석하지 않습니다.
+- `POST /api/jobs/:id/semantic/revalidate`는 현재의 봉인된 Gemini `needs-improvement` run만 입력으로 받습니다. 모든 immutable artifact를 다시 해시 검증해 새 child run에 복원하고, 완료된 provider 영수증과 클립을 재사용해 Gemini 요청 0회로 재편집·schema v2 검수를 수행합니다. 부모 run의 바이트는 바꾸지 않으며, 이 재검수만으로 reviewer payload를 위조하거나 완료로 승격하지 않습니다.
+- 현재 public bundle은 Codex in-app browser에서 320/375/768/1024/1440px 새 PNG 캡처, 완료 작업 desktop/mobile 상태, 스킵 링크, unchanged polling 중 file-input/focus 보존, 콘솔 무오류를 확인했습니다. 정확한 번들·이미지 SHA-256은 [`docs/design-evidence/manifest.json`](docs/design-evidence/manifest.json), 범위와 한계는 [`docs/design-qa.md`](docs/design-qa.md)에 기록합니다.
 
-제출 준비 완료라고 부르려면 위 조건을 충족한 실제 run의 `final.mp4`, `captions.srt`, `quality.json`, provider 영수증과 `runs/<run-id>/manifest.json`을 함께 검토하고, 별도의 사람 콘텐츠 검토를 기록해야 합니다.
+자동 품질 계약은 최신 append-only revision에서 통과했습니다. 실제 제출 전에는 해당 run의 `final.mp4`, `captions.srt`, revision `quality.json`, provider 영수증과 `runs/<run-id>/manifest.json`을 함께 검토하고, 별도의 사람 콘텐츠 검토와 최신 디자인 QA를 기록해야 합니다.
 
 ## 라이선스
 

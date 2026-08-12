@@ -2,6 +2,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { hashFile, writeJsonAtomic } from "./run-ledger.mjs";
+import { providerPromptBindingForSegment, providerRequestFieldsForSegment } from "./shot-patterns.mjs";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -21,7 +22,7 @@ function requiredString(value, label) {
   return value;
 }
 
-function requestFor(job, script, runId, scriptHash) {
+export function buildLocalVideoRequest(job, script, runId, scriptHash = hashJson(script)) {
   const base = {
     schemaVersion: 1,
     jobId: job.id,
@@ -31,14 +32,29 @@ function requestFor(job, script, runId, scriptHash) {
     format: job.format,
     targetDurationSec: Number(job.targetDurationSec),
     targetDurationRangeSec: job.targetDurationRangeSec || null,
-    segments: (script?.segments || []).map((segment, index) => ({
-      index: index + 1,
-      durationHint: segment.durationHint || null,
-      prompt: segment.visualPrompt || "",
-      visualPrompt: segment.visualPrompt || "",
-      caption: segment.caption || "",
-      narration: segment.narration || ""
-    }))
+    segments: (script?.segments || []).map((segment, index) => {
+      const providerBinding = providerPromptBindingForSegment(segment, "local-video");
+      return {
+        index: index + 1,
+        durationHint: segment.durationHint || null,
+        prompt: providerBinding.providerVisualPrompt,
+        visualPrompt: segment.visualPrompt || "",
+        caption: segment.caption || "",
+        narration: segment.narration || "",
+        ...providerRequestFieldsForSegment(segment, "local-video")
+      };
+    }),
+    ...(script?.shotPatternPlan ? {
+      shotPatternPlan: {
+        catalogId: script.shotPatternPlan.catalogId,
+        catalogHash: script.shotPatternPlan.catalogHash,
+        planHash: script.shotPatternPlan.planHash,
+        continuityContractHash: script.shotPatternPlan.continuityContractHash,
+        applicationMode: script.shotPatternPlan.applicationMode,
+        providerEligible: script.shotPatternPlan.providerEligible,
+        providerSubmissionPlanned: script.shotPatternPlan.providerSubmissionPlanned
+      }
+    } : {})
   };
   const requestHash = hashJson({ ...base, scriptHash });
   return { ...base, requestHash, scriptHash };
@@ -96,7 +112,7 @@ async function runGenerator(generator, input) {
   }
 }
 
-async function validateReceipt(receipt, job, script, runId, request, scriptHash, requestHash, clipsDir) {
+export async function validateLocalVideoReceipt(receipt, job, script, runId, request, scriptHash, requestHash, clipsDir) {
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("local-video 생성기 영수증 JSON이 객체가 아닙니다.");
   if (receipt.schemaVersion !== 1) throw new Error("local-video 영수증 schemaVersion이 지원되지 않습니다.");
   if (receipt.status !== "completed") throw new Error("local-video 영수증 status가 completed가 아닙니다.");
@@ -104,6 +120,8 @@ async function validateReceipt(receipt, job, script, runId, request, scriptHash,
   if (receipt.provider !== "local-video") throw new Error("local-video 영수증 provider가 local-video가 아닙니다.");
   for (const field of ["model", "modelVersion", "modelId", "requestHash", "scriptHash"]) requiredString(receipt[field], field);
   if (receipt.requestHash !== requestHash || receipt.scriptHash !== scriptHash) throw new Error("local-video 영수증 요청·스크립트 해시가 현재 실행과 일치하지 않습니다.");
+  const shotPatternRequestRequired = Boolean(script?.shotPatternPlan);
+  if (shotPatternRequestRequired && !receipt.request) throw new Error("local-video shot pattern 영수증에 실제 provider 요청 echo가 없습니다.");
   if (receipt.request && hashJson(receipt.request) !== hashJson(request)) throw new Error("local-video 영수증 request가 현재 요청과 일치하지 않습니다.");
   if (!Array.isArray(receipt.segments) || receipt.segments.length !== script.segments.length) throw new Error(`local-video 영수증 장면 수가 요청과 다릅니다: ${receipt.segments?.length || 0}/${script.segments.length}`);
   const seenIndices = new Set();
@@ -129,6 +147,15 @@ async function validateReceipt(receipt, job, script, runId, request, scriptHash,
     const sha256 = requiredString(segment.sha256, `segments[${index}].sha256`);
     const actualHash = await hashFile(absolutePath);
     if (sha256 !== actualHash) throw new Error(`local-video 생성 결과 해시가 영수증과 다릅니다: ${relativePath}`);
+    const requestedSegment = request.segments[index - 1];
+    if (requestedSegment.providerVisualPromptHash) {
+      if (segment.submittedToProvider !== true) throw new Error(`local-video shot pattern 영수증에 실제 provider 제출 표시가 없습니다: ${index}`);
+      if (segment.providerVisualPrompt !== requestedSegment.providerVisualPrompt) throw new Error(`local-video 영수증 providerVisualPrompt가 요청과 다르거나 누락됐습니다: ${index}`);
+      if (segment.providerVisualPromptHash !== requestedSegment.providerVisualPromptHash) throw new Error(`local-video 영수증 providerVisualPrompt 해시가 요청과 다르거나 누락됐습니다: ${index}`);
+      if (hashJson(segment.shotPattern) !== hashJson(requestedSegment.shotPattern)) throw new Error(`local-video 영수증 shot pattern 결속이 요청과 다르거나 누락됐습니다: ${index}`);
+    } else if (segment.submittedToProvider !== undefined && segment.submittedToProvider !== true) {
+      throw new Error(`local-video 영수증 provider 제출 상태가 completed와 모순됩니다: ${index}`);
+    }
     segments.push({
       ...segment,
       index,
@@ -138,7 +165,13 @@ async function validateReceipt(receipt, job, script, runId, request, scriptHash,
       sha256: actualHash,
       runId,
       requestHash,
-      scriptHash
+      scriptHash,
+      ...(requestedSegment.providerVisualPromptHash ? {
+        providerVisualPrompt: requestedSegment.providerVisualPrompt,
+        providerVisualPromptHash: requestedSegment.providerVisualPromptHash,
+        shotPattern: requestedSegment.shotPattern,
+        submittedToProvider: true
+      } : {})
     });
   }
   if (seenIndices.size !== script.segments.length || !script.segments.every((_, index) => seenIndices.has(index + 1))) throw new Error("local-video 영수증 장면 번호가 요청된 모든 장면을 포함하지 않습니다.");
@@ -154,7 +187,7 @@ export async function generateLocalVideoClips(job, script, runId = job?.runId, o
   if (!generatorStat?.isFile() || (generatorStat.mode & 0o111) === 0) throw new Error(`PS4_LOCAL_VIDEO_GENERATOR 실행 파일을 찾을 수 없거나 실행 권한이 없습니다: ${generator}`);
   if (!Array.isArray(script?.segments) || !script.segments.length) throw new Error("local-video 생성에는 대본 장면이 필요합니다.");
   const scriptHash = hashJson(script);
-  const request = requestFor(job, script, runId, scriptHash);
+  const request = buildLocalVideoRequest(job, script, runId, scriptHash);
   const requestHash = request.requestHash;
   const jobDir = resolve(join(import.meta.dirname, "..", "workspace", "jobs", job.id));
   const clipsDir = join(jobDir, "clips");
@@ -168,7 +201,7 @@ export async function generateLocalVideoClips(job, script, runId = job?.runId, o
   } catch {
     throw new Error("local-video 생성기가 유효한 JSON 영수증을 반환하지 않았습니다.");
   }
-  const validated = await validateReceipt(receipt, job, script, runId, request, scriptHash, requestHash, clipsDir);
+  const validated = await validateLocalVideoReceipt(receipt, job, script, runId, request, scriptHash, requestHash, clipsDir);
   const receiptPath = join(runDir, "local-video-generation.json");
   await writeJsonAtomic(receiptPath, { ...validated, receiptPath: `runs/${runId}/local-video-generation.json` });
   await onProgress(100, `${validated.segments.length}개 local-video 클립 생성 완료`);

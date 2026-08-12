@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { captionEntriesForDuration, createJob, evidenceFallbackScript, hasEvidenceHookFraming, JOBS_DIR, perceptualFingerprintDistance, sourceExcerpt, validateEvidenceBoundScript, verifyEvidenceBoundScript } from "../src/pipeline.mjs";
+import { captionEntriesForDuration, createJob, evidenceFallbackScript, hasEvidenceHookFraming, JOBS_DIR, perceptualFingerprintDistance, shouldPreserveGeminiRecoveryArtifacts, sourceExcerpt, validateEvidenceBoundScript, verifyEvidenceBoundScript } from "../src/pipeline.mjs";
 
 const sources = [{
   title: "공식 건축 기록",
@@ -44,6 +44,37 @@ function script() {
     ]
   };
 }
+
+describe("Gemini crash-safe artifact preservation", () => {
+  test("preserves completed clips and pending submissions from failed or hard-crashed runs", () => {
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "running", segments: [{ index: 1 }] })).toBe(true);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "failed", segments: [], pendingSegment: { status: "ambiguous-submitted" } })).toBe(true);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "failed", segments: [], pendingSegment: { status: "submit-intent" } })).toBe(true);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "running", segments: [], pendingSegment: { status: "submitted-awaiting-result" } })).toBe(true);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "failed", segments: [] })).toBe(false);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "completed", segments: [{ index: 1 }] })).toBe(false);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "completed", runId: "interrupted-run", segments: [{ index: 1 }] }, {
+      status: "running",
+      runStatus: "running",
+      runId: "interrupted-run"
+    })).toBe(true);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "completed", runId: "startup-recovered-run", segments: [{ index: 1 }] }, {
+      status: "failed",
+      runStatus: "failed",
+      runId: "startup-recovered-run"
+    })).toBe(true);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "completed", runId: "old-run", segments: [{ index: 1 }] }, {
+      status: "failed",
+      runStatus: "failed",
+      runId: "different-run"
+    })).toBe(false);
+    expect(shouldPreserveGeminiRecoveryArtifacts({ status: "completed", runId: "completed-run", segments: [{ index: 1 }] }, {
+      status: "completed",
+      runStatus: "verified",
+      runId: "completed-run"
+    })).toBe(false);
+  });
+});
 
 describe("evidence-bound script validation", () => {
   test("binds every claim to an exact captured quote", () => {
@@ -298,6 +329,21 @@ describe("deterministic source evidence extraction", () => {
     expect(cuesPerMinute).toBeLessThanOrEqual(60.59 * 1.5);
     expect(Math.min(...cues.map((cue) => cue.end - cue.start))).toBeGreaterThanOrEqual(0.6);
     expect(Math.max(...cues.map((cue) => [...cue.text].length))).toBeLessThanOrEqual(12);
+  });
+
+  test("builds an aspect-aware extractive prompt for landscape jobs", () => {
+    const landscape = evidenceFallbackScript("경복궁 박석과 마사토의 배수 구조", 2, [{
+      title: "국가유산 박석 건축 기록",
+      url: "https://example.go.kr/heritage/paving",
+      fetchStatus: "fetched",
+      sha256: `sha256:${"f".repeat(64)}`,
+      ...sourceExcerpt(new TextEncoder().encode(heritageArticle), "text/html", ["경복궁", "박석", "마사토", "배수"])
+    }], 20, "landscape");
+
+    expect(landscape.videoFormat).toBe("landscape");
+    expect(landscape.segments.every((segment) => segment.visualPrompt.startsWith("landscape cinematic documentary"))).toBe(true);
+    expect(landscape.segments.every((segment) => !/\bvertical\b/i.test(segment.visualPrompt))).toBe(true);
+    expect(verifyEvidenceBoundScript(landscape, landscape.sources, 2).verified).toBe(true);
   });
 
   test("re-ranks legacy wide evidence windows and refines quote locators", () => {

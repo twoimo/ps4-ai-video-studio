@@ -8,11 +8,16 @@ import {
   buildOmlxSemanticRequest,
   canonicalSemanticHash,
   createLocalSemanticReceipt,
+  evaluateSemanticFrameVerdict,
   LOCAL_SEMANTIC_MODEL,
   LOCAL_SEMANTIC_MIN_CONFIDENCE,
+  LOCAL_SEMANTIC_POLICY_BINDING,
+  LOCAL_SEMANTIC_POLICY_HASH,
+  LOCAL_SEMANTIC_SCHEMA_VERSION,
   preflightLocalSemanticVerifier,
   probeNarrationWav,
   resolveOmlxEndpoint,
+  semanticFrameCoverage,
   semanticFramePlan,
   semanticReceiptArtifactPaths,
   verifyLocalSemanticReceipt
@@ -34,6 +39,81 @@ function run(command, args) {
     child.once("error", rejectPromise);
     child.once("close", (code) => code === 0 ? resolvePromise() : rejectPromise(new Error(stderr)));
   });
+}
+
+function validSemanticWrapper(decision = {}, overrides = {}) {
+  return {
+    schemaVersion: LOCAL_SEMANTIC_SCHEMA_VERSION,
+    kind: "omlx-sanitized-response",
+    semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING,
+    model: LOCAL_SEMANTIC_MODEL,
+    httpStatus: 200,
+    transportOk: true,
+    parseStatus: "valid",
+    envelope: { model: LOCAL_SEMANTIC_MODEL, finishReason: "stop" },
+    decision: {
+      frameId: "frame-001",
+      sceneMatchesEvidence: true,
+      observedScene: "보이는 장면",
+      visibleCaption: "정확한 자막",
+      unexpectedText: [],
+      confidence: 0.99,
+      ...decision
+    },
+    ...overrides
+  };
+}
+
+async function resealAsLegacySchema1(jobDir, runId) {
+  const receiptPath = join(jobDir, `runs/${runId}/semantic/receipt.json`);
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  const inputPath = join(jobDir, receipt.input.path);
+  const input = JSON.parse(await readFile(inputPath, "utf8"));
+  input.schemaVersion = 1;
+  delete input.semanticPolicy;
+  delete input.requestPolicy.verdictPolicyHash;
+  delete input.canonicalHash;
+  input.canonicalHash = canonicalSemanticHash(input);
+  await writeFile(inputPath, JSON.stringify(input));
+
+  for (const frame of receipt.frames) {
+    const responsePath = join(jobDir, frame.response.path);
+    const wrapper = JSON.parse(await readFile(responsePath, "utf8"));
+    wrapper.schemaVersion = 1;
+    delete wrapper.semanticPolicy;
+    delete wrapper.canonicalHash;
+    wrapper.canonicalHash = canonicalSemanticHash(wrapper);
+    await writeFile(responsePath, JSON.stringify(wrapper));
+    frame.response.sha256 = await hashFile(responsePath);
+    frame.response.canonicalHash = wrapper.canonicalHash;
+    delete frame.response.universalPassed;
+    delete frame.response.purposeRecognized;
+    delete frame.response.predicatePassed;
+  }
+
+  receipt.schemaVersion = 1;
+  delete receipt.semanticPolicy;
+  delete receipt.evaluator.verdictPolicyHash;
+  delete receipt.coverage;
+  delete receipt.checks.universalResponseValidity;
+  delete receipt.checks.knownFramePurposes;
+  delete receipt.checks.sceneSegmentCoverage;
+  delete receipt.checks.captionCueCoverage;
+  receipt.input.sha256 = await hashFile(inputPath);
+  receipt.input.canonicalHash = input.canonicalHash;
+  delete receipt.receiptCanonicalHash;
+  receipt.receiptCanonicalHash = canonicalSemanticHash(receipt);
+  await writeFile(receiptPath, JSON.stringify(receipt));
+
+  const receiptReference = {
+    path: `runs/${runId}/semantic/receipt.json`,
+    sha256: await hashFile(receiptPath),
+    canonicalHash: receipt.receiptCanonicalHash
+  };
+  const immutableArtifacts = await Promise.all(
+    [...semanticReceiptArtifactPaths(runId, receipt), "voiceover-mastered.wav"].map(async (name) => ({ name, sha256: await hashFile(join(jobDir, name)) }))
+  );
+  return { receipt, receiptReference, immutableArtifacts };
 }
 
 describe("loopback OMLX semantic request policy", () => {
@@ -107,6 +187,97 @@ describe("loopback OMLX semantic request policy", () => {
       fetchImpl: async () => new Response(JSON.stringify({ data: [{ id: `${LOCAL_SEMANTIC_MODEL}-extra` }] }), { status: 200 }),
       environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "must-not-leak" }
     })).rejects.toThrow(LOCAL_SEMANTIC_MODEL);
+  });
+});
+
+describe("purpose-aware semantic verdict policy", () => {
+  test("binds new receipts to the sealed schema-2 policy", () => {
+    expect(LOCAL_SEMANTIC_SCHEMA_VERSION).toBe(2);
+    expect(LOCAL_SEMANTIC_POLICY_BINDING).toEqual({
+      name: "purpose-aware-semantic-verdict",
+      version: 2,
+      hash: LOCAL_SEMANTIC_POLICY_HASH
+    });
+    expect(LOCAL_SEMANTIC_POLICY_HASH).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  test("removes the scene/caption coupling false negative", () => {
+    const scene = evaluateSemanticFrameVerdict(
+      { frameId: "frame-001", purpose: "scene", expectedCaption: "다른 자막" },
+      validSemanticWrapper({ visibleCaption: "읽히지 않은 자막" })
+    );
+    expect(scene).toMatchObject({ universalPassed: true, predicatePassed: true, passed: true, failureCodes: [] });
+
+    const caption = evaluateSemanticFrameVerdict(
+      { frameId: "frame-001", purpose: "caption-cue", expectedCaption: "정확한 자막" },
+      validSemanticWrapper({ sceneMatchesEvidence: false })
+    );
+    expect(caption).toMatchObject({ universalPassed: true, predicatePassed: true, passed: true, failureCodes: [] });
+
+    const legacyCaption = evaluateSemanticFrameVerdict(
+      { frameId: "frame-001", purpose: "caption-cue", expectedCaption: "정확한 자막" },
+      validSemanticWrapper({ sceneMatchesEvidence: false }),
+      1
+    );
+    expect(legacyCaption.passed).toBe(false);
+    expect(legacyCaption.failureCodes).toContain("scene-relevance");
+  });
+
+  test("isolates scene and caption predicate failures by purpose", () => {
+    const scene = evaluateSemanticFrameVerdict(
+      { frameId: "frame-001", purpose: "scene", expectedCaption: "정확한 자막" },
+      validSemanticWrapper({ sceneMatchesEvidence: false })
+    );
+    expect(scene.passed).toBe(false);
+    expect(scene.failureCodes).toEqual(["scene-relevance"]);
+
+    const caption = evaluateSemanticFrameVerdict(
+      { frameId: "frame-001", purpose: "caption-cue", expectedCaption: "기대 자막" },
+      validSemanticWrapper({ sceneMatchesEvidence: true, visibleCaption: "틀린 자막" })
+    );
+    expect(caption.passed).toBe(false);
+    expect(caption.failureCodes).toEqual(["caption-ocr"]);
+  });
+
+  test("applies every universal response gate to every purpose", () => {
+    const frame = { frameId: "frame-001", purpose: "caption-cue", expectedCaption: "정확한 자막" };
+    const cases = [
+      ["transport", validSemanticWrapper({}, { transportOk: false }), "omlx-response-invalid"],
+      ["http", validSemanticWrapper({}, { httpStatus: 500 }), "omlx-response-invalid"],
+      ["schema", validSemanticWrapper({}, { parseStatus: "invalid" }), "decision-schema-invalid"],
+      ["model", validSemanticWrapper({}, { model: `${LOCAL_SEMANTIC_MODEL}-other` }), "response-model-binding"],
+      ["finish", validSemanticWrapper({}, { envelope: { model: LOCAL_SEMANTIC_MODEL, finishReason: "length" } }), "response-finish-reason"],
+      ["confidence", validSemanticWrapper({ confidence: LOCAL_SEMANTIC_MIN_CONFIDENCE - 0.01 }), "low-confidence"],
+      ["unexpected", validSemanticWrapper({ unexpectedText: ["의심스러운 오버레이"] }), "unexpected-text"]
+    ];
+    for (const [name, wrapper, failureCode] of cases) {
+      const verdict = evaluateSemanticFrameVerdict(frame, wrapper);
+      expect(verdict.passed, name).toBe(false);
+      expect(verdict.failureCodes, name).toContain(failureCode);
+    }
+  });
+
+  test("fails unknown purposes and requires exact independent coverage", () => {
+    const unknown = evaluateSemanticFrameVerdict(
+      { frameId: "frame-001", purpose: "thumbnail", expectedCaption: "정확한 자막" },
+      validSemanticWrapper()
+    );
+    expect(unknown).toMatchObject({ purposeRecognized: false, predicatePassed: false, passed: false });
+    expect(unknown.failureCodes).toContain("unknown-purpose");
+
+    const complete = [
+      { purpose: "scene", segmentIndex: 1 },
+      { purpose: "scene", segmentIndex: 2 },
+      { purpose: "caption-cue", cueIndex: 1 },
+      { purpose: "caption-cue", cueIndex: 2 }
+    ];
+    expect(semanticFrameCoverage(complete, 2, 2)).toMatchObject({
+      sceneSegments: { exact: true },
+      captionCues: { exact: true },
+      unknownPurposeCount: 0
+    });
+    expect(semanticFrameCoverage(complete.slice(1), 2, 2).sceneSegments.exact).toBe(false);
+    expect(semanticFrameCoverage([...complete.slice(0, 3), { purpose: "caption-cue", cueIndex: 1 }], 2, 2).captionCues.exact).toBe(false);
   });
 });
 
@@ -233,7 +404,8 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
       observedScene,
       visibleCaption: "울퉁불퉁한",
       unexpectedText: [],
-      confidence
+      confidence,
+      ...(overrides.decisions?.[frameId] || {})
     };
     expect(options.redirect).toBe("error");
     return new Response(JSON.stringify({ ...(model === undefined ? {} : { model }), choices: [{ finish_reason: finishReason, message: { content: JSON.stringify(decision) } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }), { status: 200 });
@@ -251,11 +423,22 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
     environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
   });
   expect(generated.receipt).toMatchObject({
+    schemaVersion: 2,
     jobId,
     runId,
     status: "passed",
+    semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING,
+    coverage: { sceneSegments: { exact: true }, captionCues: { exact: true }, unknownPurposeCount: 0 },
     scope: { asrPerformed: false, narrationGenerationBinding: true },
-    checks: { visionSceneRelevance: true, burnedCaptionOcr: true, deterministicBlackFrame: true }
+    checks: {
+      universalResponseValidity: true,
+      knownFramePurposes: true,
+      sceneSegmentCoverage: true,
+      captionCueCoverage: true,
+      visionSceneRelevance: true,
+      burnedCaptionOcr: true,
+      deterministicBlackFrame: true
+    }
   });
   expect(JSON.stringify(generated.receipt)).not.toContain("local-test-key");
   for (const relativePath of semanticReceiptArtifactPaths(runId, generated.receipt)) {
@@ -280,6 +463,64 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
   });
   expect(verified).toMatchObject({ verified: true, blockers: [], metrics: { asrPerformed: false, frameCount: 2, validResponseCount: 2 } });
 
+  const decoupledRunId = "2026-08-12T12-00-10-000Z-decoup";
+  const decoupledRunDir = join(jobDir, "runs", decoupledRunId);
+  await mkdir(decoupledRunDir, { recursive: true });
+  const decoupled = await createLocalSemanticReceipt({
+    job: { id: jobId }, script, runId: decoupledRunId, jobDir, runDir: decoupledRunDir, sourceEntailment,
+    fetchImpl: semanticFetch({
+      decisions: {
+        "frame-001": { visibleCaption: "장면 프레임에는 다른 자막" },
+        "frame-002": { sceneMatchesEvidence: false, visibleCaption: "울퉁불퉁한" }
+      }
+    }),
+    environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
+  });
+  expect(decoupled.receipt).toMatchObject({
+    status: "passed",
+    failureCodes: [],
+    checks: { visionSceneRelevance: true, burnedCaptionOcr: true, universalResponseValidity: true }
+  });
+  const decoupledArtifacts = await Promise.all(
+    [...semanticReceiptArtifactPaths(decoupledRunId, decoupled.receipt), "voiceover-mastered.wav"].map(async (name) => ({ name, sha256: await hashFile(join(jobDir, name)) }))
+  );
+  const decoupledVerified = await verifyLocalSemanticReceipt({
+    jobDir,
+    jobId,
+    runId: decoupledRunId,
+    script,
+    sourceEntailment,
+    voiceoverSync,
+    runManifest: { semanticReceipt: decoupled.receiptReference },
+    immutableArtifacts: decoupledArtifacts,
+    requireImmutable: true
+  });
+  expect(decoupledVerified).toMatchObject({ verified: true, blockers: [] });
+
+  const sceneFailureRunId = "2026-08-12T12-00-15-000Z-scene00";
+  const sceneFailureRunDir = join(jobDir, "runs", sceneFailureRunId);
+  await mkdir(sceneFailureRunDir, { recursive: true });
+  const sceneFailure = await createLocalSemanticReceipt({
+    job: { id: jobId }, script, runId: sceneFailureRunId, jobDir, runDir: sceneFailureRunDir, sourceEntailment,
+    fetchImpl: semanticFetch({ decisions: { "frame-001": { sceneMatchesEvidence: false } } }),
+    environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
+  });
+  expect(sceneFailure.receipt.failureCodes).toContain("frame-001:scene-relevance");
+  expect(sceneFailure.receipt.failureCodes).not.toContain("frame-001:caption-ocr");
+  expect(sceneFailure.receipt.failureCodes).not.toContain("frame-002:scene-relevance");
+
+  const captionFailureRunId = "2026-08-12T12-00-20-000Z-caption";
+  const captionFailureRunDir = join(jobDir, "runs", captionFailureRunId);
+  await mkdir(captionFailureRunDir, { recursive: true });
+  const captionFailure = await createLocalSemanticReceipt({
+    job: { id: jobId }, script, runId: captionFailureRunId, jobDir, runDir: captionFailureRunDir, sourceEntailment,
+    fetchImpl: semanticFetch({ decisions: { "frame-002": { visibleCaption: "틀린 자막" } } }),
+    environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
+  });
+  expect(captionFailure.receipt.failureCodes).toContain("frame-002:caption-ocr");
+  expect(captionFailure.receipt.failureCodes).not.toContain("frame-002:scene-relevance");
+  expect(captionFailure.receipt.failureCodes).not.toContain("frame-001:caption-ocr");
+
   const receiptPath = join(jobDir, `runs/${runId}/semantic/receipt.json`);
   const originalReceiptText = await readFile(receiptPath, "utf8");
   const omittedCueReceipt = JSON.parse(originalReceiptText);
@@ -289,6 +530,28 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
   const omittedCue = await verifyLocalSemanticReceipt({ jobDir, jobId, runId, script, sourceEntailment, voiceoverSync, runManifest, immutableArtifacts, requireImmutable: true });
   expect(omittedCue.verified).toBe(false);
   expect(omittedCue.blockers).toContain("semantic-caption-cue-coverage");
+  await writeFile(receiptPath, originalReceiptText);
+
+  const duplicateCoverageReceipt = JSON.parse(originalReceiptText);
+  const duplicatePurposeFrame = duplicateCoverageReceipt.frames.find((frame) => frame.purpose === "scene");
+  duplicatePurposeFrame.purpose = "caption-cue";
+  duplicatePurposeFrame.cueIndex = 1;
+  duplicateCoverageReceipt.receiptCanonicalHash = canonicalSemanticHash(Object.fromEntries(Object.entries(duplicateCoverageReceipt).filter(([key]) => key !== "receiptCanonicalHash")));
+  await writeFile(receiptPath, JSON.stringify(duplicateCoverageReceipt));
+  const duplicateCoverage = await verifyLocalSemanticReceipt({ jobDir, jobId, runId, script, sourceEntailment, voiceoverSync, runManifest, immutableArtifacts, requireImmutable: true });
+  expect(duplicateCoverage.verified).toBe(false);
+  expect(duplicateCoverage.blockers).toContain("semantic-scene-segment-coverage");
+  expect(duplicateCoverage.blockers).toContain("semantic-caption-cue-coverage");
+  await writeFile(receiptPath, originalReceiptText);
+
+  const unknownPurposeReceipt = JSON.parse(originalReceiptText);
+  unknownPurposeReceipt.frames[0].purpose = "thumbnail";
+  unknownPurposeReceipt.receiptCanonicalHash = canonicalSemanticHash(Object.fromEntries(Object.entries(unknownPurposeReceipt).filter(([key]) => key !== "receiptCanonicalHash")));
+  await writeFile(receiptPath, JSON.stringify(unknownPurposeReceipt));
+  const unknownPurpose = await verifyLocalSemanticReceipt({ jobDir, jobId, runId, script, sourceEntailment, voiceoverSync, runManifest, immutableArtifacts, requireImmutable: true });
+  expect(unknownPurpose.verified).toBe(false);
+  expect(unknownPurpose.blockers).toContain("semantic-frame-purpose");
+  expect(unknownPurpose.blockers).toContain("frame-001:unknown-purpose");
   await writeFile(receiptPath, originalReceiptText);
 
   const lowConfidenceRunId = "2026-08-12T12-00-30-000Z-low000";
@@ -380,6 +643,46 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
   expect(invalid.receipt.status).toBe("failed");
   expect(invalid.receipt.failureCodes).toContain("frame-001:response-model-binding");
 
+  const invalidSchemaRunId = "2026-08-12T12-02-10-000Z-schema0";
+  const invalidSchemaRunDir = join(jobDir, "runs", invalidSchemaRunId);
+  await mkdir(invalidSchemaRunDir, { recursive: true });
+  const invalidSchema = await createLocalSemanticReceipt({
+    job: { id: jobId }, script, runId: invalidSchemaRunId, jobDir, runDir: invalidSchemaRunDir, sourceEntailment,
+    fetchImpl: semanticFetch({ decisions: { "frame-001": { unrecognizedField: true } } }),
+    environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
+  });
+  expect(invalidSchema.receipt.status).toBe("failed");
+  expect(invalidSchema.receipt.failureCodes).toContain("frame-001:decision-fields");
+
+  const unexpectedRunId = "2026-08-12T12-02-20-000Z-unexpt";
+  const unexpectedRunDir = join(jobDir, "runs", unexpectedRunId);
+  await mkdir(unexpectedRunDir, { recursive: true });
+  const unexpected = await createLocalSemanticReceipt({
+    job: { id: jobId }, script, runId: unexpectedRunId, jobDir, runDir: unexpectedRunDir, sourceEntailment,
+    fetchImpl: semanticFetch({ decisions: { "frame-002": { unexpectedText: ["의심스러운 오버레이"] } } }),
+    environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
+  });
+  expect(unexpected.receipt.status).toBe("failed");
+  expect(unexpected.receipt.failureCodes).toContain("frame-002:unexpected-text");
+
+  const blueFinalForBlackTest = await readFile(join(jobDir, "final.mp4"));
+  const blackVideoPath = join(jobDir, "black-final.mp4");
+  await run("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=576x1024:d=2:r=30", "-pix_fmt", "yuv420p", blackVideoPath]);
+  await writeFile(join(jobDir, "final.mp4"), await readFile(blackVideoPath));
+  const blackRunId = "2026-08-12T12-02-30-000Z-black00";
+  const blackRunDir = join(jobDir, "runs", blackRunId);
+  await mkdir(blackRunDir, { recursive: true });
+  const black = await createLocalSemanticReceipt({
+    job: { id: jobId }, script, runId: blackRunId, jobDir, runDir: blackRunDir, sourceEntailment,
+    fetchImpl: semanticFetch(),
+    environment: { PS4_OMLX_BASE_URL: "http://127.0.0.1:8000/v1", OMLX_API_KEY: "local-test-key", PS4_OMLX_TIMEOUT_MS: "10000" }
+  });
+  expect(black.receipt.status).toBe("failed");
+  expect(black.receipt.frames.every((frame) => frame.blackFrame?.passed === false)).toBe(true);
+  expect(black.receipt.failureCodes).toContain("frame-001:black-frame");
+  expect(black.receipt.failureCodes).toContain("frame-002:black-frame");
+  await writeFile(join(jobDir, "final.mp4"), blueFinalForBlackTest);
+
   const wavPath = join(jobDir, "voiceover-mastered.wav");
   const originalWav = await readFile(wavPath);
   await writeFile(wavPath, "fake wav replacement");
@@ -399,7 +702,8 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
   await writeFile(finalPath, originalFinal);
 
   const responsePath = join(jobDir, `runs/${runId}/semantic/responses/frame-001.json`);
-  const response = JSON.parse(await readFile(responsePath, "utf8"));
+  const originalResponseText = await readFile(responsePath, "utf8");
+  const response = JSON.parse(originalResponseText);
   response.decision.visibleCaption = "매끈한";
   await writeFile(responsePath, JSON.stringify(response));
   const tampered = await verifyLocalSemanticReceipt({
@@ -415,4 +719,22 @@ test("creates and re-verifies a run-bound immutable semantic receipt", async () 
   });
   expect(tampered.verified).toBe(false);
   expect(tampered.blockers.some((blocker) => blocker.includes("response-file-hash") || blocker.includes("raw-response-hash") || blocker.startsWith("immutable:"))).toBe(true);
+
+  await writeFile(responsePath, originalResponseText);
+  await writeFile(receiptPath, originalReceiptText);
+  const legacy = await resealAsLegacySchema1(jobDir, runId);
+  const legacyVerified = await verifyLocalSemanticReceipt({
+    jobDir,
+    jobId,
+    runId,
+    script,
+    sourceEntailment,
+    voiceoverSync,
+    runManifest: { semanticReceipt: legacy.receiptReference },
+    immutableArtifacts: legacy.immutableArtifacts,
+    requireImmutable: true
+  });
+  expect(legacy.receipt.schemaVersion).toBe(1);
+  expect(legacy.receipt).not.toHaveProperty("semanticPolicy");
+  expect(legacyVerified).toMatchObject({ verified: true, blockers: [], metrics: { frameCount: 2, validResponseCount: 2 } });
 }, 20_000);

@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { hashFile, writeJsonAtomic } from "./run-ledger.mjs";
 
 export const LOCAL_SEMANTIC_MODEL = "Qwen3.6-27B-8bit";
-export const LOCAL_SEMANTIC_SCHEMA_VERSION = 1;
+export const LOCAL_SEMANTIC_SCHEMA_VERSION = 2;
 export const LOCAL_SEMANTIC_MIN_CONFIDENCE = 0.75;
 export const LOCAL_SEMANTIC_BLACK_FRAME_POLICY = Object.freeze({
   algorithm: "ffmpeg-blackframe-pblack-v1",
@@ -49,6 +49,35 @@ function stableValue(value) {
 export function canonicalSemanticHash(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
 }
+
+export const LOCAL_SEMANTIC_POLICY_V2 = Object.freeze({
+  name: "purpose-aware-semantic-verdict",
+  version: 2,
+  universalResponseValidity: Object.freeze({
+    transportOk: true,
+    httpStatus: "2xx",
+    decisionSchema: "strict-json-schema",
+    exactModel: LOCAL_SEMANTIC_MODEL,
+    finishReason: "stop",
+    minimumConfidenceInclusive: LOCAL_SEMANTIC_MIN_CONFIDENCE,
+    unexpectedText: "empty"
+  }),
+  purposes: Object.freeze({
+    scene: Object.freeze({ predicate: "sceneMatchesEvidence-true", coverage: "exactly-one-per-script-segment" }),
+    "caption-cue": Object.freeze({ predicate: "blind-normalized-exact-caption", coverage: "exactly-one-per-caption-cue" })
+  }),
+  unknownPurpose: "fail",
+  blackFrameCoverage: "all-planned-frames"
+});
+export const LOCAL_SEMANTIC_POLICY_V2_HASH = canonicalSemanticHash(LOCAL_SEMANTIC_POLICY_V2);
+export const LOCAL_SEMANTIC_POLICY = LOCAL_SEMANTIC_POLICY_V2;
+export const LOCAL_SEMANTIC_POLICY_HASH = LOCAL_SEMANTIC_POLICY_V2_HASH;
+
+export const LOCAL_SEMANTIC_POLICY_BINDING = Object.freeze({
+  name: LOCAL_SEMANTIC_POLICY_V2.name,
+  version: LOCAL_SEMANTIC_POLICY_V2.version,
+  hash: LOCAL_SEMANTIC_POLICY_V2_HASH
+});
 
 function textHash(value) {
   return `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
@@ -227,6 +256,67 @@ export function validateOmlxFrameDecision(value, expectedFrameId = null) {
   if (!Array.isArray(value.unexpectedText) || value.unexpectedText.length > 12 || value.unexpectedText.some((item) => typeof item !== "string" || !item || item.length > 160)) return { valid: false, error: "unexpected-text" };
   if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) return { valid: false, error: "confidence" };
   return { valid: true, decision: value };
+}
+
+function semanticPolicyBindingMatches(value) {
+  return Boolean(
+    value
+    && canonicalSemanticHash(value) === canonicalSemanticHash(LOCAL_SEMANTIC_POLICY_BINDING)
+  );
+}
+
+export function evaluateSemanticFrameVerdict(frame, wrapper, schemaVersion = LOCAL_SEMANTIC_SCHEMA_VERSION) {
+  const decisionValidation = validateOmlxFrameDecision(wrapper?.decision, frame?.frameId || null);
+  const universalChecks = {
+    transport: wrapper?.transportOk === true,
+    http2xx: Number.isInteger(wrapper?.httpStatus) && wrapper.httpStatus >= 200 && wrapper.httpStatus < 300,
+    schema: wrapper?.parseStatus === "valid" && decisionValidation.valid,
+    exactModel: wrapper?.model === LOCAL_SEMANTIC_MODEL && wrapper?.envelope?.model === LOCAL_SEMANTIC_MODEL,
+    finishStop: wrapper?.envelope?.finishReason === "stop",
+    minimumConfidence: Number(wrapper?.decision?.confidence) >= LOCAL_SEMANTIC_MIN_CONFIDENCE,
+    unexpectedTextEmpty: Array.isArray(wrapper?.decision?.unexpectedText) && wrapper.decision.unexpectedText.length === 0
+  };
+  const universalPassed = Object.values(universalChecks).every(Boolean);
+  let purposeRecognized = true;
+  let predicatePassed;
+  if (schemaVersion === 1) {
+    // Schema 1 intentionally retains its sealed legacy meaning: every sampled
+    // frame had to satisfy scene relevance, with caption matching added for cues.
+    predicatePassed = wrapper?.decision?.sceneMatchesEvidence === true
+      && (frame?.purpose !== "caption-cue" || exactCaptionMatch(wrapper?.decision?.visibleCaption, frame?.expectedCaption));
+  } else if (schemaVersion === 2) {
+    if (frame?.purpose === "scene") predicatePassed = wrapper?.decision?.sceneMatchesEvidence === true;
+    else if (frame?.purpose === "caption-cue") predicatePassed = exactCaptionMatch(wrapper?.decision?.visibleCaption, frame?.expectedCaption);
+    else {
+      purposeRecognized = false;
+      predicatePassed = false;
+    }
+  } else {
+    purposeRecognized = false;
+    predicatePassed = false;
+  }
+  const failureCodes = [];
+  if (!universalChecks.transport || !universalChecks.http2xx) failureCodes.push("omlx-response-invalid");
+  if (!universalChecks.schema) failureCodes.push("decision-schema-invalid");
+  if (!universalChecks.exactModel) failureCodes.push("response-model-binding");
+  if (!universalChecks.finishStop) failureCodes.push("response-finish-reason");
+  if (universalChecks.schema && !universalChecks.minimumConfidence) failureCodes.push("low-confidence");
+  if (Array.isArray(wrapper?.decision?.unexpectedText) && !universalChecks.unexpectedTextEmpty) failureCodes.push("unexpected-text");
+  if (!purposeRecognized) failureCodes.push("unknown-purpose");
+  else if (universalPassed && !predicatePassed && schemaVersion === 1) {
+    if (wrapper?.decision?.sceneMatchesEvidence !== true) failureCodes.push("scene-relevance");
+    if (frame?.purpose === "caption-cue" && !exactCaptionMatch(wrapper?.decision?.visibleCaption, frame?.expectedCaption)) failureCodes.push("caption-ocr");
+  } else if (universalPassed && !predicatePassed) {
+    failureCodes.push(frame?.purpose === "caption-cue" ? "caption-ocr" : "scene-relevance");
+  }
+  return {
+    universalChecks,
+    universalPassed,
+    purposeRecognized,
+    predicatePassed,
+    passed: universalPassed && purposeRecognized && predicatePassed,
+    failureCodes: [...new Set(failureCodes)]
+  };
 }
 
 function responseContent(parsed) {
@@ -468,6 +558,32 @@ export function semanticFramePlan(script, captionTiming, voiceoverSync) {
   return plans.map((plan, index) => ({ ...plan, frameId: `frame-${String(index + 1).padStart(3, "0")}` }));
 }
 
+function exactIndexedCoverage(frames, expectedCount, indexKey) {
+  const indexes = frames.map((frame) => frame?.[indexKey]);
+  const expectedIndexes = Array.from({ length: expectedCount }, (_unused, index) => index + 1);
+  const coveredIndexes = [...new Set(indexes.filter(Number.isInteger))].sort((left, right) => left - right);
+  return {
+    expectedCount,
+    actualCount: frames.length,
+    coveredIndexes,
+    exact: expectedCount > 0
+      && frames.length === expectedCount
+      && indexes.every(Number.isInteger)
+      && canonicalSemanticHash(coveredIndexes) === canonicalSemanticHash(expectedIndexes)
+  };
+}
+
+export function semanticFrameCoverage(frames, expectedSceneSegmentCount, expectedCaptionCueCount) {
+  const list = Array.isArray(frames) ? frames : [];
+  const sceneFrames = list.filter((frame) => frame?.purpose === "scene");
+  const captionFrames = list.filter((frame) => frame?.purpose === "caption-cue");
+  return {
+    sceneSegments: exactIndexedCoverage(sceneFrames, expectedSceneSegmentCount, "segmentIndex"),
+    captionCues: exactIndexedCoverage(captionFrames, expectedCaptionCueCount, "cueIndex"),
+    unknownPurposeCount: list.length - sceneFrames.length - captionFrames.length
+  };
+}
+
 function normalizedNarration(value) {
   return String(value || "").normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
@@ -613,9 +729,12 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
     readFile(join(jobDir, "caption-timing.json"), "utf8").then(JSON.parse).catch(() => null),
     readFile(join(jobDir, "voiceover-sync.json"), "utf8").then(JSON.parse).catch(() => null)
   ]);
+  const captionCues = parseCaptionCues(captionTiming);
+  const expectedSceneSegmentCount = Array.isArray(script?.segments) ? script.segments.length : 0;
+  const expectedCaptionCueCount = captionCues.length;
   const plans = semanticFramePlan(script, captionTiming, voiceoverSync);
   if (!plans.length) failureCodes.push("missing-semantic-frame-plan");
-  if (!parseCaptionCues(captionTiming).length) failureCodes.push("missing-caption-cues");
+  if (!captionCues.length) failureCodes.push("missing-caption-cues");
   const frameInputs = [];
   for (const plan of plans) {
     const frameRelativePath = `${relativeRoot}/frames/${plan.frameId}.png`;
@@ -636,6 +755,10 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       failureCodes.push(`${plan.frameId}:frame-extraction-failed`);
     }
   }
+  const coverage = semanticFrameCoverage(frameInputs, expectedSceneSegmentCount, expectedCaptionCueCount);
+  if (!coverage.sceneSegments.exact) failureCodes.push("semantic-scene-segment-coverage");
+  if (!coverage.captionCues.exact) failureCodes.push("semantic-caption-cue-coverage");
+  if (coverage.unknownPurposeCount !== 0) failureCodes.push("semantic-frame-purpose");
 
   const inputPayload = {
     schemaVersion: LOCAL_SEMANTIC_SCHEMA_VERSION,
@@ -644,7 +767,8 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
     runId,
     generatedAt: new Date().toISOString(),
     engine: { provider: "loopback-omlx", model: LOCAL_SEMANTIC_MODEL, endpoint: endpoint ? { origin: endpoint.origin, basePath: endpoint.basePath } : null },
-    requestPolicy: { temperature: 0, enableThinking: false, chatTemplateEnableThinking: false, responseFormat: "json_schema", responseSchemaHash: canonicalSemanticHash(RESPONSE_SCHEMA) },
+    semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING,
+    requestPolicy: { temperature: 0, enableThinking: false, chatTemplateEnableThinking: false, responseFormat: "json_schema", responseSchemaHash: canonicalSemanticHash(RESPONSE_SCHEMA), verdictPolicyHash: LOCAL_SEMANTIC_POLICY_HASH },
     frameExtraction: { algorithm: "ffmpeg-all-caption-cues-plus-segment-scenes-png-v2", width: 576, scaler: "lanczos", rawPixelBinding: "ffmpeg-scale576-lanczos-rgb24-raw-v1" },
     blackFramePolicy: LOCAL_SEMANTIC_BLACK_FRAME_POLICY,
     frames: frameInputs
@@ -670,6 +794,7 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       wrapperPayload = {
         schemaVersion: LOCAL_SEMANTIC_SCHEMA_VERSION,
         kind: "omlx-sanitized-response",
+        semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING,
         jobId: job.id,
         runId,
         frameId: frame.frameId,
@@ -693,6 +818,7 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       wrapperPayload = {
         schemaVersion: LOCAL_SEMANTIC_SCHEMA_VERSION,
         kind: "omlx-sanitized-response",
+        semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING,
         jobId: job.id,
         runId,
         frameId: frame.frameId,
@@ -709,6 +835,12 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
         failureCode
       };
     }
+    const verdict = evaluateSemanticFrameVerdict(frame, wrapperPayload, LOCAL_SEMANTIC_SCHEMA_VERSION);
+    for (const failureCode of verdict.failureCodes) {
+      if (["low-confidence", "unexpected-text", "scene-relevance", "caption-ocr", "unknown-purpose"].includes(failureCode)) {
+        failureCodes.push(`${frame.frameId}:${failureCode}`);
+      }
+    }
     const wrapper = { ...wrapperPayload, canonicalHash: canonicalSemanticHash(wrapperPayload) };
     await writeJsonAtomic(responsePath, wrapper);
     responseRecords.push({
@@ -718,16 +850,10 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       canonicalHash: wrapper.canonicalHash,
       decision: wrapper.decision,
       decisionCanonicalHash: wrapper.decisionCanonicalHash,
-      passed: Boolean(
-        wrapper.transportOk
-        && wrapper.parseStatus === "valid"
-        && wrapper.model === LOCAL_SEMANTIC_MODEL
-        && wrapper.envelope?.finishReason === "stop"
-        && Number(wrapper.decision?.confidence) >= LOCAL_SEMANTIC_MIN_CONFIDENCE
-        && wrapper.decision?.sceneMatchesEvidence === true
-        && (frame.purpose !== "caption-cue" || exactCaptionMatch(wrapper.decision?.visibleCaption, frame.expectedCaption))
-        && wrapper.decision?.unexpectedText?.length === 0
-      )
+      universalPassed: verdict.universalPassed,
+      purposeRecognized: verdict.purposeRecognized,
+      predicatePassed: verdict.predicatePassed,
+      passed: verdict.passed
     });
   }
 
@@ -760,8 +886,10 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       temperature: 0,
       enableThinking: false,
       responseFormat: "json_schema",
+      verdictPolicyHash: LOCAL_SEMANTIC_POLICY_HASH,
       humanReview: false
     },
+    semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING,
     scope: {
       visionSceneRelevance: true,
       burnedCaptionOcr: true,
@@ -777,12 +905,17 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
     }),
     sourceEntailment: sourceEntailmentCheck,
     narrationGenerationBinding,
+    coverage,
     checks: {
-      visionSceneRelevance: responseRecords.length > 0 && responseRecords.every((record) => record.decision?.sceneMatchesEvidence === true && Number(record.decision?.confidence) >= LOCAL_SEMANTIC_MIN_CONFIDENCE),
-      burnedCaptionOcr: parseCaptionCues(captionTiming).length > 0
-        && responseRecords.filter((record) => frameInputs.find((frame) => frame.frameId === record.frameId)?.purpose === "caption-cue").length === parseCaptionCues(captionTiming).length
-        && responseRecords.filter((record) => frameInputs.find((frame) => frame.frameId === record.frameId)?.purpose === "caption-cue").every((record) => record.passed),
-      deterministicBlackFrame: frameInputs.length > 0 && frameInputs.every((frame) => frame.blackFrame?.passed === true),
+      universalResponseValidity: responseRecords.length === frameInputs.length && responseRecords.every((record) => record.universalPassed),
+      knownFramePurposes: coverage.unknownPurposeCount === 0 && responseRecords.every((record) => record.purposeRecognized),
+      sceneSegmentCoverage: coverage.sceneSegments.exact,
+      captionCueCoverage: coverage.captionCues.exact,
+      visionSceneRelevance: coverage.sceneSegments.exact
+        && responseRecords.filter((record) => frameInputs.find((frame) => frame.frameId === record.frameId)?.purpose === "scene").every((record) => record.universalPassed && record.predicatePassed),
+      burnedCaptionOcr: coverage.captionCues.exact
+        && responseRecords.filter((record) => frameInputs.find((frame) => frame.frameId === record.frameId)?.purpose === "caption-cue").every((record) => record.universalPassed && record.predicatePassed),
+      deterministicBlackFrame: frameInputs.length === plans.length && frameInputs.length > 0 && frameInputs.every((frame) => frame.blackFrame?.passed === true),
       extractiveSourceEntailment: sourceEntailmentCheck.passed,
       narrationGenerationBinding: narrationGenerationBinding.passed
     },
@@ -838,10 +971,14 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
   } catch {
     return { verified: false, blockers: ["local-semantic-receipt-missing"], artifactPaths: [receiptRelativePath], receipt: null };
   }
+  const receiptSchemaVersion = Number(receipt?.schemaVersion);
+  const legacyPolicy = receiptSchemaVersion === 1;
+  const purposeAwarePolicy = receiptSchemaVersion === 2;
   const artifactPaths = semanticReceiptArtifactPaths(runId, receipt);
-  if (receipt.schemaVersion !== LOCAL_SEMANTIC_SCHEMA_VERSION || receipt.kind !== "local-semantic-receipt" || receipt.jobId !== jobId || receipt.runId !== runId) blockers.push("receipt-run-binding");
+  if ((!legacyPolicy && !purposeAwarePolicy) || receipt.kind !== "local-semantic-receipt" || receipt.jobId !== jobId || receipt.runId !== runId) blockers.push("receipt-run-binding");
   if (receipt.receiptCanonicalHash !== canonicalSemanticHash(withoutKey(receipt, "receiptCanonicalHash"))) blockers.push("receipt-canonical-hash");
-  if (receipt.evaluator?.provider !== "loopback-omlx" || receipt.evaluator?.model !== LOCAL_SEMANTIC_MODEL || receipt.evaluator?.temperature !== 0 || receipt.evaluator?.enableThinking !== false || receipt.evaluator?.responseFormat !== "json_schema" || receipt.evaluator?.humanReview !== false) blockers.push("receipt-evaluator-policy");
+  if (receipt.evaluator?.provider !== "loopback-omlx" || receipt.evaluator?.model !== LOCAL_SEMANTIC_MODEL || receipt.evaluator?.temperature !== 0 || receipt.evaluator?.enableThinking !== false || receipt.evaluator?.responseFormat !== "json_schema" || receipt.evaluator?.humanReview !== false || (purposeAwarePolicy && receipt.evaluator?.verdictPolicyHash !== LOCAL_SEMANTIC_POLICY_HASH)) blockers.push("receipt-evaluator-policy");
+  if (purposeAwarePolicy && !semanticPolicyBindingMatches(receipt.semanticPolicy)) blockers.push("receipt-semantic-policy");
   if (receipt.scope?.asrPerformed !== false || receipt.scope?.narrationGenerationBinding !== true) blockers.push("receipt-scope-truthfulness");
   const inputAbsolute = safeSemanticRelativePath(jobDir, runId, receipt.input?.path, /^input\.json$/);
   let input = null;
@@ -851,8 +988,9 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
       input = JSON.parse(await readFile(inputAbsolute, "utf8"));
       if (await hashFile(inputAbsolute) !== receipt.input.sha256) blockers.push("semantic-input-file-hash");
       if (input.canonicalHash !== receipt.input.canonicalHash || input.canonicalHash !== canonicalSemanticHash(withoutKey(input, "canonicalHash"))) blockers.push("semantic-input-canonical-hash");
-      if (input.jobId !== jobId || input.runId !== runId || input.engine?.provider !== "loopback-omlx" || input.engine?.model !== LOCAL_SEMANTIC_MODEL) blockers.push("semantic-input-run-binding");
-      if (input.requestPolicy?.temperature !== 0 || input.requestPolicy?.enableThinking !== false || input.requestPolicy?.chatTemplateEnableThinking !== false || input.requestPolicy?.responseFormat !== "json_schema" || input.requestPolicy?.responseSchemaHash !== canonicalSemanticHash(RESPONSE_SCHEMA)) blockers.push("semantic-input-request-policy");
+      if (input.schemaVersion !== receiptSchemaVersion || input.kind !== "local-semantic-input" || input.jobId !== jobId || input.runId !== runId || input.engine?.provider !== "loopback-omlx" || input.engine?.model !== LOCAL_SEMANTIC_MODEL) blockers.push("semantic-input-run-binding");
+      if (input.requestPolicy?.temperature !== 0 || input.requestPolicy?.enableThinking !== false || input.requestPolicy?.chatTemplateEnableThinking !== false || input.requestPolicy?.responseFormat !== "json_schema" || input.requestPolicy?.responseSchemaHash !== canonicalSemanticHash(RESPONSE_SCHEMA) || (purposeAwarePolicy && input.requestPolicy?.verdictPolicyHash !== LOCAL_SEMANTIC_POLICY_HASH)) blockers.push("semantic-input-request-policy");
+      if (purposeAwarePolicy && !semanticPolicyBindingMatches(input.semanticPolicy)) blockers.push("semantic-input-semantic-policy");
       try {
         resolveOmlxEndpoint({ PS4_OMLX_BASE_URL: `${input.engine.endpoint.origin}${input.engine.endpoint.basePath}` });
       } catch {
@@ -864,12 +1002,22 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
   }
   const captionTiming = await readFile(join(jobDir, "caption-timing.json"), "utf8").then(JSON.parse).catch(() => null);
   const expectedPlans = semanticFramePlan(script, captionTiming, voiceoverSync);
+  const expectedSceneCount = Array.isArray(script?.segments) ? script.segments.length : 0;
   const expectedCueCount = parseCaptionCues(captionTiming).length;
   const receiptFrames = Array.isArray(receipt.frames) ? receipt.frames : [];
   const inputFrames = Array.isArray(input?.frames) ? input.frames : [];
   if (!receiptFrames.length || receiptFrames.length !== inputFrames.length || receiptFrames.length !== expectedPlans.length) blockers.push("semantic-frame-count");
-  const receiptCueFrames = receiptFrames.filter((frame) => frame?.purpose === "caption-cue");
-  if (expectedCueCount < 1 || receiptCueFrames.length !== expectedCueCount || new Set(receiptCueFrames.map((frame) => frame.cueIndex)).size !== expectedCueCount) blockers.push("semantic-caption-cue-coverage");
+  const receiptCoverage = semanticFrameCoverage(receiptFrames, expectedSceneCount, expectedCueCount);
+  const inputCoverage = semanticFrameCoverage(inputFrames, expectedSceneCount, expectedCueCount);
+  if (purposeAwarePolicy) {
+    if (!receiptCoverage.sceneSegments.exact || !inputCoverage.sceneSegments.exact) blockers.push("semantic-scene-segment-coverage");
+    if (!receiptCoverage.captionCues.exact || !inputCoverage.captionCues.exact) blockers.push("semantic-caption-cue-coverage");
+    if (receiptCoverage.unknownPurposeCount !== 0 || inputCoverage.unknownPurposeCount !== 0) blockers.push("semantic-frame-purpose");
+    if (canonicalSemanticHash(receipt.coverage) !== canonicalSemanticHash(receiptCoverage)) blockers.push("semantic-coverage-binding");
+  } else {
+    const receiptCueFrames = receiptFrames.filter((frame) => frame?.purpose === "caption-cue");
+    if (expectedCueCount < 1 || receiptCueFrames.length !== expectedCueCount || new Set(receiptCueFrames.map((frame) => frame.cueIndex)).size !== expectedCueCount) blockers.push("semantic-caption-cue-coverage");
+  }
   const recomputedResponses = [];
   for (let index = 0; index < receiptFrames.length; index += 1) {
     const frame = receiptFrames[index];
@@ -895,16 +1043,19 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
       const wrapper = JSON.parse(await readFile(responsePath, "utf8"));
       if (await hashFile(responsePath) !== frame.response.sha256) blockers.push(`${expectedId}:response-file-hash`);
       if (wrapper.canonicalHash !== frame.response.canonicalHash || wrapper.canonicalHash !== canonicalSemanticHash(withoutKey(wrapper, "canonicalHash"))) blockers.push(`${expectedId}:response-canonical-hash`);
-      if (wrapper.kind !== "omlx-sanitized-response" || wrapper.jobId !== jobId || wrapper.runId !== runId || wrapper.frameId !== expectedId || wrapper.model !== LOCAL_SEMANTIC_MODEL || wrapper.envelope?.model !== LOCAL_SEMANTIC_MODEL || wrapper.requestCanonicalHash !== frame.requestCanonicalHash) blockers.push(`${expectedId}:response-run-binding`);
-      const decisionValidation = validateOmlxFrameDecision(wrapper.decision, expectedId);
-      if (!wrapper.transportOk || wrapper.httpStatus < 200 || wrapper.httpStatus >= 300 || wrapper.parseStatus !== "valid" || wrapper.envelope?.finishReason !== "stop" || !decisionValidation.valid) blockers.push(`${expectedId}:omlx-response-invalid`);
+      if (wrapper.schemaVersion !== receiptSchemaVersion || wrapper.kind !== "omlx-sanitized-response" || wrapper.jobId !== jobId || wrapper.runId !== runId || wrapper.frameId !== expectedId || wrapper.model !== LOCAL_SEMANTIC_MODEL || wrapper.envelope?.model !== LOCAL_SEMANTIC_MODEL || wrapper.requestCanonicalHash !== frame.requestCanonicalHash) blockers.push(`${expectedId}:response-run-binding`);
+      if (purposeAwarePolicy && !semanticPolicyBindingMatches(wrapper.semanticPolicy)) blockers.push(`${expectedId}:response-semantic-policy`);
+      const verdict = evaluateSemanticFrameVerdict(frame, wrapper, receiptSchemaVersion);
+      for (const failureCode of verdict.failureCodes) blockers.push(`${expectedId}:${failureCode}`);
       if (!wrapper.rawBodySha256 || !/^sha256:[a-f0-9]{64}$/.test(wrapper.rawBodySha256) || Object.hasOwn(wrapper, "rawBody")) blockers.push(`${expectedId}:raw-response-policy`);
       if (canonicalSemanticHash(wrapper.decision) !== wrapper.decisionCanonicalHash || canonicalSemanticHash(wrapper.decision) !== frame.response.decisionCanonicalHash || canonicalSemanticHash(wrapper.decision) !== canonicalSemanticHash(frame.response.decision)) blockers.push(`${expectedId}:decision-binding`);
-      if (Number(wrapper.decision?.confidence) < LOCAL_SEMANTIC_MIN_CONFIDENCE) blockers.push(`${expectedId}:low-confidence`);
-      if (wrapper.decision?.sceneMatchesEvidence !== true) blockers.push(`${expectedId}:scene-relevance`);
-      if (frame.purpose === "caption-cue" && !exactCaptionMatch(wrapper.decision?.visibleCaption, frame.expectedCaption)) blockers.push(`${expectedId}:caption-ocr`);
-      if (wrapper.decision?.unexpectedText?.length !== 0) blockers.push(`${expectedId}:unexpected-text`);
-      recomputedResponses.push(wrapper.decision);
+      if (purposeAwarePolicy && (
+        frame.response?.universalPassed !== verdict.universalPassed
+        || frame.response?.purposeRecognized !== verdict.purposeRecognized
+        || frame.response?.predicatePassed !== verdict.predicatePassed
+        || frame.response?.passed !== verdict.passed
+      )) blockers.push(`${expectedId}:response-verdict-binding`);
+      if (verdict.universalPassed) recomputedResponses.push(wrapper.decision);
     } catch {
       blockers.push(`${expectedId}:artifact-invalid`);
     }
@@ -931,7 +1082,9 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
     const voiceoverHash = await hashFile(join(jobDir, "voiceover-mastered.wav")).catch(() => null);
     if (!voiceoverHash || immutableByName.get("voiceover-mastered.wav")?.sha256 !== voiceoverHash) blockers.push("immutable:voiceover-mastered.wav");
   }
-  const requiredChecks = ["visionSceneRelevance", "burnedCaptionOcr", "deterministicBlackFrame", "extractiveSourceEntailment", "narrationGenerationBinding"];
+  const requiredChecks = purposeAwarePolicy
+    ? ["universalResponseValidity", "knownFramePurposes", "sceneSegmentCoverage", "captionCueCoverage", "visionSceneRelevance", "burnedCaptionOcr", "deterministicBlackFrame", "extractiveSourceEntailment", "narrationGenerationBinding"]
+    : ["visionSceneRelevance", "burnedCaptionOcr", "deterministicBlackFrame", "extractiveSourceEntailment", "narrationGenerationBinding"];
   if (receipt.status !== "passed" || !Array.isArray(receipt.failureCodes) || receipt.failureCodes.length !== 0 || !receipt.checks || requiredChecks.some((key) => receipt.checks[key] !== true)) blockers.push("semantic-receipt-verdict");
   return {
     verified: blockers.length === 0,

@@ -10,13 +10,17 @@ import {
   createJob,
   ensureWorkspace,
   listJobs,
+  recoverSemanticRevalidationWorkspace,
+  readGeminiSemanticRevalidationInputs,
   readAnalysis,
   readJob,
   runJob,
+  SEMANTIC_REVALIDATION_MODE,
   updateJob
 } from "./pipeline.mjs";
 import { appendRunEvent, hashFile, readRunManifest, writeRunManifest } from "./run-ledger.mjs";
-import { configuredGeminiJobProfile, geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
+import { buildGeminiGenerationRequest, configuredGeminiJobProfile, geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
+import { buildLocalVideoRequest } from "./local-video-provider.mjs";
 import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
 import {
   assertRuntimeQualityRevisionEvaluation,
@@ -34,6 +38,9 @@ import {
 import { ytDlpInfo } from "./yt-dlp.mjs";
 import { redactGeminiMonitor } from "./gemini-monitor-privacy.mjs";
 import { buildProviderReadiness } from "./provider-readiness.mjs";
+import { createShotPatternReceipt, publicShotPatternCatalog, readShotPatternCatalog, verifyShotPatternReceipt } from "./shot-patterns.mjs";
+import { loadSemanticRevalidationSource, verifySemanticRevalidationProviderZeroBinding } from "./semantic-revalidation-closure.mjs";
+import { LOCAL_SEMANTIC_POLICY_BINDING } from "./local-semantic-verifier.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 export const DEFAULT_HOST = "127.0.0.1";
@@ -82,7 +89,17 @@ export function redactJobResponse(job) {
   if (!job || typeof job !== "object" || Array.isArray(job)) return job;
   const { geminiProfileDir: _geminiProfileDir, ...safe } = job;
   const sessionBinding = canonicalGeminiSessionBinding(job);
-  return sessionBinding ? { ...safe, geminiSessionBinding: sessionBinding, geminiSessionBindingHash: geminiSessionBindingHash(job) } : safe;
+  const semanticRevalidationReadiness = job.integrity?.status === "blocked"
+    ? { eligible: false, reason: job.integrity.message || "봉인 run 무결성 검증이 차단되었습니다.", providerRequests: 0 }
+    : job.semanticRevalidationSummary?.status === "sealed" && job.semanticRevalidationSummary.childRunId === job.runId
+      ? { eligible: false, reason: "현재 run에는 purpose-aware 로컬 의미 재검수가 이미 적용되었습니다.", providerRequests: 0 }
+    : job.provider === "gemini-browser" && job.status === "needs-improvement" && job.runStatus === "needs-improvement" && Boolean(job.runId)
+      ? { eligible: true, sourceRunId: job.runId, providerRequests: 0, mode: SEMANTIC_REVALIDATION_MODE }
+      : job.provider === "local-video" && job.status === "needs-improvement"
+        ? { eligible: false, reason: "local-video 완료 영수증의 provider-0 resume 경로는 아직 지원하지 않습니다.", providerRequests: 0 }
+        : { eligible: false, reason: "봉인된 개선 필요 Gemini run에서만 로컬 의미 재검수를 시작할 수 있습니다.", providerRequests: 0 };
+  const projection = { ...safe, semanticRevalidationReadiness };
+  return sessionBinding ? { ...projection, geminiSessionBinding: sessionBinding, geminiSessionBindingHash: geminiSessionBindingHash(job) } : projection;
 }
 
 export function isLoopbackHostname(hostname) {
@@ -254,6 +271,17 @@ function immutableRunProvider(manifest) {
   return provider;
 }
 
+function immutableProviderProvenance(manifest, provider = immutableRunProvider(manifest)) {
+  const name = provider === "gemini-browser"
+    ? "gemini-generation.json"
+    : provider === "local-video" ? `runs/${manifest?.runId}/local-video-generation.json` : null;
+  if (!name) return null;
+  const artifact = manifest?.immutableArtifacts?.find((entry) => entry?.name === name);
+  const expectedPath = `runs/${manifest.runId}/artifacts/${name.replaceAll("/", "__")}`;
+  if (!artifact || artifact.path !== expectedPath || !/^sha256:[a-f0-9]{64}$/.test(String(artifact.sha256 || ""))) return null;
+  return { path: artifact.path, sha256: artifact.sha256 };
+}
+
 function json(data, status = 200) {
   return Response.json(data, {
     status,
@@ -315,6 +343,30 @@ async function readVerifiedImmutableArtifact(job, artifact, expectedName = artif
   if (await hashFile(path).catch(() => null) !== artifact.sha256) return null;
   return { path, value: await readOptionalJson(path) };
 }
+async function verifyImmutableSemanticRevalidationClosure(job, manifest) {
+  if (!manifest?.semanticRevalidation) return true;
+  const immutableArtifacts = Array.isArray(manifest.immutableArtifacts) ? manifest.immutableArtifacts : [];
+  const generationDeclaration = immutableArtifacts.find((artifact) => artifact?.name === "gemini-generation.json");
+  const shotName = `runs/${job.runId}/shot-pattern-receipt.json`;
+  const shotDeclaration = immutableArtifacts.find((artifact) => artifact?.name === shotName);
+  const generation = await readVerifiedImmutableArtifact(job, generationDeclaration, "gemini-generation.json");
+  const shot = await readVerifiedImmutableArtifact(job, shotDeclaration, shotName);
+  if (!generation?.value || !shot?.value) return false;
+  try {
+    const source = await loadSemanticRevalidationSource(join(JOBS_DIR, job.id), manifest);
+    return verifySemanticRevalidationProviderZeroBinding({
+      jobId: job.id,
+      runId: job.runId,
+      manifest,
+      generation: generation.value,
+      childGenerationFileHash: generationDeclaration.sha256,
+      shotPatternReceipt: shot.value,
+      source
+    }).verified === true;
+  } catch {
+    return false;
+  }
+}
 async function verifyImmutableRun(job, manifest) {
   const sealedStatus = manifest?.status;
   if (!job?.runId || !manifest || !["completed", "needs-improvement"].includes(sealedStatus) || manifest.jobId !== job.id || manifest.runId !== job.runId || !Array.isArray(manifest.ledgerErrors) || manifest.ledgerErrors.length !== 0) return false;
@@ -337,6 +389,11 @@ async function verifyImmutableRun(job, manifest) {
     `runs/${job.runId}/benchmarks/shorts-metadata.json`,
     `runs/${job.runId}/benchmarks/rlm-benchmark-analysis.json`
   ];
+  const shotPatternManifestSignal = Boolean(manifest.shotPatterns || manifest.script?.shotPatterns);
+  if (shotPatternManifestSignal) {
+    if (!manifest.shotPatterns || !manifest.script?.shotPatterns) return false;
+    requiredNames.push(`runs/${job.runId}/shot-pattern-receipt.json`);
+  }
   if (new Set(names).size !== names.length || !requiredNames.every((name) => names.includes(name))) return false;
   const results = await Promise.all(immutableArtifacts.map(async (artifact) => {
     if (!artifact?.path || artifact.path !== expectedPath(artifact.name) || !String(artifact.sha256 || "").startsWith("sha256:")) return false;
@@ -347,7 +404,7 @@ async function verifyImmutableRun(job, manifest) {
       && Number(artifact.bytes) === fileStat.size
       && await hashFile(path).catch(() => null) === artifact.sha256;
   }));
-  return results.every(Boolean);
+  return results.every(Boolean) && await verifyImmutableSemanticRevalidationClosure(job, manifest);
 }
 async function verifyRevisionJobDeclarations(job, state) {
   const prefix = `runs/${job.runId}/revisions/`;
@@ -403,9 +460,62 @@ export function providerDiversityClosureBound(provider, metrics, inputManifest) 
     && metrics?.inputDiversityBinding === true;
 }
 
-function immutableProviderClosureBound(provider, quality, manifest, inputManifest) {
+export function immutableProviderClosureBound(provider, quality, manifest, inputManifest) {
   const metrics = quality?.metrics || {};
   const immutableNames = new Set((manifest?.immutableArtifacts || []).map((artifact) => artifact?.name));
+  const shotPatternName = `runs/${manifest?.runId}/shot-pattern-receipt.json`;
+  const shotPatternMetricDeclared = Object.hasOwn(metrics, "shotPatternReceiptBinding");
+  const shotPatternExpected = Boolean(manifest?.shotPatterns || manifest?.script?.shotPatterns || shotPatternMetricDeclared);
+  const shotPatternArtifact = manifest?.immutableArtifacts?.find((artifact) => artifact?.name === shotPatternName);
+  const geminiGenerationArtifact = manifest?.immutableArtifacts?.find((artifact) => artifact?.name === "gemini-generation.json");
+  const shotPatternMetric = metrics.shotPatternReceipt;
+  const shotPatternReferenceFields = [
+    "path",
+    "sha256",
+    "receiptHash",
+    "catalogId",
+    "catalogHash",
+    "continuityContractHash",
+    "segmentCount",
+    "applicationMode",
+    "providerEligible",
+    "providerSubmissionPlanned",
+    "submittedToProvider",
+    "providerRequestSentThisRun",
+    "inheritedProviderSubmission",
+    "sourceSubmissionRunId",
+    "sourceGenerationHash",
+    "providerRequestHash",
+    "providerGenerationHash"
+  ];
+  const shotPatternClosureBound = !shotPatternExpected || Boolean(
+    manifest?.shotPatterns
+    && manifest?.script?.shotPatterns
+    && metrics.shotPatternReceiptBinding === true
+    && immutableNames.has(shotPatternName)
+    && manifest.shotPatterns.path === shotPatternName
+    && manifest.shotPatterns.sha256 === shotPatternArtifact?.sha256
+    && shotPatternMetric?.path === shotPatternName
+    && shotPatternMetric.sha256 === shotPatternArtifact?.sha256
+    && shotPatternMetric.receiptHash === manifest.shotPatterns.receiptHash
+    && shotPatternMetric.catalogId === manifest.shotPatterns.catalogId
+    && shotPatternMetric.applicationMode === manifest.shotPatterns.applicationMode
+    && shotPatternMetric.submittedToProvider === manifest.shotPatterns.submittedToProvider
+    && shotPatternMetric.segmentCount === manifest.shotPatterns.segmentCount
+    && metrics.evidenceHashes?.[shotPatternName] === shotPatternArtifact?.sha256
+    && shotPatternReferenceFields.every((field) => (
+      JSON.stringify(manifest.shotPatterns[field]) === JSON.stringify(manifest.script.shotPatterns[field])
+    ))
+  );
+  const semanticRevalidationClosureBound = !manifest?.semanticRevalidation || Boolean(
+    metrics.semanticRevalidationProviderZeroBinding === true
+    && metrics.semanticRevalidationProviderZero?.verified === true
+    && metrics.semanticRevalidationProviderZero.sourceRunId === manifest.semanticRevalidation.sourceRunId
+    && metrics.semanticRevalidationProviderZero.parentManifestHash === manifest.semanticRevalidation.parentManifestHash
+    && metrics.semanticRevalidationProviderZero.sourceGenerationFileHash === manifest.semanticRevalidation.sourceProviderProvenance?.sha256
+    && metrics.semanticRevalidationProviderZero.childGenerationHash === manifest.semanticRevalidation.childGenerationHash
+    && metrics.semanticRevalidationProviderZero.childGenerationFileHash === geminiGenerationArtifact?.sha256
+  );
   if (provider === "gemini-browser") {
     return metrics.provider === "gemini-browser"
       && metrics.providerProof === true
@@ -416,7 +526,9 @@ function immutableProviderClosureBound(provider, quality, manifest, inputManifes
       && providerMotionClosureBound(provider, metrics, inputManifest)
       && providerDiversityClosureBound(provider, metrics, inputManifest)
       && metrics.inputManifestBinding === true
-      && immutableNames.has("gemini-generation.json");
+      && immutableNames.has("gemini-generation.json")
+      && shotPatternClosureBound
+      && semanticRevalidationClosureBound;
   }
   if (provider === "local-video") {
     const receiptName = `runs/${manifest.runId}/local-video-generation.json`;
@@ -431,9 +543,116 @@ function immutableProviderClosureBound(provider, quality, manifest, inputManifes
       && metrics.inputManifestBinding === true
       && immutableNames.has(receiptName)
       && manifest.providerReceipt?.path === receiptName
-      && manifest.providerReceipt.sha256 === manifest.immutableArtifacts.find((artifact) => artifact?.name === receiptName)?.sha256;
+      && manifest.providerReceipt.sha256 === manifest.immutableArtifacts.find((artifact) => artifact?.name === receiptName)?.sha256
+      && shotPatternClosureBound;
   }
-  return provider === "local" && metrics.provider === "local" && metrics.providerProof === true;
+  return provider === "local" && metrics.provider === "local" && metrics.providerProof === true && shotPatternClosureBound;
+}
+
+export async function verifyImmutableShotPatternClosure(job, provider, quality, manifest) {
+  const metrics = quality?.metrics || {};
+  const immutableArtifacts = Array.isArray(manifest?.immutableArtifacts) ? manifest.immutableArtifacts : [];
+  const scriptDeclaration = immutableArtifacts.find((artifact) => artifact?.name === "script.json");
+  const verifiedScript = await readVerifiedImmutableArtifact(job, scriptDeclaration, "script.json");
+  if (!verifiedScript?.value) return false;
+  const script = verifiedScript.value;
+  const required = Boolean(
+    script.shotPatternPlan
+    || manifest?.shotPatterns
+    || manifest?.script?.shotPatterns
+    || Object.hasOwn(metrics, "shotPatternReceiptBinding")
+  );
+  if (!required) return true;
+  if (!script.shotPatternPlan || !manifest?.shotPatterns || !manifest?.script?.shotPatterns || metrics.shotPatternReceiptBinding !== true) return false;
+
+  const receiptName = `runs/${job.runId}/shot-pattern-receipt.json`;
+  const receiptDeclaration = immutableArtifacts.find((artifact) => artifact?.name === receiptName);
+  const verifiedReceipt = await readVerifiedImmutableArtifact(job, receiptDeclaration, receiptName);
+  const receipt = verifiedReceipt?.value;
+  if (!receipt || !verifyShotPatternReceipt(receipt) || receipt.jobId !== job.id || receipt.runId !== job.runId || receipt.provider !== provider) return false;
+
+  let expectedReceipt;
+  try {
+    expectedReceipt = createShotPatternReceipt(
+      script,
+      { id: job.id, provider },
+      job.runId,
+      provider === "local"
+        ? { schemaVersion: receipt.schemaVersion }
+        : {
+            schemaVersion: receipt.schemaVersion,
+            submittedToProvider: true,
+            ...(receipt.schemaVersion >= 2 ? {
+              providerRequestSentThisRun: receipt.providerRequestSentThisRun,
+              inheritedProviderSubmission: receipt.inheritedProviderSubmission,
+              sourceSubmissionRunId: receipt.sourceSubmissionRunId,
+              sourceGenerationHash: receipt.sourceGenerationHash
+            } : {}),
+            providerRequestHash: receipt.providerRequestHash,
+            providerGenerationHash: receipt.providerGenerationHash
+          }
+    );
+  } catch {
+    return false;
+  }
+  if (hashJson(receipt) !== hashJson(expectedReceipt)) return false;
+
+  const reference = manifest.shotPatterns;
+  const nestedReference = manifest.script.shotPatterns;
+  const expectedReference = {
+    path: receiptName,
+    sha256: receiptDeclaration?.sha256,
+    receiptHash: receipt.receiptHash,
+    catalogId: receipt.catalogId,
+    catalogHash: receipt.catalogHash,
+    continuityContractHash: receipt.continuityContractHash,
+    segmentCount: receipt.segmentCount,
+    applicationMode: receipt.applicationMode,
+    providerEligible: receipt.providerEligible,
+    providerSubmissionPlanned: receipt.providerSubmissionPlanned,
+    submittedToProvider: receipt.submittedToProvider,
+    ...(receipt.schemaVersion >= 2 ? {
+      providerRequestSentThisRun: receipt.providerRequestSentThisRun,
+      inheritedProviderSubmission: receipt.inheritedProviderSubmission,
+      sourceSubmissionRunId: receipt.sourceSubmissionRunId,
+      sourceGenerationHash: receipt.sourceGenerationHash
+    } : {}),
+    providerRequestHash: receipt.providerRequestHash,
+    providerGenerationHash: receipt.providerGenerationHash
+  };
+  if (hashJson(reference) !== hashJson(expectedReference) || hashJson(nestedReference) !== hashJson(expectedReference)) return false;
+  const expectedMetric = {
+    path: receiptName,
+    sha256: receiptDeclaration?.sha256,
+    receiptHash: receipt.receiptHash,
+    catalogId: receipt.catalogId,
+    applicationMode: receipt.applicationMode,
+    submittedToProvider: receipt.submittedToProvider,
+    ...(receipt.schemaVersion >= 2 ? {
+      providerRequestSentThisRun: receipt.providerRequestSentThisRun,
+      inheritedProviderSubmission: receipt.inheritedProviderSubmission,
+      sourceSubmissionRunId: receipt.sourceSubmissionRunId,
+      sourceGenerationHash: receipt.sourceGenerationHash
+    } : {}),
+    segmentCount: receipt.segmentCount
+  };
+  if (hashJson(metrics.shotPatternReceipt) !== hashJson(expectedMetric) || metrics.evidenceHashes?.[receiptName] !== receiptDeclaration?.sha256) return false;
+
+  if (provider === "local") return receipt.submittedToProvider === false;
+  const generationName = provider === "gemini-browser"
+    ? "gemini-generation.json"
+    : provider === "local-video"
+      ? `runs/${job.runId}/local-video-generation.json`
+      : null;
+  if (!generationName) return false;
+  const generationDeclaration = immutableArtifacts.find((artifact) => artifact?.name === generationName);
+  const verifiedGeneration = await readVerifiedImmutableArtifact(job, generationDeclaration, generationName);
+  return Boolean(
+    verifiedGeneration?.value
+    && receipt.submittedToProvider === true
+    && receipt.providerRequestHash === verifiedGeneration.value.requestHash
+    && receipt.providerGenerationHash === generationDeclaration?.sha256
+  );
 }
 
 async function revisionArtifactDeclarations(job, state) {
@@ -475,6 +694,9 @@ async function reconcileQualityRevisionJobUnlocked(job) {
   if (!verifiedInput?.value || !immutableProviderClosureBound(provider, state.baseQuality.value, manifest, verifiedInput.value)) {
     throw new Error("봉인된 base run의 provider 증거 폐쇄가 유효하지 않습니다.");
   }
+  if (!(await verifyImmutableShotPatternClosure(job, provider, state.baseQuality.value, manifest))) {
+    throw new Error("봉인된 base run의 shot pattern 증거 폐쇄가 유효하지 않습니다.");
+  }
   const revisionArtifacts = await revisionArtifactDeclarations(job, state);
   const revisionPrefix = `runs/${job.runId}/revisions/`;
   const baseArtifacts = (job.artifacts || []).filter((artifact) => !String(artifact?.name || "").startsWith(revisionPrefix));
@@ -497,8 +719,12 @@ async function reconcileQualityRevisionJobUnlocked(job) {
     }
     : { ...manifest.qualitySummary };
   const artifacts = [...baseArtifacts, ...revisionArtifacts];
-  const desired = { provider, status: effectiveStatus, runStatus: effectiveRunStatus, qualitySummary, artifacts };
-  const current = { provider: job.provider, status: job.status, runStatus: job.runStatus, qualitySummary: job.qualitySummary, artifacts: job.artifacts || [] };
+  const providerProvenance = immutableProviderProvenance(manifest, provider);
+  if (["gemini-browser", "local-video"].includes(provider) && !providerProvenance) {
+    throw new Error("봉인된 base run의 immutable provider provenance를 찾을 수 없습니다.");
+  }
+  const desired = { provider, status: effectiveStatus, runStatus: effectiveRunStatus, qualitySummary, artifacts, providerProvenance };
+  const current = { provider: job.provider, status: job.status, runStatus: job.runStatus, qualitySummary: job.qualitySummary, artifacts: job.artifacts || [], providerProvenance: job.providerProvenance || null };
   if (canonicalJsonHash(current) === canonicalJsonHash(desired)) return job;
   const latest = await readJob(job.id);
   if (latest.runId !== job.runId || ["running", "verifying"].includes(latest.status)) return latest;
@@ -572,6 +798,7 @@ async function readVerifiedQuality(job) {
   const inputDeclaration = manifest.immutableArtifacts.find((artifact) => artifact?.name === `runs/${job.runId}/input-manifest.json`);
   const verifiedInput = await readVerifiedImmutableArtifact(job, inputDeclaration, `runs/${job.runId}/input-manifest.json`);
   if (!verifiedInput?.value || !immutableProviderClosureBound(provider, verified.value, manifest, verifiedInput.value)) return null;
+  if (!(await verifyImmutableShotPatternClosure(job, provider, verified.value, manifest))) return null;
   const qualitySummaryFields = ["status", "totalScore", "threshold", "technicalEvidenceGate", "semanticGate", "runId", "blockers"];
   const summaryMatches = Boolean(
     manifest.qualitySummary
@@ -806,6 +1033,7 @@ async function rehydrateCompletedRun(job, manifest) {
     return Number(artifact.bytes) === fileStat.size && await hashFile(path) === artifact.sha256;
   }));
   if (!verified.every(Boolean)) return null;
+  if (!(await verifyImmutableSemanticRevalidationClosure(job, manifest))) return null;
   const eventArtifact = immutableArtifacts.filter((artifact) => artifact.name === `runs/${job.runId}/events.jsonl` && artifact.path === expectedPath(artifact.name)).at(-1);
   if (!eventArtifact) return null;
   const eventPath = resolve(jobRoot, eventArtifact.path);
@@ -846,35 +1074,63 @@ async function rehydrateCompletedRun(job, manifest) {
   const inputArtifact = await readImmutableJson(`runs/${job.runId}/input-manifest.json`);
   if (!inputArtifact) return null;
   const qualityMetrics = quality.metrics || {};
-  const providerClosureBound = provider === "gemini-browser"
-    ? qualityMetrics.provider === "gemini-browser"
-      && qualityMetrics.providerProof === true
-      && qualityMetrics.generationProvenance === true
-      && qualityMetrics.generationClipBinding === true
-      && qualityMetrics.providerDecisionBinding === true
-      && qualityMetrics.providerDecisionEventBinding === true
-      && providerMotionClosureBound(provider, qualityMetrics, inputArtifact)
-      && providerDiversityClosureBound(provider, qualityMetrics, inputArtifact)
-      && qualityMetrics.inputManifestBinding === true
-      && immutableByName.has("gemini-generation.json")
-    : provider === "local-video"
-      ? qualityMetrics.provider === "local-video"
-        && qualityMetrics.providerProof === true
-        && qualityMetrics.providerGenerationProvenance === true
-        && qualityMetrics.localVideoModelBinding === true
-        && qualityMetrics.localVideoClipBinding === true
-        && qualityMetrics.localVideoReceiptBinding === true
-        && providerMotionClosureBound(provider, qualityMetrics, inputArtifact)
-        && providerDiversityClosureBound(provider, qualityMetrics, inputArtifact)
-        && qualityMetrics.inputManifestBinding === true
-        && immutableByName.has(`runs/${job.runId}/local-video-generation.json`)
-        && manifest.providerReceipt?.path === `runs/${job.runId}/local-video-generation.json`
-        && manifest.providerReceipt.sha256 === immutableByName.get(`runs/${job.runId}/local-video-generation.json`)?.sha256
-      : provider === "local"
-        ? qualityMetrics.provider === "local" && qualityMetrics.providerProof === true
-        : false;
-  if (!providerClosureBound) return null;
+  if (!immutableProviderClosureBound(provider, quality, manifest, inputArtifact)) return null;
+  if (!(await verifyImmutableShotPatternClosure(job, provider, quality, manifest))) return null;
   const scriptArtifact = await readImmutableJson("script.json");
+  const shotPatternRequired = Boolean(scriptArtifact?.shotPatternPlan);
+  let shotPatternReceipt = null;
+  if (shotPatternRequired) {
+    const shotPatternName = `runs/${job.runId}/shot-pattern-receipt.json`;
+    const shotPatternDeclaration = immutableByName.get(shotPatternName);
+    shotPatternReceipt = await readImmutableJson(shotPatternName);
+    const shotPatternReference = manifest.shotPatterns;
+    const expectedShotPatternReceipt = shotPatternReceipt && createShotPatternReceipt(
+      scriptArtifact,
+      { id: job.id, provider },
+      job.runId,
+      provider === "local"
+        ? { schemaVersion: shotPatternReceipt.schemaVersion }
+        : {
+            schemaVersion: shotPatternReceipt.schemaVersion,
+            submittedToProvider: true,
+            ...(shotPatternReceipt.schemaVersion >= 2 ? {
+              providerRequestSentThisRun: shotPatternReceipt.providerRequestSentThisRun,
+              inheritedProviderSubmission: shotPatternReceipt.inheritedProviderSubmission,
+              sourceSubmissionRunId: shotPatternReceipt.sourceSubmissionRunId,
+              sourceGenerationHash: shotPatternReceipt.sourceGenerationHash
+            } : {}),
+            providerRequestHash: shotPatternReceipt.providerRequestHash,
+            providerGenerationHash: shotPatternReceipt.providerGenerationHash
+          }
+    );
+    if (!shotPatternDeclaration || !shotPatternReceipt || !verifyShotPatternReceipt(shotPatternReceipt)
+      || hashJson(shotPatternReceipt) !== hashJson(expectedShotPatternReceipt)
+      || shotPatternReceipt.jobId !== job.id || shotPatternReceipt.runId !== job.runId
+      || shotPatternReceipt.provider !== provider
+      || shotPatternReceipt.planHash !== scriptArtifact.shotPatternPlan.planHash
+      || shotPatternReceipt.catalogId !== scriptArtifact.shotPatternPlan.catalogId
+      || shotPatternReceipt.catalogHash !== scriptArtifact.shotPatternPlan.catalogHash
+      || shotPatternReceipt.continuityContractHash !== scriptArtifact.shotPatternPlan.continuityContractHash
+      || shotPatternReceipt.segmentCount !== scriptArtifact.shotPatternPlan.segmentCount
+      || shotPatternReceipt.segments?.length !== scriptArtifact.segments?.length
+      || shotPatternReceipt.evidenceTextBindingHash !== scriptArtifact.evidenceTextBindingHash
+      || shotPatternReference?.path !== shotPatternName
+      || shotPatternReference.sha256 !== shotPatternDeclaration.sha256
+      || shotPatternReference.receiptHash !== shotPatternReceipt.receiptHash
+      || shotPatternReference.catalogId !== shotPatternReceipt.catalogId
+      || shotPatternReference.catalogHash !== shotPatternReceipt.catalogHash
+      || shotPatternReference.continuityContractHash !== shotPatternReceipt.continuityContractHash
+      || shotPatternReference.segmentCount !== shotPatternReceipt.segmentCount) return null;
+    for (const field of ["applicationMode", "providerEligible", "providerSubmissionPlanned", "submittedToProvider", ...(shotPatternReceipt.schemaVersion >= 2 ? ["providerRequestSentThisRun", "inheritedProviderSubmission", "sourceSubmissionRunId", "sourceGenerationHash"] : []), "providerRequestHash", "providerGenerationHash"]) {
+      if (shotPatternReference[field] !== shotPatternReceipt[field]) return null;
+    }
+    if (qualityMetrics.shotPatternReceiptBinding !== true) return null;
+    if (!shotPatternReceipt.segments.every((segment, index) => (
+      segment.patternId === scriptArtifact.segments[index]?.shotPattern?.patternId
+      && segment.providerVisualPromptHash === scriptArtifact.segments[index]?.shotPattern?.providerVisualPromptHash
+      && segment.visualPromptHash === hashJson(scriptArtifact.segments[index]?.visualPrompt)
+    ))) return null;
+  }
   const inputEntries = Array.isArray(inputArtifact?.entries) ? inputArtifact.entries : [];
   const inputByName = new Map(inputEntries.map((entry) => [entry.name, entry]));
   const clipArtifactBound = (relativePath, sha256) => {
@@ -891,26 +1147,14 @@ async function rehydrateCompletedRun(job, manifest) {
   if (provider === "local-video") {
     const receipt = await readImmutableJson(`runs/${job.runId}/local-video-generation.json`);
     const scriptHash = hashJson(scriptArtifact);
-    const baseRequest = {
-      schemaVersion: 1,
-      jobId: job.id,
-      runId: job.runId,
-      provider: "local-video",
+    const request = buildLocalVideoRequest({
+      id: job.id,
       topic: manifest.request.topic || "",
       format: manifest.request.format || "vertical",
       targetDurationSec: Number(manifest.request.targetDurationSec || 0),
-      targetDurationRangeSec: manifest.request.targetDurationRangeSec || null,
-      segments: (scriptArtifact?.segments || []).map((segment, index) => ({
-        index: index + 1,
-        durationHint: segment.durationHint || null,
-        prompt: segment.visualPrompt || "",
-        visualPrompt: segment.visualPrompt || "",
-        caption: segment.caption || "",
-        narration: segment.narration || ""
-      }))
-    };
-    const requestHash = hashJson({ ...baseRequest, scriptHash });
-    const request = { ...baseRequest, requestHash, scriptHash };
+      targetDurationRangeSec: manifest.request.targetDurationRangeSec || null
+    }, scriptArtifact, job.runId, scriptHash);
+    const requestHash = request.requestHash;
     if (
       !receipt
       || receipt.status !== "completed"
@@ -924,28 +1168,23 @@ async function rehydrateCompletedRun(job, manifest) {
       || receipt.scriptHash !== scriptHash
       || !receipt.request
       || hashJson(receipt.request) !== hashJson(request)
+      || shotPatternReceipt?.providerRequestHash !== receipt.requestHash
+      || shotPatternReceipt?.providerGenerationHash !== immutableByName.get(`runs/${job.runId}/local-video-generation.json`)?.sha256
       || !Array.isArray(receipt.segments)
       || receipt.segments.length !== inputEntries.length
       || !receipt.segments.every((segment) => clipArtifactBound(segment?.path || segment?.output, segment?.sha256))
     ) return null;
   } else if (provider === "gemini-browser") {
     const generation = await readImmutableJson("gemini-generation.json");
-    const expectedGeminiRequest = {
-      provider: "gemini-browser",
+    const expectedGeminiRequest = buildGeminiGenerationRequest({
       topic: manifest.request.topic || "",
       format: manifest.request.format || "vertical",
       clipCount: Number(manifest.request.clipCount || scriptArtifact?.segments?.length || 0),
       targetDurationSec: Number(manifest.request.targetDurationSec || 0),
       targetDurationRangeSec: manifest.request.targetDurationRangeSec || null,
       captions: manifest.request.captions !== false,
-      voiceover: manifest.request.voiceover !== false,
-      segments: (scriptArtifact?.segments || []).map((segment) => ({
-        durationHint: segment.durationHint || null,
-        visualPrompt: segment.visualPrompt || "",
-        caption: segment.caption || "",
-        narration: segment.narration || ""
-      }))
-    };
+      voiceover: manifest.request.voiceover !== false
+    }, scriptArtifact);
     const expectedGeminiScriptHash = hashJson(scriptArtifact);
     const expectedGeminiRequestHash = hashJson({ ...expectedGeminiRequest, scriptHash: expectedGeminiScriptHash });
     const expectedGeminiDecision = { requested: "gemini-browser", selected: "gemini-browser", fallbackUsed: false, policy: "no-local-video-fallback" };
@@ -968,6 +1207,8 @@ async function rehydrateCompletedRun(job, manifest) {
       || Object.hasOwn(generation, "cdpUrl")
       || generation.requestHash !== expectedGeminiRequestHash
       || generation.scriptHash !== expectedGeminiScriptHash
+      || shotPatternReceipt?.providerRequestHash !== generation.requestHash
+      || shotPatternReceipt?.providerGenerationHash !== immutableByName.get("gemini-generation.json")?.sha256
       || !generation.providerDecision
       || hashJson(generation.providerDecision) !== expectedGeminiDecisionHash
       || generation.providerDecisionHash !== expectedGeminiDecisionHash
@@ -1015,6 +1256,8 @@ async function rehydrateCompletedRun(job, manifest) {
   };
   const artifactUrl = (path) => `/api/jobs/${encodeURIComponent(job.id)}/artifacts/${encodeURIComponent(path)}`;
   const immutableDeclarations = immutableArtifacts.map(({ path, kind }) => ({ name: path, kind: `immutable-${kind || "artifact"}`, url: artifactUrl(path) }));
+  const providerProvenance = immutableProviderProvenance(manifest, provider);
+  if (["gemini-browser", "local-video"].includes(provider) && !providerProvenance) return null;
   return updateJob(job.id, {
     provider,
     status: sealedStatus,
@@ -1029,6 +1272,17 @@ async function rehydrateCompletedRun(job, manifest) {
     qualitySummary,
     runId: job.runId,
     runStatus: manifest.runStatus || "needs-improvement",
+    providerProvenance,
+    ...(manifest.semanticRevalidation ? {
+      semanticRevalidationSummary: {
+        status: "sealed",
+        mode: manifest.semanticRevalidation.mode,
+        sourceRunId: manifest.semanticRevalidation.sourceRunId,
+        childRunId: manifest.runId,
+        semanticPolicy: manifest.semanticRevalidation.semanticPolicy,
+        providerRequests: 0
+      }
+    } : {}),
     error: null
   });
 }
@@ -1142,6 +1396,30 @@ async function recoverStaleJob(job) {
 async function recoverStaleJobs(jobs) {
   return Promise.all(jobs.map((job) => recoverStaleJob(job)));
 }
+
+async function recoverSemanticRevalidationTransactions() {
+  const entries = await readdir(JOBS_DIR, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || activeJobs.has(entry.name)) continue;
+    const jobDir = join(JOBS_DIR, entry.name);
+    const transactionPath = join(jobDir, ".semantic-revalidation-transaction.json");
+    if (!(await stat(transactionPath).catch(() => null))?.isFile()) continue;
+    const lease = await acquireJobLease(entry.name).catch((error) => {
+      console.error(`job ${entry.name} semantic revalidation recovery lease failed: ${error.message}`);
+      return null;
+    });
+    if (!lease) continue;
+    try {
+      await recoverSemanticRevalidationWorkspace(jobDir);
+    } catch (error) {
+      console.error(`job ${entry.name} semantic revalidation transaction recovery failed: ${error.message}`);
+    } finally {
+      await releaseJobLease(lease).catch((error) => {
+        console.error(`job ${entry.name} semantic revalidation recovery lease release failed: ${error.message}`);
+      });
+    }
+  }
+}
 export async function sealQualityRevision(jobId, runId, context, review, evaluatedQuality) {
   const jobDir = join(JOBS_DIR, jobId);
   const runDir = join(jobDir, "runs", runId);
@@ -1239,7 +1517,127 @@ async function markLaunchFailure(jobId, error) {
   });
 }
 
-async function startJob(jobId) {
+export async function prepareSemanticRevalidationContext(job, sourceRunId) {
+  if (typeof sourceRunId !== "string" || sourceRunId !== job?.runId || !JOB_ID_PATTERN.test(sourceRunId)) {
+    throw new Error("의미 재검수 sourceRunId는 현재 작업의 정확한 봉인 runId여야 합니다.");
+  }
+  if (job.provider !== "gemini-browser") throw new Error("의미 재검수 provider-0 resume는 Gemini 작업만 지원합니다.");
+  if (job.status !== "needs-improvement" || job.runStatus !== "needs-improvement") {
+    throw new Error("의미 재검수는 봉인된 needs-improvement 작업에서만 시작할 수 있습니다.");
+  }
+  const runDir = join(JOBS_DIR, job.id, "runs", sourceRunId);
+  const manifest = await readRunManifest(runDir);
+  if (!manifest || manifest.status !== "needs-improvement" || manifest.runStatus !== "needs-improvement") {
+    throw new Error("의미 재검수 원본 run이 needs-improvement 상태로 봉인되어 있지 않습니다.");
+  }
+  if (manifest.semanticRevalidation != null) {
+    throw new Error("이미 purpose-aware semantic child인 run은 다시 policy-upgrade 재검수할 수 없습니다.");
+  }
+  if (!(await verifyImmutableRun(job, manifest))) throw new Error("의미 재검수 원본 run의 전체 immutable 무결성 검증에 실패했습니다.");
+  const provider = immutableRunProvider(manifest);
+  if (provider !== "gemini-browser") throw new Error("의미 재검수 원본의 immutable provider 결정이 Gemini에 결속되지 않았습니다.");
+  const state = await readQualityRevisionState(job.id, sourceRunId);
+  if (state.effectiveStatus !== "needs-improvement") throw new Error("review revision이 반영된 현재 상태는 의미 재검수 대상이 아닙니다.");
+  const sourceSemanticName = `runs/${sourceRunId}/semantic/receipt.json`;
+  const sourceSemanticDeclaration = manifest.immutableArtifacts.find((artifact) => artifact?.name === sourceSemanticName);
+  const sourceSemanticReceipt = await readVerifiedImmutableArtifact(job, sourceSemanticDeclaration, sourceSemanticName);
+  if (
+    sourceSemanticReceipt?.value?.schemaVersion !== 1
+    || sourceSemanticReceipt.value.jobId !== job.id
+    || sourceSemanticReceipt.value.runId !== sourceRunId
+    || sourceSemanticReceipt.value.status !== "failed"
+  ) throw new Error("의미 재검수는 봉인된 schema-1 실패 영수증의 policy upgrade에만 사용할 수 있습니다.");
+  const inputName = `runs/${sourceRunId}/input-manifest.json`;
+  const inputDeclaration = manifest.immutableArtifacts.find((artifact) => artifact?.name === inputName);
+  const verifiedInput = await readVerifiedImmutableArtifact(job, inputDeclaration, inputName);
+  if (!verifiedInput?.value || !immutableProviderClosureBound(provider, state.baseQuality.value, manifest, verifiedInput.value)) {
+    throw new Error("의미 재검수 원본의 immutable provider closure가 유효하지 않습니다.");
+  }
+  if (!(await verifyImmutableShotPatternClosure(job, provider, state.baseQuality.value, manifest))) {
+    throw new Error("의미 재검수 원본의 immutable shot pattern closure가 유효하지 않습니다.");
+  }
+  const providerProvenance = immutableProviderProvenance(manifest, provider);
+  if (!providerProvenance) throw new Error("의미 재검수 원본의 immutable Gemini 영수증을 찾을 수 없습니다.");
+  const manifestPath = `runs/${sourceRunId}/manifest.json`;
+  const manifestHash = await hashFile(join(JOBS_DIR, job.id, manifestPath));
+  const context = {
+    schemaVersion: 1,
+    mode: SEMANTIC_REVALIDATION_MODE,
+    sourceRunId,
+    sourceManifest: {
+      path: manifestPath,
+      sha256: manifestHash,
+      status: manifest.status,
+      runStatus: manifest.runStatus
+    },
+    sourceImmutableArtifactsHash: hashJson(manifest.immutableArtifacts),
+    sourceProviderProvenance: providerProvenance,
+    semanticPolicy: { ...LOCAL_SEMANTIC_POLICY_BINDING },
+    providerRequestPolicy: { allowed: false, maximumCalls: 0 }
+  };
+  // Reuse the pipeline's independent, read-only loader as a second trust boundary.
+  await readGeminiSemanticRevalidationInputs(job, join(JOBS_DIR, job.id), context);
+  return context;
+}
+
+export async function startSemanticRevalidation(jobId, sourceRunId, options = {}) {
+  if (activeJobs.has(jobId)) return { started: false, reason: "이미 실행 중인 작업입니다." };
+  let settled = false;
+  let resolveStarted;
+  const started = new Promise((resolveStartedPromise) => {
+    resolveStarted = (value) => {
+      if (settled) return;
+      settled = true;
+      resolveStartedPromise(value);
+    };
+  });
+  void withJob(jobId, async () => {
+    let lease = null;
+    let context = null;
+    try {
+      lease = await acquireJobLease(jobId);
+      if (!lease) {
+        resolveStarted({ started: false, reason: "다른 프로세스가 작업 lease를 사용 중입니다." });
+        return;
+      }
+      // Recovery is a mutation. It is permitted only while this process owns
+      // the cross-process lease, so another server cannot roll back a live child.
+      await recoverSemanticRevalidationWorkspace(join(JOBS_DIR, jobId));
+      const locked = await reconcileQualityRevisionJob(await readJob(jobId), { leaseHeld: true });
+      context = await prepareSemanticRevalidationContext(locked, sourceRunId);
+      const runner = options.runner || runJob;
+      const result = await runner(jobId, {
+        ...(options.runOptions || {}),
+        trigger: "semantic-revalidation",
+        reason: "purpose-aware-local-semantic-policy-upgrade",
+        semanticRevalidation: context,
+        onRunCreated: async (created) => {
+          resolveStarted({ started: true, sourceRunId, childRunId: created.runId, providerRequests: 0, semanticPolicy: context.semanticPolicy });
+          if (typeof options.runOptions?.onRunCreated === "function") await options.runOptions.onRunCreated(created);
+        }
+      });
+      const after = await readJob(jobId).catch(() => null);
+      if (!settled && after?.runId && after.runId !== sourceRunId) {
+        resolveStarted({ started: true, sourceRunId, childRunId: after.runId, providerRequests: 0, semanticPolicy: context.semanticPolicy });
+      } else if (!settled) {
+        resolveStarted({ started: false, reason: result?.message || "의미 재검수 child run을 만들지 못했습니다." });
+      }
+    } catch (error) {
+      console.error(`job ${jobId} semantic revalidation failed to start: ${error.message}`);
+      resolveStarted({ started: false, reason: error.message });
+    } finally {
+      if (lease) await releaseJobLease(lease);
+    }
+  }).then((claimed) => {
+    if (!claimed) resolveStarted({ started: false, reason: "이미 실행 중인 작업입니다." });
+  }).catch((error) => {
+    console.error(`job ${jobId} semantic revalidation runner failed: ${error.message}`);
+    resolveStarted({ started: false, reason: error.message });
+  });
+  return started;
+}
+
+async function startJob(jobId, options = {}) {
   if (activeJobs.has(jobId)) return false;
   let resolveStarted;
   const started = new Promise((resolve) => {
@@ -1254,7 +1652,7 @@ async function startJob(jobId) {
         return;
       }
       resolveStarted(true);
-      await runJob(jobId);
+      await runJob(jobId, options);
     } catch (error) {
       console.error(`job ${jobId} failed to start: ${error.message}`);
       await markLaunchFailure(jobId, error).catch((persistError) => console.error(`job ${jobId} start failure persistence failed: ${persistError.message}`));
@@ -1291,7 +1689,7 @@ async function health() {
   };
 }
 
-async function handleApi(request, url) {
+async function handleApi(request, url, runtimeOptions = {}) {
   const path = url.pathname;
   if (path === "/api/health" && request.method === "GET") return json(await health());
   if (path === "/api/gemini/monitor" && request.method === "GET") {
@@ -1300,6 +1698,9 @@ async function handleApi(request, url) {
   }
   if (path === "/api/providers/readiness" && request.method === "GET") {
     return json(await buildProviderReadiness({ root: ROOT }));
+  }
+  if (path === "/api/shot-patterns" && request.method === "GET") {
+    return json(publicShotPatternCatalog(await readShotPatternCatalog()));
   }
   if (path === "/api/channel" && request.method === "GET") return json(await readAnalysis());
   if (path === "/api/benchmark/profile" && request.method === "GET") {
@@ -1326,6 +1727,7 @@ async function handleApi(request, url) {
     return json({ total: videos.length, page, limit, videos: videos.slice(start, start + limit) });
   }
   if (path === "/api/jobs" && request.method === "GET") {
+    await recoverSemanticRevalidationTransactions();
     const recovered = await recoverStaleJobs(await listJobs());
     const jobs = await reconcileJobsIndependently(recovered);
     return json({ jobs: jobs.map(redactJobResponse) });
@@ -1458,6 +1860,36 @@ async function handleApi(request, url) {
       }
     }
     if (request.method === "GET" && !suffix) return json(redactJobResponse(await reconcileQualityRevisionJob(await readJob(jobId))));
+    if (request.method === "POST" && suffix === "semantic/revalidate") {
+      let body;
+      try {
+        body = await readJson(request);
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+      if (
+        !body
+        || typeof body !== "object"
+        || Array.isArray(body)
+        || Object.keys(body).sort().join(",") !== "sourceRunId"
+        || typeof body.sourceRunId !== "string"
+      ) return errorResponse(new Error("sourceRunId만 포함한 JSON 요청이 필요합니다."), 400);
+      const current = await readJob(jobId);
+      if (activeJobs.has(jobId) || isFreshRunningJob(current)) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);
+      const launch = await startSemanticRevalidation(jobId, body.sourceRunId, {
+        runner: runtimeOptions.semanticRevalidationRunner,
+        runOptions: runtimeOptions.semanticRevalidationRunOptions
+      });
+      if (!launch.started) return errorResponse(new Error(launch.reason || "의미 재검수를 시작할 수 없습니다."), 409);
+      return json({
+        started: true,
+        sourceRunId: launch.sourceRunId,
+        childRunId: launch.childRunId,
+        providerRequests: 0,
+        semanticPolicy: launch.semanticPolicy,
+        message: "기존 봉인 영상만 로컬 재검수 · Gemini 요청 0회"
+      }, 202);
+    }
     if (request.method === "POST" && suffix === "run") {
       const current = await reconcileQualityRevisionJob(await readJob(jobId));
       if (activeJobs.has(jobId) || isFreshRunningJob(current)) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);
@@ -1637,7 +2069,7 @@ export function createStudioRequestHandler(options = {}) {
       if (url.pathname.startsWith("/api/")) {
         const authorization = authorizeMutationRequest(request, url, { token, allowedOrigins });
         if (!authorization.ok) return errorResponse(new Error("API 요청의 host, 출처 또는 세션을 확인할 수 없습니다."), authorization.status);
-        const response = await handleApi(request, url);
+        const response = await handleApi(request, url, options);
         return response || errorResponse(new Error("API 경로를 찾지 못했습니다."), 404);
       }
       return await serveStatic(request, url, token, allowedOrigins);
@@ -1658,6 +2090,7 @@ export async function startStudioServer(options = {}) {
   const allowedOrigins = options.allowedOrigins || configuredOrigins();
   const tokenPath = options.tokenPath || STUDIO_TOKEN_PATH;
   await ensureWorkspace();
+  await recoverSemanticRevalidationTransactions();
   const recoveredJobs = await recoverStaleJobs(await listJobs());
   await reconcileJobsIndependently(recoveredJobs, {
     revisionOnly: true,

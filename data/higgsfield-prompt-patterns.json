@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "ps4-higgsfield-learning-patterns-v1",
+  "title": "Higgsfield-informed AI Shorts prompt patterns",
+  "observedAt": "2026-08-12",
+  "language": "en",
+  "policy": {
+    "purpose": "A small, source-attributed catalog of independently worded shot patterns for the local PS4 AI Video Studio workflow.",
+    "defaultUse": "conceptual-adaptation-only",
+    "githubMaterial": "The pinned official higgsfield-ai/skills repository is MIT-licensed. Preserve its copyright and license notice when copying substantial portions.",
+    "websiteMaterial": "Higgsfield Academy, blog, prompt-bank, and static assets are reference-only because no redistribution license was found on those pages.",
+    "commercialUseConclusion": "Use the project-authored templates below or properly attributed MIT material. Do not redistribute Higgsfield-authored website prompts, images, videos, course files, or shotlists without separate permission.",
+    "providerCallsMade": false,
+    "generationSpend": false,
+    "remoteAssetsCopiedIntoProject": false
+  },
+  "sources": [
+    {
+      "id": "higgsfield-skills-prompt-engineering",
+      "publisher": "Higgsfield AI",
+      "kind": "official-github-reference",
+      "url": "https://github.com/higgsfield-ai/skills/blob/fb18134b4aabe99c4bf7ff01c8f4883400efc80d/higgsfield-generate/references/prompt-engineering.md",
+      "repository": "https://github.com/higgsfield-ai/skills",
+      "commit": "fb18134b4aabe99c4bf7ff01c8f4883400efc80d",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/higgsfield-ai/skills/blob/fb18134b4aabe99c4bf7ff01c8f4883400efc80d/LICENSE",
+      "reuse": "commercial-use-permitted-under-mit",
+      "localCopy": false
+    },
+    {
+      "id": "higgsfield-skills-explainer-prompts",
+      "publisher": "Higgsfield AI",
+      "kind": "official-github-reference",
+      "url": "https://github.com/higgsfield-ai/skills/blob/fb18134b4aabe99c4bf7ff01c8f4883400efc80d/higgsfield-video-explainer/references/prompts.md",
+      "repository": "https://github.com/higgsfield-ai/skills",
+      "commit": "fb18134b4aabe99c4bf7ff01c8f4883400efc80d",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/higgsfield-ai/skills/blob/fb18134b4aabe99c4bf7ff01c8f4883400efc80d/LICENSE",
+      "reuse": "commercial-use-permitted-under-mit",
+      "localCopy": false
+    },
+    {
+      "id": "higgsfield-academy-prompt-bank",
+      "publisher": "Higgsfield AI",
+      "kind": "official-web-reference",
+      "url": "https://higgsfield.ai/academy/apps/prompt-bank",
+      "license": "no-redistribution-license-found",
+      "reuse": "reference-only-no-verbatim-text-or-assets",
+      "localCopy": false
+    },
+    {
+      "id": "higgsfield-beginner-guide",
+      "publisher": "Higgsfield AI",
+      "kind": "official-web-reference",
+      "url": "https://higgsfield.ai/blog/how-to-make-ai-videos-beginners-guide",
+      "license": "no-redistribution-license-found",
+      "reuse": "reference-only-no-verbatim-text-or-assets",
+      "localCopy": false
+    },
+    {
+      "id": "higgsfield-seedance-guide",
+      "publisher": "Higgsfield AI",
+      "kind": "official-web-reference",
+      "url": "https://higgsfield.ai/blog/seedance-prompting-guide",
+      "license": "no-redistribution-license-found",
+      "reuse": "reference-only-no-verbatim-text-or-assets",
+      "localCopy": false
+    }
+  ],
+  "patterns": [
+    {
+      "id": "shorts-curiosity-proof",
+      "labelKo": "호기심 질문 → 시각적 증거",
+      "goal": "Turn one surprising factual question into a compact aspect-aware visual arc.",
+      "sourceIds": [
+        "higgsfield-beginner-guide",
+        "higgsfield-skills-prompt-engineering"
+      ],
+      "derivation": "Independent wording based on general subject/action/setting/camera guidance; no website prompt text is copied.",
+      "variables": [
+        "aspectRatio",
+        "durationSeconds",
+        "surprisingDetail",
+        "setting",
+        "proofAction",
+        "cameraMove",
+        "lighting",
+        "ambientAudio"
+      ],
+      "template": "Aspect {aspectRatio}, {durationSeconds} seconds. Open close on {surprisingDetail} in {setting}. Let {proofAction} supply the visible evidence while the camera performs one {cameraMove}. End on a stable proof frame. Use {lighting}. Keep generated sound to {ambientAudio}; narration and captions are added later.",
+      "guardrails": [
+        "Use one verifiable claim per clip.",
+        "Show evidence rather than displaying generated text.",
+        "Use original, unbranded subjects and locations unless rights are documented.",
+        "Keep narration out of the generated clip so the local mixer controls timing."
+      ],
+      "receiptFields": [
+        "patternId",
+        "factSourceUrls",
+        "claimText",
+        "durationSeconds",
+        "aspectRatio"
+      ]
+    },
+    {
+      "id": "locked-static-evidence",
+      "labelKo": "고정 숏 증거 관찰",
+      "goal": "Make a physical change easy to compare without camera drift.",
+      "sourceIds": [
+        "higgsfield-academy-prompt-bank",
+        "higgsfield-skills-prompt-engineering"
+      ],
+      "derivation": "Original camera-direction wording informed by the public camera-movement taxonomy and MIT prompt guidance.",
+      "variables": [
+        "subject",
+        "action",
+        "setting",
+        "shotScale",
+        "lighting",
+        "ambientAudio"
+      ],
+      "template": "A {shotScale} view of {subject} in {setting}. The camera remains fixed on a firm tripod and the composition stays unchanged from first frame to last. All visible motion comes from {action}. Use {lighting} and {ambientAudio}.",
+      "guardrails": [
+        "Keep lens, horizon, distance, and framing constant.",
+        "Reserve the last beat for a readable comparison frame.",
+        "Avoid logos, watermarks, and generated on-screen copy."
+      ],
+      "receiptFields": [
+        "patternId",
+        "openingFrameHash",
+        "endingFrameHash",
+        "motionScore"
+      ]
+    },
+    {
+      "id": "pan-discovery",
+      "labelKo": "팬 이동 발견 숏",
+      "goal": "Reveal the answer by rotating from a clue to its context.",
+      "sourceIds": [
+        "higgsfield-academy-prompt-bank",
+        "higgsfield-skills-prompt-engineering"
+      ],
+      "derivation": "Independent description of a standard pan; no prompt-bank phrasing is reproduced.",
+      "variables": [
+        "openingClue",
+        "environment",
+        "landingSubject",
+        "direction",
+        "speed",
+        "endHoldSeconds"
+      ],
+      "template": "Begin on {openingClue}. From a fixed camera position, rotate smoothly toward screen {direction} across {environment} at {speed} speed. Land on {landingSubject}, ease to a stop, and hold the final composition for {endHoldSeconds} seconds.",
+      "guardrails": [
+        "Use rotation only; keep the camera position and horizon stable.",
+        "Do not combine the pan with a zoom or lateral track.",
+        "Time the reveal to the narration payoff."
+      ],
+      "receiptFields": [
+        "patternId",
+        "direction",
+        "landingSubject",
+        "endHoldSeconds"
+      ]
+    },
+    {
+      "id": "dolly-depth-reveal",
+      "labelKo": "돌리 인 깊이 강조",
+      "goal": "Use real perspective change to turn an architectural detail into a reveal.",
+      "sourceIds": [
+        "higgsfield-academy-prompt-bank",
+        "higgsfield-skills-prompt-engineering"
+      ],
+      "derivation": "Original formulation of a standard dolly move informed by official educational references.",
+      "variables": [
+        "subject",
+        "startDistance",
+        "endDistance",
+        "lens",
+        "foregroundLayers",
+        "movementSpeed"
+      ],
+      "template": "Track physically forward toward {subject}, moving from {startDistance} to {endDistance} with a fixed {lens} lens at {movementSpeed} speed. Let {foregroundLayers} pass with clear parallax. Ease into a still final frame on the key detail.",
+      "guardrails": [
+        "Keep focal length fixed so the move reads as a dolly rather than a zoom.",
+        "Use one continuous path without orbiting or tilting.",
+        "Keep the subject readable throughout the approach."
+      ],
+      "receiptFields": [
+        "patternId",
+        "lens",
+        "startDistance",
+        "endDistance",
+        "motionScore"
+      ]
+    },
+    {
+      "id": "lateral-parallax-follow",
+      "labelKo": "측면 트래킹 패럴랙스",
+      "goal": "Keep a moving subject legible while spatial layers demonstrate scale or construction.",
+      "sourceIds": [
+        "higgsfield-academy-prompt-bank",
+        "higgsfield-skills-prompt-engineering"
+      ],
+      "derivation": "Independent wording for a standard tracking shot, with no copied prompt-bank text.",
+      "variables": [
+        "subject",
+        "subjectAction",
+        "nearLayer",
+        "middleLayer",
+        "farLayer",
+        "speed"
+      ],
+      "template": "Move laterally beside {subject} as it {subjectAction}, matching its {speed} pace so its size remains steady. Build three depth layers: {nearLayer} crossing fastest, {middleLayer} moving with the subject, and {farLayer} drifting slowest.",
+      "guardrails": [
+        "Maintain a consistent side angle and subject scale.",
+        "Use foreground occlusion briefly, never long enough to hide the evidence.",
+        "Keep the camera path parallel to the subject."
+      ],
+      "receiptFields": [
+        "patternId",
+        "subjectScaleTolerance",
+        "depthLayers",
+        "motionScore"
+      ]
+    },
+    {
+      "id": "focus-handoff",
+      "labelKo": "초점 이동 설명",
+      "goal": "Transfer attention from a contextual clue to the detail that answers the question.",
+      "sourceIds": [
+        "higgsfield-academy-prompt-bank",
+        "higgsfield-skills-prompt-engineering"
+      ],
+      "derivation": "Original description of a standard rack-focus technique.",
+      "variables": [
+        "contextPlane",
+        "evidencePlane",
+        "holdBeforeSeconds",
+        "focusShiftSeconds",
+        "holdAfterSeconds"
+      ],
+      "template": "Lock the camera composition. Hold sharp focus on {contextPlane} for {holdBeforeSeconds} seconds, shift focus once over {focusShiftSeconds} seconds to {evidencePlane}, then hold the evidence sharp for {holdAfterSeconds} seconds while the first plane falls softly out of focus.",
+      "guardrails": [
+        "Change focus only; keep position, framing, and focal length stable.",
+        "Use one deliberate focus transfer without hunting.",
+        "Match the transfer to a single narration transition."
+      ],
+      "receiptFields": [
+        "patternId",
+        "contextPlane",
+        "evidencePlane",
+        "focusShiftSeconds"
+      ]
+    },
+    {
+      "id": "continuity-contract",
+      "labelKo": "멀티클립 연속성 계약",
+      "goal": "Keep independently generated clips visually compatible for unattended assembly.",
+      "sourceIds": [
+        "higgsfield-skills-explainer-prompts",
+        "higgsfield-seedance-guide"
+      ],
+      "derivation": "Project-authored continuity contract based on the MIT source's shared-style principle and the public guide's shot-structure concept.",
+      "variables": [
+        "aspectRatio",
+        "palette",
+        "lightingDirection",
+        "lensFamily",
+        "texture",
+        "subjectIdentity",
+        "audioPolicy"
+      ],
+      "template": "Apply this unchanged continuity contract to every segment: aspect {aspectRatio}; palette {palette}; key light {lightingDirection}; lens family {lensFamily}; finish {texture}; recurring subject definition {subjectIdentity}; generated audio policy {audioPolicy}. Each segment adds only its own action and camera move.",
+      "guardrails": [
+        "Store the exact contract and its hash in every segment receipt.",
+        "Change one variable at a time during retries.",
+        "Reuse only project-owned or properly licensed references.",
+        "Do not use a real person's likeness without documented consent."
+      ],
+      "receiptFields": [
+        "patternId",
+        "continuityContractHash",
+        "referenceAssetHashes",
+        "segmentIndex"
+      ]
+    },
+    {
+      "id": "narration-visual-pair",
+      "labelKo": "내레이션-비주얼 1:1 블록",
+      "goal": "Create deterministic narration, visual, and caption alignment across a multi-clip short.",
+      "sourceIds": [
+        "higgsfield-skills-explainer-prompts"
+      ],
+      "derivation": "Independently worded implementation pattern adapted from the official MIT explainer workflow.",
+      "variables": [
+        "blockIndex",
+        "narrationLine",
+        "visualAction",
+        "cameraMove",
+        "ambientAudio",
+        "durationSeconds"
+      ],
+      "template": "Block {blockIndex}, {durationSeconds} seconds. Narration source: {narrationLine}. Show one matching action: {visualAction}. Camera: {cameraMove}. Generate only {ambientAudio}; speech and timed captions are assembled from the narration source after video generation.",
+      "guardrails": [
+        "Bind exactly one narration take, one clip, and one caption cue group to each block index.",
+        "Generate narration before final caption timing.",
+        "Reject missing, duplicate, or out-of-order block identifiers.",
+        "Keep visual claims within the cited factual source material."
+      ],
+      "receiptFields": [
+        "patternId",
+        "blockIndex",
+        "narrationHash",
+        "clipHash",
+        "captionCueRange"
+      ]
+    }
+  ]
+}

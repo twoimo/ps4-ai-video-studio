@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-13T02:14:25+09:00",
+  "application": {
+    "url": "http://127.0.0.1:3000/",
+    "title": "PS4 AI Video Studio",
+    "parentCommit": "d1b5c2999df81ba24674db3f914ae1107adf8bd8",
+    "captureTreeStatus": "uncommitted-source-hash-bound",
+    "sourceBundleDigest": "sha256:73f5072028c063405ad77b953305195c37e8ba5bb74ad8d6f888660b337b8e1d",
+    "sourceBundleDigestAlgorithm": "sha256 of ordered shasum -a 256 output for sourceFiles",
+    "sourceFiles": [
+      {
+        "path": "public/index.html",
+        "sha256": "sha256:378f72b053b43be48f01bb6e0b388132412d345dad7303099e70dc901b814c94",
+        "bytes": 15280
+      },
+      {
+        "path": "public/styles.css",
+        "sha256": "sha256:7953b41eb53602249d89f54a058962bef4889aeca7c472565e44efac7a6253b0",
+        "bytes": 38220
+      },
+      {
+        "path": "public/app.js",
+        "sha256": "sha256:cd06d8dc1a9d6a0f2e54bccc924da1425b3f3040a122c03884e008d5481def5d",
+        "bytes": 47890
+      },
+      {
+        "path": "public/job-ui-safety.js",
+        "sha256": "sha256:99b78542b7abe03a6803ea9887de8f577b9e11b962e0c1d2112fea7948b42c70",
+        "bytes": 7450
+      },
+      {
+        "path": "public/provider-readiness-view.js",
+        "sha256": "sha256:d7f06225389463f99fff8212c60eef5336997daaa42595c80463713da0d386f0",
+        "bytes": 5536
+      },
+      {
+        "path": "public/shot-patterns-view.js",
+        "sha256": "sha256:7872feb47255f66e5be6aa6c701df7422599e6e0b087091e8cded9f3d4facf7c",
+        "bytes": 2367
+      }
+    ]
+  },
+  "browser": {
+    "name": "Codex in-app browser",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+    "devicePixelRatio": 1,
+    "captureProtocol": "Chrome DevTools Protocol Page.captureScreenshot"
+  },
+  "screenshots": [
+    {
+      "path": "docs/design-evidence/final-dashboard-320x700.png",
+      "state": "dashboard",
+      "viewport": { "width": 320, "height": 700 },
+      "mediaType": "image/png",
+      "sha256": "sha256:3d6cbf427d4803e58b0f148110403a50e1526a05ac8b83adb68dd4ba39f22ac3",
+      "bytes": 88885
+    },
+    {
+      "path": "docs/design-evidence/final-dashboard-375x812.png",
+      "state": "dashboard",
+      "viewport": { "width": 375, "height": 812 },
+      "mediaType": "image/png",
+      "sha256": "sha256:ab30324bf0ac0a8c3233d0fafdc464b115750bd120ac28d9d7d05f7fc6be256f",
+      "bytes": 105382
+    },
+    {
+      "path": "docs/design-evidence/final-dashboard-768x900.png",
+      "state": "dashboard",
+      "viewport": { "width": 768, "height": 900 },
+      "mediaType": "image/png",
+      "sha256": "sha256:62afeb9339ffa24b153cef51512ee6c9a83d7ebd3aa80d32f6f992fd4fb3d14a",
+      "bytes": 171391
+    },
+    {
+      "path": "docs/design-evidence/final-dashboard-1024x900.png",
+      "state": "dashboard",
+      "viewport": { "width": 1024, "height": 900 },
+      "mediaType": "image/png",
+      "sha256": "sha256:370feaf65079cc90ba057ed3b75e173479011c32d74befc099f6a83cc4e301f2",
+      "bytes": 205938
+    },
+    {
+      "path": "docs/design-evidence/final-dashboard-1440x900.png",
+      "state": "dashboard",
+      "viewport": { "width": 1440, "height": 900 },
+      "mediaType": "image/png",
+      "sha256": "sha256:356c0552b49629bc4310275fc6d4288ea693552c541e1abf01be1d884cd66d8e",
+      "bytes": 266029
+    },
+    {
+      "path": "docs/design-evidence/final-job-375x812.png",
+      "state": "completed-job-list",
+      "viewport": { "width": 375, "height": 812 },
+      "mediaType": "image/png",
+      "sha256": "sha256:e78a0a22fe0ea97b13f80bdd3845e874ed496695fab389627e1a7656ef462bfc",
+      "bytes": 66808
+    },
+    {
+      "path": "docs/design-evidence/final-job-1440x900.png",
+      "state": "completed-job-detail",
+      "viewport": { "width": 1440, "height": 900 },
+      "mediaType": "image/png",
+      "sha256": "sha256:550c7cc7ae64c764cbd11c9eca7812a97bc89d2faffbc69c6e277e6e8a7d8436",
+      "bytes": 155195
+    },
+    {
+      "path": "docs/design-evidence/final-comparison-2560x720.png",
+      "state": "historical-baseline-left-current-dashboard-right",
+      "viewport": { "width": 2560, "height": 720 },
+      "mediaType": "image/png",
+      "sha256": "sha256:29342c0fdf075f2010c308072d28aaebaad381e97d715527291d2e663872afce",
+      "bytes": 660901
+    }
+  ],
+  "interactionChecks": {
+    "uncaughtConsoleWarningsOrErrors": 0,
+    "skipLink": {
+      "passed": true,
+      "result": "#workspace-main focused; window and workspace scroll positions reset to 0"
+    },
+    "unchangedPollingFocusRetention": {
+      "passed": true,
+      "observationWindowMs": 2300,
+      "controlIdBefore": "detail-upload",
+      "controlIdAfter": "detail-upload",
+      "sameFileInputNodeRetained": true
+    },
+    "completedRunPresentation": {
+      "passed": true,
+      "jobId": "2026-08-12T12-30-22-674Z-f0418e",
+      "runId": "2026-08-12T16-47-14-022Z-c73889",
+      "statusText": "기술·의미 gate 통과 · 게시 전 사람 승인 별도",
+      "technicalEvidenceGate": true,
+      "semanticGate": true
+    },
+    "safeUrlAndAnnouncementContracts": {
+      "passedBy": "test/job-ui-safety.test.mjs"
+    }
+  },
+  "limitations": [
+    "The comparison uses the product's earlier dashboard as the left-hand baseline; it is not a StyleGallery source screenshot.",
+    "The automated run gate is not a human editorial or hiring-committee approval."
+  ]
+}

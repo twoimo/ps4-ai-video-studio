@@ -1,8 +1,46 @@
 import { providerReadinessMarkup } from "./provider-readiness-view.js";
+import { shotPatternsMarkup } from "./shot-patterns-view.js";
+import {
+  buildYouTubeVideoUrl,
+  jobAnnouncementSignature,
+  partitionRunArtifacts,
+  safeSameOriginArtifactUrl,
+  safeYouTubeVideoUrl,
+  semanticRevalidationEligibility,
+  shouldPollJobs,
+  stableUiSignature
+} from "./job-ui-safety.js";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const state = { analysis: null, jobs: [], selectedJobId: null, page: 1, query: "", sort: "views", category: "", poll: null, searchTimer: null, qualityDetails: {} };
+const state = {
+  analysis: null,
+  shotPatterns: null,
+  jobs: [],
+  selectedJobId: null,
+  page: 1,
+  query: "",
+  sort: "views",
+  category: "",
+  poll: null,
+  searchTimer: null,
+  qualityDetails: {},
+  jobListSignature: null,
+  jobDetailSignature: null,
+  pipelineSignature: null,
+  announcedJobSignature: null
+};
+
+function activateNavigation(targetId) {
+  const links = $$(".nav-item");
+  if (!links.some((link) => link.getAttribute("href") === `#${targetId}`)) return;
+  links.forEach((link) => {
+    const active = link.getAttribute("href") === `#${targetId}`;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+}
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -99,7 +137,7 @@ function renderAHPPanel(quality, history) {
     ["RUN", quality?.runId || "—"],
     ["PROVIDER", metrics.provider || "—"],
     ["TECHNICAL EVIDENCE", quality?.technicalEvidenceGate || metrics.technicalEvidenceGate ? "PASS" : "CLOSED"],
-    ["CONTENT SEMANTICS", quality?.semanticGate ? "VERIFIED" : "NOT VERIFIED · 사람 검토 필요"],
+    ["CONTENT SEMANTICS", quality?.semanticGate ? "RUN-BOUND PASS · 사람 승인 아님" : "NOT VERIFIED · 사람 검토 필요"],
     ["AUDIO TRACKS", metrics.finalMedia?.audioStreamCount ?? "—"],
     ["VOICE STYLE", metrics.voiceoverSync?.voiceStyle || "—"],
     ["INPUT BINDING", metrics.inputManifestBinding ? "PASS" : "FAIL"],
@@ -156,8 +194,12 @@ function renderBenchmark() {
   $("#narrative").innerHTML = (hypothesis.narrative || []).map((item) => `<div class="narrative-item"><span>${String(item.step).padStart(2, "0")}</span><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.detail)}</small></div></div>`).join("");
   const maxCategory = Math.max(...categories.map((item) => item.totalViews), 1);
   $("#categories").innerHTML = categories.map((item) => `<div class="category-row"><div class="category-meta"><span>${escapeHtml(item.label)}</span><b>${formatViews(item.averageViews)} 평균</b></div><div class="bar-track"><i style="width:${Math.max(4, Math.round(item.totalViews / maxCategory * 100))}%"></i></div><small>${item.count}개 · 누적 ${formatViews(item.totalViews)}</small></div>`).join("");
-  $("#top-hooks").innerHTML = hooks.map((item, index) => `<div class="hook-row"><span class="rank">${String(index + 1).padStart(2, "0")}</span><div><b>${escapeHtml(item.label)}</b><small>${item.count}개 사용 · ${formatViews(item.averageViews)} 평균 조회</small></div><span class="hook-arrow">↗</span></div>`).join("");
-  $("#top-videos").innerHTML = topVideos.slice(0, 8).map((video, index) => `<a class="top-video" href="https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}" target="_blank" rel="noreferrer"><span class="rank">${String(index + 1).padStart(2, "0")}</span><span class="top-video-title">${escapeHtml(video.title)}</span><strong>${formatViews(video.viewCount)}</strong></a>`).join("");
+  $("#top-hooks").innerHTML = hooks.map((item, index) => `<div class="hook-row"><span class="rank">${String(index + 1).padStart(2, "0")}</span><div><b>${escapeHtml(item.label)}</b><small>${item.count}개 사용 · ${formatViews(item.averageViews)} 평균 조회</small></div><span class="hook-arrow" aria-hidden="true">↗</span></div>`).join("");
+  $("#top-videos").innerHTML = topVideos.slice(0, 8).map((video, index) => {
+    const href = buildYouTubeVideoUrl(video.id);
+    if (!href) return "";
+    return `<a class="top-video" href="${href}" target="_blank" rel="noreferrer"><span class="rank">${String(index + 1).padStart(2, "0")}</span><span class="top-video-title">${escapeHtml(video.title)}</span><strong>${formatViews(video.viewCount)}</strong></a>`;
+  }).join("");
   $("#video-category").innerHTML = `<option value="">전체 주제</option>${categories.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join("")}`;
   const committeeRoles = [
     ["구조 규칙 검사", "대본 필드·출처 텍스트 결속"],
@@ -166,7 +208,7 @@ function renderBenchmark() {
     ["자막·오디오 QC", "자막 측정·오디오 계측"],
     ["provenance 복구 검사", "해시·run·provider 결속"]
   ];
-  $("#committee-roles").innerHTML = committeeRoles.map(([role, scope]) => `<div class="committee-role"><span class="role-mark">+</span><div><b>${escapeHtml(role)}</b><small>${escapeHtml(scope)}</small></div><span class="role-status">SOFTWARE METHOD</span></div>`).join("");
+  $("#committee-roles").innerHTML = committeeRoles.map(([role, scope]) => `<div class="committee-role"><span class="role-mark" aria-hidden="true">+</span><div><b>${escapeHtml(role)}</b><small>${escapeHtml(scope)}</small></div><span class="role-status">SOFTWARE METHOD</span></div>`).join("");
   const ahpWeights = state.analysis.ahp?.weights || AHP_CRITERIA;
   $("#ahp-criteria").innerHTML = `<div class="ahp-benchmark-note"><b>고정 AHP 가중치</b><span>${ahpWeights.map((criterion) => `${escapeHtml(criterion.label)} ${criterion.weight || criterion.targetWeight}%`).join(" · ")}</span><small>분석 산출물은 제목·메타데이터 휴리스틱이며, 프레임·음성·자막 의미론을 대신하지 않습니다.</small></div>`;
   const durationSnapshot = state.analysis.benchmarkProfile?.duration;
@@ -188,6 +230,12 @@ function renderBenchmark() {
   $("#duration-profile").innerHTML = duration ? `<div class="duration-profile-head"><span>DETERMINISTIC RECURSIVE METADATA REDUCER · yt-dlp</span><b>${duration.recommendedTargetSec}s target</b></div><div class="duration-bars"><i style="height:${bucketHeight(0)}%"></i><i style="height:${bucketHeight(1)}%"></i><i style="height:${bucketHeight(2)}%"></i><i style="height:${bucketHeight(3)}%"></i></div><small>${populationLabel} · 권장 범위 ${range[0]}–${range[1]}초 · 전체 ${totalShorts} Shorts 메타데이터 집계 · ${selectedCount === null ? "선택 수 미측정" : `${selectedCount}개 선택`} / ${mediaScope} · 비대표 표본 · 재귀 집계 ${rlmLevels}</small>` : "";
 }
 
+function renderShotPatterns() {
+  const container = $("#shot-pattern-list");
+  if (!container) return;
+  container.innerHTML = shotPatternsMarkup(state.shotPatterns);
+}
+
 async function renderVideos() {
   const params = new URLSearchParams({ page: state.page, limit: 24, sort: state.sort });
   if (state.query) params.set("q", state.query);
@@ -198,11 +246,14 @@ async function renderVideos() {
   $("#page-label").textContent = `${state.page} / ${totalPages}`;
   $("#prev-page").disabled = state.page <= 1;
   $("#next-page").disabled = state.page >= totalPages;
-  $("#video-library").innerHTML = payload.videos.length ? payload.videos.map((video) => {
+  const videoRows = (Array.isArray(payload.videos) ? payload.videos : []).map((video) => {
+    const href = safeYouTubeVideoUrl(video.url);
+    if (!href) return "";
     const category = video.analysis.categories[0]?.label || "분석 중";
     const hook = video.analysis.hookScore;
-    return `<a class="library-row" href="${escapeHtml(video.url)}" target="_blank" rel="noreferrer"><span class="library-position">${String(video.position).padStart(3, "0")}</span><span class="library-title">${escapeHtml(video.title)}<small>${escapeHtml(category)} · ${video.type === "short" ? "Shorts" : escapeHtml(video.duration || "롱폼")}</small></span><span class="hook-score"><i style="width:${hook}%"></i><small>훅 ${hook}</small></span><strong>${formatViews(video.viewCount)}</strong><span class="library-arrow">↗</span></a>`;
-  }).join("") : `<div class="empty-state">검색 조건에 맞는 영상이 없습니다.</div>`;
+    return `<a class="library-row" href="${href}" target="_blank" rel="noreferrer"><span class="library-position">${String(video.position).padStart(3, "0")}</span><span class="library-title">${escapeHtml(video.title)}<small>${escapeHtml(category)} · ${video.type === "short" ? "Shorts" : escapeHtml(video.duration || "롱폼")}</small></span><span class="hook-score"><i style="width:${hook}%"></i><small>훅 ${hook}</small></span><strong>${formatViews(video.viewCount)}</strong><span class="library-arrow" aria-hidden="true">↗</span></a>`;
+  }).filter(Boolean);
+  $("#video-library").innerHTML = videoRows.length ? videoRows.join("") : `<div class="empty-state">검색 조건에 맞는 영상이 없습니다.</div>`;
 }
 
 function passedTechnicalEvidenceGate(job, quality = null) {
@@ -210,11 +261,89 @@ function passedTechnicalEvidenceGate(job, quality = null) {
   return Boolean(result?.technicalEvidenceGate === true || result?.metrics?.technicalEvidenceGate === true);
 }
 
+function passedSemanticGate(job, quality = null) {
+  const result = quality || state.qualityDetails[job?.id]?.quality || job?.qualitySummary;
+  return result?.semanticGate === true;
+}
+
 function statusLabel(status, job = null, quality = null) {
   if (job?.integrity?.status === "blocked") return "무결성 차단";
-  if (status === "completed") return passedTechnicalEvidenceGate(job, quality) ? "렌더·기술 검사 완료 · 콘텐츠 검토 필요" : quality || job?.qualitySummary ? "렌더 완료 · 기술 검사 미통과" : "렌더 완료 · 검증 미확인";
+  if (status === "completed") {
+    if (passedTechnicalEvidenceGate(job, quality) && passedSemanticGate(job, quality)) return "기술·의미 gate 통과 · 게시 전 사람 승인 별도";
+    return quality || job?.qualitySummary ? "렌더 완료 · 검증 gate 미통과" : "렌더 완료 · 검증 미확인";
+  }
   return status === "needs-improvement" ? "렌더 완료 · 개선 필요" : status === "failed" ? "오류" : status === "verifying" ? "검수 중" : status === "running" ? "제작 중" : status === "queued" ? "대기열" : "상태 확인 중";
 }
+
+function clampedProgress(value) {
+  const progress = Number(value);
+  return Number.isFinite(progress) ? Math.min(100, Math.max(0, Math.round(progress))) : 0;
+}
+
+function selectedJob() {
+  return state.jobs.find((job) => job.id === state.selectedJobId) || null;
+}
+
+function captureJobFocus() {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || (!$("#jobs-list")?.contains(active) && !$("#job-detail")?.contains(active))) return null;
+  const card = active.closest?.("[data-job-id]");
+  return {
+    jobId: card?.dataset.jobId || null,
+    control: active.dataset.focusKey || active.id || null,
+    selectionStart: typeof active.selectionStart === "number" ? active.selectionStart : null,
+    selectionEnd: typeof active.selectionEnd === "number" ? active.selectionEnd : null
+  };
+}
+
+function restoreJobFocus(snapshot) {
+  if (!snapshot) return;
+  let target = snapshot.control ? document.querySelector(`[data-focus-key="${CSS.escape(snapshot.control)}"]`) : null;
+  if (!target && snapshot.control) target = document.getElementById(snapshot.control);
+  if (!target && snapshot.jobId) target = [...document.querySelectorAll(".job-card")].find((button) => button.dataset.jobId === snapshot.jobId);
+  if (!(target instanceof HTMLElement)) return;
+  target.focus({ preventScroll: true });
+  if (snapshot.selectionStart !== null && typeof target.setSelectionRange === "function") {
+    target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd ?? snapshot.selectionStart);
+  }
+}
+
+function listUiProjection(jobs) {
+  return jobs.map((job) => ({
+    id: job.id,
+    topic: job.topic,
+    provider: job.provider,
+    status: job.status,
+    stage: job.stage,
+    progress: clampedProgress(job.progress),
+    createdAt: job.createdAt,
+    integrityStatus: job.integrity?.status || null,
+    qualitySummary: job.qualitySummary || null
+  }));
+}
+
+function detailUiProjection(job) {
+  if (!job) return null;
+  return {
+    ...job,
+    artifacts: (Array.isArray(job.artifacts) ? job.artifacts : []).map((artifact) => ({
+      name: artifact?.name || null,
+      kind: artifact?.kind || null,
+      url: artifact?.url || null
+    })),
+    clientQuality: state.qualityDetails[job.id] || null
+  };
+}
+
+function announceSelectedJob(job) {
+  const announcer = $("#job-status-announcer");
+  if (!announcer || !job) return;
+  const signature = jobAnnouncementSignature(job);
+  if (signature === state.announcedJobSignature) return;
+  state.announcedJobSignature = signature;
+  announcer.textContent = `${job.topic || "선택한 작업"}: ${statusLabel(job.status, job)}, ${job.stage || "단계 확인 중"}. ${job.integrity?.message || job.message || ""}`;
+}
+
 async function loadQualityEvidence(job) {
   if (!job?.runId || job.integrity?.status === "blocked" || !["completed", "needs-improvement"].includes(job.status)) return;
   const cached = state.qualityDetails[job.id];
@@ -228,32 +357,69 @@ async function loadQualityEvidence(job) {
   } catch (error) {
     state.qualityDetails[job.id] = { runId: job.runId, error: error.message, quality: null, history: [] };
   }
-  if (state.selectedJobId === job.id) renderJobDetail(job);
+  if (state.selectedJobId === job.id) {
+    state.jobDetailSignature = null;
+    renderJobDetail(job);
+  }
 }
 
-function renderJobs() {
+function renderJobs({ focusSelectedCard = false } = {}) {
   const list = $("#jobs-list");
+  const focusSnapshot = captureJobFocus();
   if (!state.jobs.length) {
-    list.innerHTML = `<div class="empty-state">아직 제작 작업이 없습니다.<br />위에서 주제를 입력하면 파이프라인이 시작됩니다.</div>`;
-    $("#job-detail").innerHTML = `<div class="empty-detail"><span>◌</span><p>작업을 선택하면<br />실시간 산출물이 표시됩니다.</p></div>`;
+    const emptySignature = stableUiSignature([]);
+    if (state.jobListSignature !== emptySignature) {
+      list.innerHTML = `<div class="empty-state">아직 제작 작업이 없습니다.<br />위에서 주제를 입력하면 파이프라인이 시작됩니다.</div>`;
+      state.jobListSignature = emptySignature;
+    }
+    if (state.jobDetailSignature !== "empty") {
+      $("#job-detail").innerHTML = `<div class="empty-detail"><span aria-hidden="true">◌</span><p>작업을 선택하면<br />실시간 산출물이 표시됩니다.</p></div>`;
+      state.jobDetailSignature = "empty";
+    }
     renderPipeline(null);
     return;
   }
   if (!state.selectedJobId || !state.jobs.some((job) => job.id === state.selectedJobId)) state.selectedJobId = state.jobs[0].id;
-  list.innerHTML = state.jobs.map((job) => `<button class="job-card ${job.id === state.selectedJobId ? "selected" : ""}" aria-pressed="${job.id === state.selectedJobId}" data-job-id="${escapeHtml(job.id)}"><div class="job-card-top"><span class="job-status ${job.integrity?.status === "blocked" ? "integrity-blocked" : job.status}"><i></i>${statusLabel(job.status, job)}</span><time>${new Date(job.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div><h3>${escapeHtml(job.topic)}</h3><div class="job-card-bottom"><span>${escapeHtml(job.integrity?.status === "blocked" ? "봉인 증거 확인 필요" : job.stage)} · ${escapeHtml(providerCopy(job.provider).short)}</span><strong>${job.progress || 0}%</strong></div><div class="mini-progress"><i style="width:${job.progress || 0}%"></i></div></button>`).join("");
-  $("#jobs-list").onclick = (event) => {
+  const listSignature = stableUiSignature({ jobs: listUiProjection(state.jobs), selectedJobId: state.selectedJobId });
+  if (state.jobListSignature !== listSignature) {
+    list.innerHTML = state.jobs.map((job) => {
+      const progress = clampedProgress(job.progress);
+      return `<button class="job-card ${job.id === state.selectedJobId ? "selected" : ""}" aria-controls="job-detail" aria-pressed="${job.id === state.selectedJobId}" data-job-id="${escapeHtml(job.id)}"><div class="job-card-top"><span class="job-status ${job.integrity?.status === "blocked" ? "integrity-blocked" : job.status}"><i aria-hidden="true"></i>${statusLabel(job.status, job)}</span><time>${new Date(job.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div><h3>${escapeHtml(job.topic)}</h3><div class="job-card-bottom"><span>${escapeHtml(job.integrity?.status === "blocked" ? "봉인 증거 확인 필요" : job.stage)} · ${escapeHtml(providerCopy(job.provider).short)}</span><strong>${progress}%</strong></div><div class="mini-progress" role="progressbar" aria-label="${escapeHtml(job.topic)} 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><i style="width:${progress}%"></i></div></button>`;
+    }).join("");
+    state.jobListSignature = listSignature;
+  }
+  list.onclick = (event) => {
     const button = event.target.closest(".job-card");
     if (!button) return;
     state.selectedJobId = button.dataset.jobId;
-    renderJobs();
+    state.jobListSignature = null;
+    state.jobDetailSignature = null;
+    state.pipelineSignature = null;
+    renderJobs({ focusSelectedCard: true });
   };
-  const selected = state.jobs.find((job) => job.id === state.selectedJobId);
+  const selected = selectedJob();
   renderJobDetail(selected);
   renderPipeline(selected);
+  announceSelectedJob(selected);
+  if (focusSelectedCard) {
+    [...list.querySelectorAll(".job-card")].find((button) => button.dataset.jobId === state.selectedJobId)?.focus({ preventScroll: true });
+  } else restoreJobFocus(focusSnapshot);
   if (selected && ["completed", "needs-improvement"].includes(selected.status) && selected.runId) void loadQualityEvidence(selected);
 }
 
 function renderPipeline(job) {
+  const signature = stableUiSignature(job ? {
+    id: job.id,
+    provider: job.provider,
+    status: job.status,
+    stage: job.stage,
+    progress: clampedProgress(job.progress),
+    message: job.message || null,
+    integrity: job.integrity || null,
+    qualitySummary: job.qualitySummary || null
+  } : null);
+  if (state.pipelineSignature === signature) return;
+  state.pipelineSignature = signature;
   const generationStep = $('[data-role="generation"]');
   const copy = providerCopy(job?.provider);
   if (generationStep) {
@@ -289,18 +455,35 @@ function renderPipeline(job) {
       ? "FAIL"
       : done ? (stageIndex === 6 && !gatePassed ? "GATE CLOSED" : job.status === "needs-improvement" ? "REVIEW" : "DONE") : active ? (job.status === "verifying" ? "VERIFY" : "RUN") : "WAIT";
   });
-  $("#pipeline-status").textContent = job ? `${copy.status} · ${statusLabel(job.status, job)} · ${job.progress || 0}% · ${job.integrity?.message || job.message || ""}` : "대기 중";
+  $("#pipeline-status").textContent = job ? `${copy.status} · ${statusLabel(job.status, job)} · ${clampedProgress(job.progress)}% · ${job.integrity?.message || job.message || ""}` : "대기 중";
 }
 
 function renderJobDetail(job) {
   const detail = $("#job-detail");
   if (!job) return;
+  const signature = stableUiSignature(detailUiProjection(job));
+  if (state.jobDetailSignature === signature) return;
+  const focusSnapshot = captureJobFocus();
   const copy = providerCopy(job.provider);
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  const artifactRecords = job.artifacts || [];
-  const artifacts = artifactRecords.filter((artifact) => artifact.url).map((artifact) => `<a class="artifact-link" href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer"><span>${artifact.kind?.includes("video") ? "▶" : artifact.kind?.includes("thumbnail") ? "▧" : "≡"}</span>${escapeHtml(artifact.name)}<b>↗</b></a>`).join("");
-  const localControls = job.provider === "local" && job.integrity?.status !== "blocked" && !["completed", "running", "verifying"].includes(job.status) ? `<div class="upload-box"><label for="detail-upload"><span>클립을 여기에 올리세요</span><small>MP4, MOV, WebM · 여러 파일 가능</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local">업로드된 클립으로 편집 실행</button></div>` : "";
-  const localVideoControls = job.provider === "local-video" && job.integrity?.status !== "blocked" && job.status === "queued" ? `<div class="upload-box"><span>영수증 어댑터 실행 대기</span><small>설정된 생성기·비용 상한을 확인한 뒤 시작합니다.</small><button class="secondary-button" id="run-provider">local-video 생성 시작</button></div>` : "";
+  const artifactRecords = Array.isArray(job.artifacts) ? job.artifacts : [];
+  const artifactLinkMarkup = (artifact) => {
+    const href = safeSameOriginArtifactUrl(artifact.url);
+    if (!href) return "";
+    const glyph = artifact.kind?.includes("video") ? "▶" : artifact.kind?.includes("thumbnail") ? "▧" : "≡";
+    return `<a class="artifact-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer"><span aria-hidden="true">${glyph}</span>${escapeHtml(artifact.name)}<b aria-hidden="true">↗</b></a>`;
+  };
+  const artifactGroups = partitionRunArtifacts(artifactRecords, job.runId);
+  const immutableArtifacts = artifactGroups.immutable.map(artifactLinkMarkup).filter(Boolean).join("");
+  const mutableArtifacts = artifactGroups.mutable.map(artifactLinkMarkup).filter(Boolean).join("");
+  const localControls = job.provider === "local" && job.integrity?.status !== "blocked" && !["completed", "running", "verifying"].includes(job.status) ? `<div class="upload-box"><label for="detail-upload"><span>클립을 여기에 올리세요</span><small>MP4, MOV, WebM · 여러 파일 가능</small></label><input id="detail-upload" data-focus-key="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" data-focus-key="run-local" id="run-local">업로드된 클립으로 편집 실행</button></div>` : "";
+  const localVideoControls = job.provider === "local-video" && job.integrity?.status !== "blocked" && job.status === "queued" ? `<div class="upload-box"><span>영수증 어댑터 실행 대기</span><small>설정된 생성기·비용 상한을 확인한 뒤 시작합니다.</small><button class="secondary-button" data-focus-key="run-provider" id="run-provider">local-video 생성 시작</button></div>` : "";
+  const semanticEligibility = semanticRevalidationEligibility(job);
+  const semanticRevalidationControls = semanticEligibility.eligible
+    ? `<div class="upload-box"><span>Purpose-aware 로컬 의미 재검수</span><small>가능 여부를 현재 봉인 run에서 다시 확인한 뒤 새 child run을 만듭니다. 통과·완료를 미리 보장하지 않습니다.</small><button class="secondary-button" data-focus-key="semantic-revalidate" id="semantic-revalidate">기존 봉인 영상만 로컬 재검수 · Gemini 요청 0회</button></div>`
+    : job.provider === "local-video" && job.status === "needs-improvement"
+      ? `<div class="pending-evidence">로컬 의미 재검수 대기 · ${escapeHtml(job.semanticRevalidationReadiness?.reason || "provider-0 resume 경로를 지원하지 않습니다.")}</div>`
+      : "";
   const providerNotice = job.provider === "local-video"
     ? `<div class="pending-evidence">로컬 영상 모델 명령 어댑터 · 설정된 로컬 생성기 실행 결과만 사용합니다. 로컬 클립 업로드 경로가 아닙니다.</div>`
     : "";
@@ -310,17 +493,23 @@ function renderJobDetail(job) {
   const runArtifact = (suffix) => artifactRecords.find((artifact) => job.runId && artifact.name === `runs/${job.runId}/artifacts/${suffix}`) || {};
   const previewVideo = runArtifact("final.mp4");
   const previewThumbnail = runArtifact("thumbnail.jpg");
-  const previewMarkup = previewVideo.url
-    ? `<video controls playsinline preload="metadata" poster="${escapeHtml(previewThumbnail.url || "")}" src="${escapeHtml(previewVideo.url)}"></video>`
+  const previewVideoUrl = safeSameOriginArtifactUrl(previewVideo.url);
+  const previewThumbnailUrl = safeSameOriginArtifactUrl(previewThumbnail.url);
+  const previewMarkup = previewVideoUrl
+    ? `<video controls playsinline preload="metadata"${previewThumbnailUrl ? ` poster="${escapeHtml(previewThumbnailUrl)}"` : ""} src="${escapeHtml(previewVideoUrl)}"></video>`
     : `<div class="preview-unavailable">현재 실행의 불변 미리보기 산출물이 없습니다.</div>`;
   const qualityPanel = quality
     ? `<div class="ahp-summary ${passedTechnicalEvidenceGate(job, quality) ? "passed" : "needs-improvement"}"><div><span class="panel-kicker">${passedTechnicalEvidenceGate(job, quality) ? "TECHNICAL EVIDENCE GATE PASSED" : "TECHNICAL EVIDENCE GATE CLOSED"}</span><strong>${scoreText(quality.totalScore)}<small>/ 100</small></strong></div><span>${passedTechnicalEvidenceGate(job, quality) ? "구조·무결성 검사 통과 · 콘텐츠 품질 판정 아님" : `${job.status === "needs-improvement" ? "개선 필요 · " : ""}점수만으로는 기술 검사 통과가 아닙니다`}</span></div>${renderAHPPanel(quality, history)}${quality.blockers?.length ? `<div class="warning-box"><b>차단·개선 항목</b><ul>${quality.blockers.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}`
     : `<div class="pending-evidence">품질 검수 대기 · 현재 상태 ${escapeHtml(statusLabel(job.status, job))}${detailState?.error ? ` · ${escapeHtml(detailState.error)}` : ""}</div>`;
-  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.integrity?.status === "blocked" ? "integrity-blocked" : job.status}"><i></i>${statusLabel(job.status, job, quality)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.integrity?.message || job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}${["completed", "needs-improvement"].includes(job.status) && job.integrity?.status !== "blocked" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${providerNotice}${localControls}${localVideoControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
+  const progress = clampedProgress(job.progress);
+  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.integrity?.status === "blocked" ? "integrity-blocked" : job.status}"><i aria-hidden="true"></i>${statusLabel(job.status, job, quality)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.integrity?.message || job.message || "")}</span><b>${progress}%</b></div><div class="progress-track" role="progressbar" aria-label="선택한 작업 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><i style="width:${progress}%"></i></div></div>${qualityPanel}${["completed", "needs-improvement"].includes(job.status) && job.integrity?.status !== "blocked" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${providerNotice}${localControls}${localVideoControls}${semanticRevalidationControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${immutableArtifacts ? `<div class="artifact-list"><span class="panel-kicker">IMMUTABLE RUN ARTIFACTS</span>${immutableArtifacts}</div>` : ""}${mutableArtifacts ? `<div class="artifact-list"><span class="panel-kicker">MUTABLE WORKSPACE REFERENCES</span>${mutableArtifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" data-focus-key="retry-job" id="retry-job">다시 실행</button></div>` : ""}`;
+  state.jobDetailSignature = signature;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#run-provider")?.addEventListener("click", runSelectedJob);
+  $("#semantic-revalidate")?.addEventListener("click", revalidateSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
+  restoreJobFocus(focusSnapshot);
 }
 
 async function uploadLocalClips(event) {
@@ -344,6 +533,27 @@ async function runSelectedJob() {
   } catch (error) { showToast(error.message, "error"); }
 }
 
+async function revalidateSelectedJob() {
+  if (!state.selectedJobId) return;
+  const job = state.jobs.find((entry) => entry.id === state.selectedJobId);
+  const eligibility = semanticRevalidationEligibility(job);
+  if (!eligibility.eligible) {
+    showToast(eligibility.reason, "error");
+    return;
+  }
+  const confirmation = "기존 봉인 영상만 로컬 재검수 · Gemini 요청 0회";
+  if (!window.confirm(`${confirmation}\n\n원본 run은 변경되지 않으며 새 child run이 생성됩니다.`)) return;
+  try {
+    const result = await api(`/api/jobs/${encodeURIComponent(job.id)}/semantic/revalidate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceRunId: eligibility.sourceRunId })
+    });
+    showToast(`${result.message || confirmation} · child ${result.childRunId || "시작 중"}`);
+    await refreshJobs();
+  } catch (error) { showToast(error.message, "error"); }
+}
+
 async function pollJobs() {
   try {
     await refreshJobs();
@@ -356,9 +566,9 @@ async function pollJobs() {
 
 async function refreshJobs() {
   const payload = await api("/api/jobs");
-  state.jobs = payload.jobs;
+  state.jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
   renderJobs();
-  const active = state.jobs.some((job) => ["queued", "running", "verifying"].includes(job.status));
+  const active = shouldPollJobs(state.jobs);
   if (active && !state.poll) state.poll = window.setInterval(pollJobs, 1800);
   if (!active && state.poll) { window.clearInterval(state.poll); state.poll = null; }
 }
@@ -376,7 +586,8 @@ async function createProduction(event) {
     const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     state.selectedJobId = payload.job.id;
     await refreshJobs();
-    document.querySelector("#rendering").scrollIntoView({ behavior: "smooth", block: "start" });
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    document.querySelector("#rendering").scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
     const message = provider === "gemini-browser"
       ? "Gemini 생성 요청을 등록했습니다. 로그인·쿼터·UI 상태에 따라 중단될 수 있습니다."
       : provider === "local-video"
@@ -417,8 +628,8 @@ async function refreshHealth() {
     $("#system-dot").className = `dot ${ready ? "ready" : "warn"}`;
     $("#system-label").textContent = ready ? "로컬 편집 도구 준비 완료" : "로컬 도구 설정 확인 필요";
     $("#browser-start").classList.toggle("connected", browserConnected);
-    $("#browser-start").innerHTML = `<span class="button-dot"></span>${browserConnected ? "Gemini Chrome 연결됨" : "Gemini Chrome 연결"}`;
-    $("#health-capabilities").innerHTML = `<div class="health-title">LOCAL CAPABILITIES <small>${ready ? "LOCAL TOOLING READY · PROVIDER STATUS SEPARATE" : "CHECK REQUIRED"}</small></div><div class="health-items">${checks.map(([name, value]) => `<span class="${value ? "ok" : "missing"}"><i></i>${name} ${value ? "PASS" : "MISSING"}</span>`).join("")}<span class="${browserConnected ? "ok" : "missing"}"><i></i>Gemini Chrome ${browserConnected ? "CONNECTED" : "DISCONNECTED"}</span><span class="${health.capabilities.geminiApiKey ? "ok" : "muted"}"><i></i>Gemini text API ${health.capabilities.geminiApiKey ? "CONFIGURED" : "NOT CONFIGURED"}</span><span class="muted"><i></i>yt-dlp ${escapeHtml(ytDlp.version || "unknown")} · ${escapeHtml(ytDlp.maintenance || "maintenance unavailable")}</span><span class="${monitorProfiles.some((profile) => profile.available) ? "ok" : "muted"}"><i></i>Gemini quota monitor ${escapeHtml(monitorLabel)}</span></div>`;
+    $("#browser-start").innerHTML = `<span class="button-dot" aria-hidden="true"></span>${browserConnected ? "Gemini Chrome 연결됨" : "Gemini Chrome 연결"}`;
+    $("#health-capabilities").innerHTML = `<div class="health-title">LOCAL CAPABILITIES <small>${ready ? "LOCAL TOOLING READY · PROVIDER STATUS SEPARATE" : "CHECK REQUIRED"}</small></div><div class="health-items">${checks.map(([name, value]) => `<span class="${value ? "ok" : "missing"}"><i aria-hidden="true"></i>${name} ${value ? "PASS" : "MISSING"}</span>`).join("")}<span class="${browserConnected ? "ok" : "missing"}"><i aria-hidden="true"></i>Gemini Chrome ${browserConnected ? "CONNECTED" : "DISCONNECTED"}</span><span class="${health.capabilities.geminiApiKey ? "ok" : "muted"}"><i aria-hidden="true"></i>Gemini text API ${health.capabilities.geminiApiKey ? "CONFIGURED" : "NOT CONFIGURED"}</span><span class="muted"><i aria-hidden="true"></i>yt-dlp ${escapeHtml(ytDlp.version || "unknown")} · ${escapeHtml(ytDlp.maintenance || "maintenance unavailable")}</span><span class="${monitorProfiles.some((profile) => profile.available) ? "ok" : "muted"}"><i aria-hidden="true"></i>Gemini quota monitor ${escapeHtml(monitorLabel)}</span></div>`;
     $("#provider-readiness").innerHTML = readiness.error
       ? `<span class="health-error">제공자 준비상태를 확인하지 못했습니다: ${escapeHtml(readiness.error)}</span>`
       : providerReadinessMarkup(readiness);
@@ -433,7 +644,7 @@ async function refreshHealth() {
 async function connectBrowser() {
   const button = $("#browser-start");
   button.disabled = true;
-  button.innerHTML = `<span class="button-dot"></span> Chrome 시작 중…`;
+  button.innerHTML = `<span class="button-dot" aria-hidden="true"></span> Chrome 시작 중…`;
   try {
     const result = await api("/api/browser/start", { method: "POST" });
     showToast(result.started ? "전용 Chrome을 시작했습니다. Gemini 로그인 세션을 확인하세요." : "Chrome DevTools 연결이 확인되었습니다.");
@@ -443,12 +654,38 @@ async function connectBrowser() {
 }
 
 function bindEvents() {
+  $(".skip-link")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const main = $("#workspace-main");
+    if (!main) return;
+    history.replaceState(null, "", "#workspace-main");
+    main.focus({ preventScroll: true });
+    if (getComputedStyle(main).overflowY === "auto" || getComputedStyle(main).overflowY === "scroll") {
+      main.scrollTo({ top: 0, behavior: "auto" });
+    } else {
+      window.scrollTo({ top: main.getBoundingClientRect().top + window.scrollY, behavior: "auto" });
+    }
+  });
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider").addEventListener("change", syncProviderDefaults);
   $("#browser-start").addEventListener("click", connectBrowser);
-  $("#refresh-all").addEventListener("click", async () => { await Promise.all([refreshJobs(), renderVideos(), refreshHealth()]); showToast("데이터를 갱신했습니다."); });
+  $("#refresh-all").addEventListener("click", async () => {
+    const button = $("#refresh-all");
+    button.disabled = true;
+    try {
+      await Promise.all([refreshJobs(), renderVideos(), refreshHealth()]);
+      showToast("데이터를 갱신했습니다.");
+    } catch (error) {
+      showToast(`데이터 갱신 실패: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
   $$('[data-topic]').forEach((button) => button.addEventListener("click", () => { $("#topic").value = button.dataset.topic; $("#topic").focus(); }));
   $$(".toggle-label input").forEach((input) => input.addEventListener("change", syncToggleLabels));
+  $$(".nav-item").forEach((link) => link.addEventListener("click", () => activateNavigation(link.hash.slice(1))));
+  window.addEventListener("hashchange", () => activateNavigation(window.location.hash.slice(1) || "create"));
+  activateNavigation(window.location.hash.slice(1) || "create");
   syncToggleLabels();
   syncProviderDefaults();
   $("#video-search").addEventListener("input", (event) => { state.query = event.target.value; state.page = 1; window.clearTimeout(state.searchTimer); state.searchTimer = window.setTimeout(() => renderVideos().catch((error) => showToast(`영상 검색 실패: ${error.message}`, "error")), 250); });
@@ -481,10 +718,16 @@ function syncProviderDefaults() {
 async function init() {
   bindEvents();
   try {
-    const [analysis, benchmarkProfile] = await Promise.all([api("/api/channel"), api("/api/benchmark/profile")]);
+    const [analysis, benchmarkProfile, shotPatterns] = await Promise.all([
+      api("/api/channel"),
+      api("/api/benchmark/profile"),
+      api("/api/shot-patterns").catch((error) => ({ error: error.message }))
+    ]);
     state.analysis = { ...analysis, benchmarkProfile };
+    state.shotPatterns = shotPatterns;
     renderStats();
     renderBenchmark();
+    renderShotPatterns();
     await Promise.all([renderVideos(), refreshJobs(), refreshHealth()]);
   } catch (error) {
     showToast(error.message, "error");

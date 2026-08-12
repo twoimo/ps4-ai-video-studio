@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,15 +11,20 @@ import {
   createSessionCookie,
   createSessionToken,
   createStudioRequestHandler,
+  immutableProviderClosureBound,
   isLoopbackHostname,
   persistStudioToken,
   redactGeminiMonitor,
   resolveStudioToken,
   shouldIssueSessionCookie,
   startStudioServer,
+  verifyImmutableShotPatternClosure,
   validateRequestContentLength,
   validateUploadBatch
 } from "../src/server.mjs";
+import { JOBS_DIR } from "../src/pipeline.mjs";
+import { hashFile } from "../src/run-ledger.mjs";
+import { applyShotPatternsToScript, createShotPatternReceipt, hashShotPatternValue, readShotPatternCatalog } from "../src/shot-patterns.mjs";
 
 const temporaryDirectories = [];
 
@@ -157,6 +163,34 @@ describe("same-origin mutation authorization", () => {
     expect(accepted.status).toBe(404);
   });
 
+  test("serves the read-only shot-pattern projection only inside the authenticated API boundary", async () => {
+    const token = createSessionToken();
+    const handler = createStudioRequestHandler({ token });
+    const rejected = await handler(new Request("http://127.0.0.1:3000/api/shot-patterns"));
+    const accepted = await handler(new Request("http://127.0.0.1:3000/api/shot-patterns", {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}` }
+    }));
+
+    expect(rejected.status).toBe(403);
+    expect(accepted.status).toBe(200);
+    const payload = await accepted.json();
+    expect(payload).toMatchObject({
+      schemaVersion: 1,
+      catalogId: "ps4-higgsfield-learning-patterns-v1",
+      usage: {
+        mode: "provider-camera-continuity-suffix/v1",
+        catalogResearch: {
+          providerCallsMade: false,
+          generationSpend: false,
+          remoteAssetsCopiedIntoProject: false
+        }
+      }
+    });
+    expect(payload.patterns).toHaveLength(8);
+    expect(payload.patterns.every((pattern) => !Object.hasOwn(pattern, "template") && !Object.hasOwn(pattern, "variables"))).toBe(true);
+    expect(JSON.stringify(payload)).not.toContain("data:image/");
+  });
+
   test("binds a real Bun server to the loopback interface", async () => {
     const directory = await mkdtemp(join(tmpdir(), "ps4-server-test-"));
     temporaryDirectories.push(directory);
@@ -198,6 +232,176 @@ describe("same-origin mutation authorization", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+describe("sealed shot-pattern provider closure", () => {
+  const receiptName = "runs/run-1/shot-pattern-receipt.json";
+  const receiptSha = `sha256:${"a".repeat(64)}`;
+  const reference = {
+    path: receiptName,
+    sha256: receiptSha,
+    receiptHash: `sha256:${"b".repeat(64)}`,
+    catalogId: "catalog-1",
+    catalogHash: `sha256:${"c".repeat(64)}`,
+    continuityContractHash: `sha256:${"d".repeat(64)}`,
+    segmentCount: 2,
+    applicationMode: "provider-camera-continuity-suffix/v1",
+    providerEligible: false,
+    providerSubmissionPlanned: false,
+    submittedToProvider: false,
+    providerRequestHash: null,
+    providerGenerationHash: null
+  };
+  const manifest = {
+    runId: "run-1",
+    shotPatterns: reference,
+    script: { shotPatterns: { ...reference } },
+    immutableArtifacts: [{ name: receiptName, sha256: receiptSha }]
+  };
+  const quality = {
+    metrics: {
+      provider: "local",
+      providerProof: true,
+      shotPatternReceiptBinding: true,
+      shotPatternReceipt: {
+        path: receiptName,
+        sha256: receiptSha,
+        receiptHash: reference.receiptHash,
+        catalogId: reference.catalogId,
+        applicationMode: reference.applicationMode,
+        submittedToProvider: reference.submittedToProvider,
+        segmentCount: reference.segmentCount
+      },
+      evidenceHashes: { [receiptName]: receiptSha }
+    }
+  };
+
+  test("requires both manifest references, the immutable receipt, and the quality binding", () => {
+    expect(immutableProviderClosureBound("local", quality, manifest, {})).toBe(true);
+    expect(immutableProviderClosureBound("local", quality, { ...manifest, shotPatterns: undefined }, {})).toBe(false);
+    expect(immutableProviderClosureBound("local", quality, { ...manifest, script: {} }, {})).toBe(false);
+    expect(immutableProviderClosureBound("local", quality, { ...manifest, immutableArtifacts: [] }, {})).toBe(false);
+    expect(immutableProviderClosureBound("local", { metrics: { ...quality.metrics, shotPatternReceiptBinding: false } }, manifest, {})).toBe(false);
+  });
+
+  test("keeps pre-shot-pattern sealed runs backward compatible", () => {
+    expect(immutableProviderClosureBound(
+      "local",
+      { metrics: { provider: "local", providerProof: true } },
+      { runId: "legacy-run", immutableArtifacts: [] },
+      {}
+    )).toBe(true);
+  });
+
+  test("recomputes the full immutable receipt from the sealed script", async () => {
+    const jobId = `test-shot-${randomUUID()}`;
+    const runId = `run-${randomUUID()}`;
+    const jobDir = join(JOBS_DIR, jobId);
+    const artifactDir = join(jobDir, "runs", runId, "artifacts");
+    temporaryDirectories.push(jobDir);
+    await mkdir(artifactDir, { recursive: true });
+
+    const script = applyShotPatternsToScript({
+      videoFormat: "vertical",
+      evidenceTextBindingHash: `sha256:${"e".repeat(64)}`,
+      segments: [{
+        claimId: "claim-1",
+        durationHint: 10,
+        visualPrompt: "Vertical evidence-bound documentary view of the exact cited courtyard stone detail."
+      }]
+    }, {
+      id: jobId,
+      provider: "local",
+      format: "vertical",
+      clipCount: 1,
+      targetDurationSec: 10
+    }, await readShotPatternCatalog());
+    const receipt = createShotPatternReceipt(script, { id: jobId, provider: "local" }, runId);
+    const scriptPath = join(artifactDir, "script.json");
+    const receiptName = `runs/${runId}/shot-pattern-receipt.json`;
+    const receiptPath = join(artifactDir, receiptName.replaceAll("/", "__"));
+    await writeFile(scriptPath, `${JSON.stringify(script, null, 2)}\n`);
+    await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+
+    const scriptStat = await stat(scriptPath);
+    const receiptStat = await stat(receiptPath);
+    const reference = {
+      path: receiptName,
+      sha256: await hashFile(receiptPath),
+      receiptHash: receipt.receiptHash,
+      catalogId: receipt.catalogId,
+      catalogHash: receipt.catalogHash,
+      continuityContractHash: receipt.continuityContractHash,
+      segmentCount: receipt.segmentCount,
+      applicationMode: receipt.applicationMode,
+      providerEligible: receipt.providerEligible,
+      providerSubmissionPlanned: receipt.providerSubmissionPlanned,
+      submittedToProvider: receipt.submittedToProvider,
+      providerRequestSentThisRun: receipt.providerRequestSentThisRun,
+      inheritedProviderSubmission: receipt.inheritedProviderSubmission,
+      sourceSubmissionRunId: receipt.sourceSubmissionRunId,
+      sourceGenerationHash: receipt.sourceGenerationHash,
+      providerRequestHash: receipt.providerRequestHash,
+      providerGenerationHash: receipt.providerGenerationHash
+    };
+    const immutableArtifacts = [
+      { name: "script.json", path: `runs/${runId}/artifacts/script.json`, bytes: scriptStat.size, sha256: await hashFile(scriptPath) },
+      { name: receiptName, path: `runs/${runId}/artifacts/${receiptName.replaceAll("/", "__")}`, bytes: receiptStat.size, sha256: reference.sha256 }
+    ];
+    const manifest = { runId, shotPatterns: reference, script: { shotPatterns: { ...reference } }, immutableArtifacts };
+    const sealedQuality = {
+      metrics: {
+        provider: "local",
+        providerProof: true,
+        shotPatternReceiptBinding: true,
+        shotPatternReceipt: {
+          path: receiptName,
+          sha256: reference.sha256,
+          receiptHash: reference.receiptHash,
+          catalogId: reference.catalogId,
+          applicationMode: reference.applicationMode,
+          submittedToProvider: reference.submittedToProvider,
+          providerRequestSentThisRun: reference.providerRequestSentThisRun,
+          inheritedProviderSubmission: reference.inheritedProviderSubmission,
+          sourceSubmissionRunId: reference.sourceSubmissionRunId,
+          sourceGenerationHash: reference.sourceGenerationHash,
+          segmentCount: reference.segmentCount
+        },
+        evidenceHashes: { [receiptName]: reference.sha256 }
+      }
+    };
+
+    expect(await verifyImmutableShotPatternClosure({ id: jobId, runId }, "local", sealedQuality, manifest)).toBe(true);
+
+    const tampered = structuredClone(receipt);
+    tampered.segments[0].patternId = "tampered-pattern";
+    const { receiptHash: _oldReceiptHash, ...tamperedPayload } = tampered;
+    tampered.receiptHash = hashShotPatternValue(tamperedPayload);
+    await writeFile(receiptPath, `${JSON.stringify(tampered, null, 2)}\n`);
+    const tamperedStat = await stat(receiptPath);
+    const tamperedSha = await hashFile(receiptPath);
+    const tamperedReference = { ...reference, sha256: tamperedSha, receiptHash: tampered.receiptHash };
+    const tamperedManifest = {
+      ...manifest,
+      shotPatterns: tamperedReference,
+      script: { shotPatterns: { ...tamperedReference } },
+      immutableArtifacts: immutableArtifacts.map((artifact) => artifact.name === receiptName
+        ? { ...artifact, bytes: tamperedStat.size, sha256: tamperedSha }
+        : artifact)
+    };
+    const tamperedQuality = {
+      metrics: {
+        ...sealedQuality.metrics,
+        shotPatternReceipt: {
+          ...sealedQuality.metrics.shotPatternReceipt,
+          sha256: tamperedSha,
+          receiptHash: tampered.receiptHash
+        },
+        evidenceHashes: { [receiptName]: tamperedSha }
+      }
+    };
+    expect(await verifyImmutableShotPatternClosure({ id: jobId, runId }, "local", tamperedQuality, tamperedManifest)).toBe(false);
   });
 });
 

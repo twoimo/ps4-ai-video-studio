@@ -1,16 +1,20 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { generateGeminiClips } from "./gemini-browser.mjs";
+import { buildGeminiClipPrompt, buildGeminiGenerationRequest, canonicalGeminiResumeScriptHash, generateGeminiClips, readGeminiGenerationReceipt } from "./gemini-browser.mjs";
 import { generateLocalVideoClips } from "./local-video-provider.mjs";
-import { createLocalSemanticReceipt, LOCAL_SEMANTIC_MODEL, preflightLocalSemanticVerifier } from "./local-semantic-verifier.mjs";
+import { createLocalSemanticReceipt, LOCAL_SEMANTIC_MODEL, LOCAL_SEMANTIC_POLICY_BINDING, preflightLocalSemanticVerifier } from "./local-semantic-verifier.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
 import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
+import { applyShotPatternsToScript, createShotPatternReceipt, providerPromptBindingForSegment, readShotPatternCatalog } from "./shot-patterns.mjs";
+import { SEMANTIC_REVALIDATION_MODE } from "./semantic-revalidation-closure.mjs";
+
+export { SEMANTIC_REVALIDATION_MODE } from "./semantic-revalidation-closure.mjs";
 
 export const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = join(ROOT, "data");
@@ -218,14 +222,24 @@ async function commandOutput(command, args) {
   return result.stdout.trim();
 }
 
-async function callGeminiText(topic, clipCount, targetDurationSec, sourceEntries = []) {
+function extractiveVisualTemplate(format = "vertical") {
+  return {
+    prefix: EXTRACTIVE_VISUAL_PREFIXES[format === "landscape" ? "landscape" : "vertical"],
+    suffix: EXTRACTIVE_VISUAL_SUFFIX
+  };
+}
+
+async function callGeminiText(topic, clipCount, targetDurationSec, sourceEntries = [], format = "vertical") {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
   const promptSources = evidenceForPrompt(sourceEntries);
   if (!promptSources.length) throw new Error("대본 생성에 사용할 검증 출처 본문이 없습니다.");
   const sourceCatalog = JSON.stringify(promptSources);
-  const prompt = `당신은 한국어 유튜브 다큐멘터리 쇼츠 작가다. 주제는 "${topic}"이다. 정확히 ${clipCount}개의 생성형 영상 클립으로 약 ${targetDurationSec}초의 세로 영상을 만든다. 아래 SOURCE_EVIDENCE에 실제로 적힌 사실만 사용하고, 일반 지식으로 빈칸을 채우거나 추측하지 않는다. 모든 장면에는 서로 다른 claimId와 정확히 하나의 evidenceRef를 넣는다. 각 장면의 claim·caption·narration·evidenceRef.quote는 선택한 evidence의 완전한 한 문장을 글자 하나 바꾸지 말고 동일하게 복사한다. title과 hook도 선택한 완전한 evidence 문장 하나를 그대로 복사한다. 전체 narration은 장면별 narration을 순서대로 공백 하나로 연결한다. visualPrompt는 반드시 'vertical cinematic documentary visualization depicting only this evidence: ' + JSON.stringify(선택한 완전한 문장) + '; consistent visual style, no added text or third-party logos; retain any provider-required provenance mark'의 고정 형식만 사용한다. evidenceRefs.sourceId/evidenceId는 제공값을 그대로 쓴다. 근거가 부족하면 JSON 대신 EVIDENCE_INSUFFICIENT만 반환한다. 장면별 durationHint 합계는 목표 길이에 가깝게 한다.\nSOURCE_EVIDENCE=${sourceCatalog}\n아래 JSON만 반환한다.\n{\n  "title": "선택한 완전한 evidence 문장",\n  "hook": "선택한 완전한 evidence 문장",\n  "narration": "장면별 narration을 순서대로 연결",\n  "researchStatus": "verified",\n  "segments": [{"claimId":"claim-1", "claim":"선택한 완전한 evidence 문장", "caption":"선택한 완전한 evidence 문장", "narration":"선택한 완전한 evidence 문장", "visualPrompt":"고정 extractive evidence template", "durationHint":13, "evidenceRefs":[{"sourceId":"https://...", "evidenceId":"excerpt-1", "quote":"선택한 완전한 evidence 문장"}]}]\n}\nsegments는 정확히 ${clipCount}개다.`;
+  const normalizedFormat = format === "landscape" ? "landscape" : "vertical";
+  const formatDescription = normalizedFormat === "landscape" ? "가로 16:9" : "세로 9:16";
+  const visualTemplate = extractiveVisualTemplate(normalizedFormat);
+  const prompt = `당신은 한국어 유튜브 다큐멘터리 영상 작가다. 주제는 "${topic}"이다. 정확히 ${clipCount}개의 생성형 영상 클립으로 약 ${targetDurationSec}초의 ${formatDescription} 영상을 만든다. 아래 SOURCE_EVIDENCE에 실제로 적힌 사실만 사용하고, 일반 지식으로 빈칸을 채우거나 추측하지 않는다. 모든 장면에는 서로 다른 claimId와 정확히 하나의 evidenceRef를 넣는다. 각 장면의 claim·caption·narration·evidenceRef.quote는 선택한 evidence의 완전한 한 문장을 글자 하나 바꾸지 말고 동일하게 복사한다. title과 hook도 선택한 완전한 evidence 문장 하나를 그대로 복사한다. 전체 narration은 장면별 narration을 순서대로 공백 하나로 연결한다. visualPrompt는 반드시 ${JSON.stringify(visualTemplate.prefix)} + JSON.stringify(선택한 완전한 문장) + ${JSON.stringify(visualTemplate.suffix)}의 고정 형식만 사용한다. evidenceRefs.sourceId/evidenceId는 제공값을 그대로 쓴다. 근거가 부족하면 JSON 대신 EVIDENCE_INSUFFICIENT만 반환한다. 장면별 durationHint 합계는 목표 길이에 가깝게 한다.\nSOURCE_EVIDENCE=${sourceCatalog}\n아래 JSON만 반환한다.\n{\n  "title": "선택한 완전한 evidence 문장",\n  "hook": "선택한 완전한 evidence 문장",\n  "narration": "장면별 narration을 순서대로 연결",\n  "researchStatus": "verified",\n  "segments": [{"claimId":"claim-1", "claim":"선택한 완전한 evidence 문장", "caption":"선택한 완전한 evidence 문장", "narration":"선택한 완전한 evidence 문장", "visualPrompt":"고정 extractive evidence template", "durationHint":13, "evidenceRefs":[{"sourceId":"https://...", "evidenceId":"excerpt-1", "quote":"선택한 완전한 evidence 문장"}]}]\n}\nsegments는 정확히 ${clipCount}개다.`;
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -240,7 +254,7 @@ async function callGeminiText(topic, clipCount, targetDurationSec, sourceEntries
   if (/^EVIDENCE_INSUFFICIENT\b/i.test(text.trim())) throw new Error("Gemini가 출처 근거 부족을 보고했습니다.");
   const jsonText = text.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
   const parsed = JSON.parse(jsonText);
-  return validateEvidenceBoundScript(parsed, sourceEntries, clipCount, "gemini-api");
+  return validateEvidenceBoundScript({ ...parsed, videoFormat: normalizedFormat }, sourceEntries, clipCount, "gemini-api", normalizedFormat);
 }
 function evidenceForPrompt(sources, maxCharacters = 48000) {
   const output = [];
@@ -265,7 +279,10 @@ function evidenceForPrompt(sources, maxCharacters = 48000) {
 
 // This is deliberately an extractive binding check, not a factual-entailment verdict.
 export const EVIDENCE_TEXT_BINDING_ALGORITHM = "deterministic-extractive-binding/v3";
-const EXTRACTIVE_VISUAL_PREFIX = "vertical cinematic documentary visualization depicting only this evidence: ";
+const EXTRACTIVE_VISUAL_PREFIXES = Object.freeze({
+  vertical: "vertical cinematic documentary visualization depicting only this evidence: ",
+  landscape: "landscape cinematic documentary visualization depicting only this evidence: "
+});
 const EXTRACTIVE_VISUAL_SUFFIX = "; consistent visual style, no added text or third-party logos; retain any provider-required provenance mark";
 
 const EVIDENCE_TEXT_STOPWORDS = new Set([
@@ -433,9 +450,10 @@ function assertExtractiveTextBinding({ claimId, field, text, evidenceTexts, allo
   };
 }
 
-function assertExtractiveVisualBinding({ claimId, text, evidenceTexts }) {
+function assertExtractiveVisualBinding({ claimId, text, evidenceTexts, format = "vertical" }) {
   const target = String(text || "").trim();
-  const matchedIndex = evidenceTexts.findIndex((quote) => target === `${EXTRACTIVE_VISUAL_PREFIX}${JSON.stringify(quote)}${EXTRACTIVE_VISUAL_SUFFIX}`);
+  const { prefix, suffix } = extractiveVisualTemplate(format);
+  const matchedIndex = evidenceTexts.findIndex((quote) => target === `${prefix}${JSON.stringify(quote)}${suffix}`);
   if (matchedIndex < 0) throw new Error(`${claimId}의 영상 프롬프트가 고정 extractive evidence template과 일치하지 않습니다.`);
   return {
     field: "영상 프롬프트",
@@ -534,7 +552,7 @@ function assertEvidenceTextBinding({ claimId, field, text, evidenceTexts, anchor
   };
 }
 
-function buildEvidenceTextBinding(parsed, segments, sourceMap) {
+function buildEvidenceTextBinding(parsed, segments, sourceMap, format = "vertical") {
   const segmentBindings = segments.map((segment) => {
     const evidenceRecords = segment.sourceEvidence.map((item) => ({
       sourceId: item.sourceId,
@@ -557,7 +575,7 @@ function buildEvidenceTextBinding(parsed, segments, sourceMap) {
     }
     bindings.push(assertExtractiveTextBinding({ claimId: segment.claimId, field: "내레이션", text: segment.narration, evidenceTexts, allowTerminalPunctuation: true }));
     bindings.push(assertExtractiveTextBinding({ claimId: segment.claimId, field: "자막", text: segment.caption, evidenceTexts, allowTerminalPunctuation: true }));
-    bindings.push(assertExtractiveVisualBinding({ claimId: segment.claimId, text: segment.visualPrompt, evidenceTexts }));
+    bindings.push(assertExtractiveVisualBinding({ claimId: segment.claimId, text: segment.visualPrompt, evidenceTexts, format }));
     return {
       claimId: segment.claimId,
       evidenceHash: hashJson(evidenceRecords),
@@ -611,7 +629,9 @@ function containingEvidenceSentence(parentQuote, selectedQuote) {
   return sentenceSpans(parent).find((span) => span.quote.includes(selected))?.quote || selected;
 }
 
-export function validateEvidenceBoundScript(parsed, sources, clipCount, generatedBy = "unknown") {
+export function validateEvidenceBoundScript(parsed, sources, clipCount, generatedBy = "unknown", expectedFormat = parsed?.videoFormat || "vertical") {
+  const videoFormat = expectedFormat === "landscape" ? "landscape" : "vertical";
+  if (parsed?.videoFormat && parsed.videoFormat !== videoFormat) throw new Error("근거 결속 대본의 영상 비율이 현재 작업과 일치하지 않습니다.");
   if (parsed?.researchStatus !== "verified") throw new Error("근거 결속 대본은 researchStatus: verified를 명시해야 합니다.");
   if (!Array.isArray(parsed?.segments) || parsed.segments.length !== clipCount) throw new Error("요청한 클립 수의 대본을 반환하지 않았습니다.");
   const sourceMap = new Map((sources || []).filter((source) => source && typeof source !== "string" && source.fetchStatus === "fetched" && source.url).map((source) => [source.url, source]));
@@ -660,9 +680,10 @@ export function validateEvidenceBoundScript(parsed, sources, clipCount, generate
       sourceEvidence
     };
   });
-  const evidenceTextBinding = buildEvidenceTextBinding(parsed, segments, sourceMap);
+  const evidenceTextBinding = buildEvidenceTextBinding(parsed, segments, sourceMap, videoFormat);
   return {
     ...parsed,
+    videoFormat,
     sources,
     researchStatus: "verified",
     evidenceTextBinding,
@@ -673,9 +694,9 @@ export function validateEvidenceBoundScript(parsed, sources, clipCount, generate
   };
 }
 
-export function verifyEvidenceBoundScript(parsed, sources, clipCount) {
+export function verifyEvidenceBoundScript(parsed, sources, clipCount, expectedFormat = parsed?.videoFormat || "vertical") {
   try {
-    const validated = validateEvidenceBoundScript(parsed, sources, clipCount, parsed?.generatedBy || "verification");
+    const validated = validateEvidenceBoundScript(parsed, sources, clipCount, parsed?.generatedBy || "verification", expectedFormat);
     const declared = parsed?.evidenceTextBinding;
     const declaredHash = String(parsed?.evidenceTextBindingHash || "");
     const recomputed = validated.evidenceTextBinding;
@@ -912,14 +933,17 @@ function selectFallbackEvidence(candidates, clipCount) {
   return [hook, ...candidates.filter((candidate) => candidate !== hook)].slice(0, clipCount);
 }
 
-export function evidenceFallbackScript(topic, clipCount, sourceEntries = [], targetDurationSec = 78) {
+export function evidenceFallbackScript(topic, clipCount, sourceEntries = [], targetDurationSec = 78, format = "vertical") {
   const candidates = fallbackEvidenceCandidates(topic, sourceEntries);
   if (candidates.length < clipCount) throw new Error(`유효한 검증 근거 문장이 부족합니다: ${candidates.length}/${clipCount}. 메뉴·식별자가 아닌 주제 관련 설명문이 있는 출처를 추가하거나 Gemini 텍스트 API를 설정하세요.`);
   const durationHint = Math.max(3, Number((targetDurationSec / clipCount).toFixed(2)));
   // The hook remains a complete captured sentence; only its editorial order is
   // changed. Claims, citations, and extractive verification stay byte-bound.
   const selected = selectFallbackEvidence(candidates, clipCount);
+  const normalizedFormat = format === "landscape" ? "landscape" : "vertical";
+  const { prefix: visualPrefix, suffix: visualSuffix } = extractiveVisualTemplate(normalizedFormat);
   const parsed = {
+    videoFormat: normalizedFormat,
     title: selected[0].quote,
     hook: selected[0].quote,
     narration: selected.map((item) => item.quote).join(" "),
@@ -931,13 +955,13 @@ export function evidenceFallbackScript(topic, clipCount, sourceEntries = [], tar
         claim: narration,
         caption: captionFromEvidence(narration),
         narration,
-        visualPrompt: `${EXTRACTIVE_VISUAL_PREFIX}${JSON.stringify(narration)}${EXTRACTIVE_VISUAL_SUFFIX}`,
+        visualPrompt: `${visualPrefix}${JSON.stringify(narration)}${visualSuffix}`,
         durationHint,
         evidenceRefs: [{ sourceId: item.sourceId, evidenceId: item.evidenceId, quote: narration }]
       };
     })
   };
-  return validateEvidenceBoundScript(parsed, sourceEntries, clipCount, "evidence-extract-fallback");
+  return validateEvidenceBoundScript(parsed, sourceEntries, clipCount, "evidence-extract-fallback", normalizedFormat);
 }
 
 function sourceTerms(topic, sourceTitle = "") {
@@ -1256,15 +1280,17 @@ async function captureSources(job) {
 }
 
 export async function buildScript(job) {
+  let script;
   try {
-    const generated = await callGeminiText(job.topic, job.clipCount, job.targetDurationSec, job.sources);
-    return generated || evidenceFallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec);
+    const generated = await callGeminiText(job.topic, job.clipCount, job.targetDurationSec, job.sources, job.format);
+    script = generated || evidenceFallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec, job.format);
   } catch (error) {
     if (process.env.GEMINI_API_KEY) {
       throw error;
     }
-    return evidenceFallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec);
+    script = evidenceFallbackScript(job.topic, job.clipCount, job.sources, job.targetDurationSec, job.format);
   }
+  return applyShotPatternsToScript(script, job, await readShotPatternCatalog());
 }
 
 function toSrtTime(seconds) {
@@ -2173,6 +2199,248 @@ const MUTABLE_OUTPUTS = [
   "sources.json", "frame-audio-caption.json", "thumbnail.jpg", "quality.json",
   "committee-review.json"
 ];
+const SEMANTIC_REVALIDATION_TRANSACTION = ".semantic-revalidation-transaction.json";
+const SEMANTIC_REVALIDATION_INTERNAL_PREFIX = ".semantic-revalidation-";
+const SEMANTIC_REVALIDATION_PROTECTED_ENTRIES = new Set([
+  "job.json",
+  "runs",
+  ".run.lock",
+  "gemini-legacy-abandonment.json",
+  "legacy-gemini-evidence",
+  SEMANTIC_REVALIDATION_TRANSACTION
+]);
+
+async function syncFileAndParent(path) {
+  const file = await open(path, "r");
+  try {
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  const parent = await open(dirname(path), "r").catch(() => null);
+  if (!parent) return;
+  try {
+    await parent.sync().catch(() => {});
+  } finally {
+    await parent.close();
+  }
+}
+
+async function syncDirectory(path) {
+  const handle = await open(path, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeSemanticTransaction(jobDir, journal) {
+  validatedSemanticTransaction(jobDir, journal);
+  const path = join(jobDir, SEMANTIC_REVALIDATION_TRANSACTION);
+  const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(journal, null, 2), { mode: 0o600 });
+    await rename(temporary, path);
+    await chmod(path, 0o600);
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw error;
+  }
+  await syncFileAndParent(path);
+  return path;
+}
+
+async function semanticMutableEntries(jobDir) {
+  const entries = (await readdir(jobDir, { withFileTypes: true }))
+    .map((entry) => entry.name)
+    .filter((name) => (
+      !SEMANTIC_REVALIDATION_PROTECTED_ENTRIES.has(name)
+      && !name.startsWith(SEMANTIC_REVALIDATION_INTERNAL_PREFIX)
+    ))
+    .sort();
+  for (const name of entries) safeSemanticRootEntry(jobDir, name);
+  return entries;
+}
+
+function safeSemanticRootEntry(root, name) {
+  if (
+    typeof name !== "string"
+    || !name
+    || name === "."
+    || name === ".."
+    || name.includes("/")
+    || name.includes("\\")
+    || name.includes("\0")
+    || SEMANTIC_REVALIDATION_PROTECTED_ENTRIES.has(name)
+    || name.startsWith(SEMANTIC_REVALIDATION_INTERNAL_PREFIX)
+  ) throw new Error("의미 재검수 transaction journal의 root entry가 안전하지 않습니다.");
+  const absoluteRoot = resolve(root);
+  const target = resolve(absoluteRoot, name);
+  if (dirname(target) !== absoluteRoot) throw new Error("의미 재검수 transaction 경로가 job root를 벗어납니다.");
+  return target;
+}
+
+function validatedSemanticTransaction(jobDir, value) {
+  const mutableEntries = Array.isArray(value?.mutableEntries) ? value.mutableEntries : [];
+  const uniqueEntries = new Set(mutableEntries);
+  const backupNameValid = typeof value?.backupDir === "string"
+    && /^\.semantic-revalidation-backup-[A-Za-z0-9][A-Za-z0-9._-]{5,200}$/u.test(value.backupDir);
+  if (
+    value?.schemaVersion !== 1
+    || value.mode !== SEMANTIC_REVALIDATION_MODE
+    || !["prepared", "installed", "committed"].includes(value.phase)
+    || !backupNameValid
+    || uniqueEntries.size !== mutableEntries.length
+    || !value.parentJob
+    || value.parentJob.id !== value.jobId
+    || value.parentJob.runId !== value.sourceRunId
+    || typeof value.parentJobBytesBase64 !== "string"
+    || !value.parentJobBytesBase64
+    || !/^sha256:[a-f0-9]{64}$/u.test(String(value.parentJobBytesSha256 || ""))
+  ) throw new Error("의미 재검수 transaction journal 형식이 유효하지 않습니다.");
+  for (const name of mutableEntries) safeSemanticRootEntry(jobDir, name);
+  const parentJobBytes = Buffer.from(value.parentJobBytesBase64, "base64");
+  if (
+    parentJobBytes.toString("base64") !== value.parentJobBytesBase64
+    || `sha256:${createHash("sha256").update(parentJobBytes).digest("hex")}` !== value.parentJobBytesSha256
+  ) throw new Error("의미 재검수 rollback 원본 job 바이트 결속이 유효하지 않습니다.");
+  let decodedParentJob;
+  try {
+    decodedParentJob = JSON.parse(parentJobBytes.toString("utf8"));
+  } catch {
+    throw new Error("의미 재검수 rollback 원본 job JSON이 유효하지 않습니다.");
+  }
+  if (
+    decodedParentJob.id !== value.jobId
+    || decodedParentJob.runId !== value.sourceRunId
+    || hashJson(decodedParentJob) !== hashJson(value.parentJob)
+  ) throw new Error("의미 재검수 rollback의 원본 job 바이트가 journal과 일치하지 않습니다.");
+  return { journal: value, parentJobBytes };
+}
+
+async function readSemanticTransaction(jobDir) {
+  try {
+    const value = JSON.parse(await readFile(join(jobDir, SEMANTIC_REVALIDATION_TRANSACTION), "utf8"));
+    return validatedSemanticTransaction(jobDir, value).journal;
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function semanticEntryStatOrNull(path, statEntry = stat) {
+  try {
+    return await statEntry(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function rollbackSemanticRevalidationWorkspace(jobDir, suppliedJournal = null, options = {}) {
+  const rawJournal = suppliedJournal || await readSemanticTransaction(jobDir);
+  const validated = rawJournal ? validatedSemanticTransaction(jobDir, rawJournal) : null;
+  const journal = validated?.journal || null;
+  if (!journal) return null;
+  const statEntry = options.statEntry || stat;
+  const parentJobBytes = validated.parentJobBytes;
+  const jobRoot = resolve(jobDir);
+  const backupDir = resolve(jobRoot, journal.backupDir);
+  if (dirname(backupDir) !== jobRoot) throw new Error("의미 재검수 backup 경로가 job root를 벗어납니다.");
+  if (journal.phase === "committed") {
+    await rm(backupDir, { recursive: true, force: true });
+    await unlink(join(jobDir, SEMANTIC_REVALIDATION_TRANSACTION)).catch((error) => {
+      if (error?.code !== "ENOENT") throw error;
+    });
+    return { action: "committed-cleanup", journal };
+  }
+  // Resolve every backup/destination state before mutating anything. Only an
+  // actual ENOENT means an entry is absent; EIO/EACCES and other unknown
+  // failures must preserve the journal and backup for a later safe recovery.
+  const rollbackEntries = [];
+  for (const name of journal.mutableEntries) {
+    const destination = safeSemanticRootEntry(jobRoot, name);
+    const source = resolve(backupDir, name);
+    if (dirname(source) !== backupDir) throw new Error("의미 재검수 backup entry가 backup root를 벗어납니다.");
+    const sourceStat = await semanticEntryStatOrNull(source, statEntry);
+    const destinationStat = await semanticEntryStatOrNull(destination, statEntry);
+    if (!sourceStat && !destinationStat) throw new Error(`의미 재검수 rollback 원본과 현재 산출물이 모두 없습니다: ${name}`);
+    rollbackEntries.push({ name, destination, source, sourceStat });
+  }
+  const currentEntries = await semanticMutableEntries(jobDir);
+  for (const name of currentEntries) {
+    if (!journal.mutableEntries.includes(name)) await rm(safeSemanticRootEntry(jobRoot, name), { recursive: true, force: true });
+  }
+  for (const { destination, source, sourceStat } of rollbackEntries) {
+    if (sourceStat) {
+      await rm(destination, { recursive: true, force: true });
+      await rename(source, destination);
+    }
+  }
+  await syncDirectory(jobRoot);
+  await syncDirectory(backupDir).catch(() => {});
+  for (const { name, destination, source } of rollbackEntries) {
+    if (!(await semanticEntryStatOrNull(destination, statEntry))) {
+      throw new Error(`의미 재검수 rollback 산출물이 없습니다: ${name}`);
+    }
+    if (await semanticEntryStatOrNull(source, statEntry)) throw new Error(`의미 재검수 rollback backup entry가 남아 있습니다: ${name}`);
+  }
+  const jobPath = join(jobDir, "job.json");
+  const jobTemporary = `${jobPath}.${process.pid}.${Date.now()}.semantic-rollback.tmp`;
+  await writeFile(jobTemporary, parentJobBytes);
+  await rename(jobTemporary, jobPath);
+  await syncFileAndParent(jobPath);
+  await rm(backupDir, { recursive: true, force: true });
+  await unlink(join(jobDir, SEMANTIC_REVALIDATION_TRANSACTION));
+  return { action: "rolled-back", journal };
+}
+
+export async function recoverSemanticRevalidationWorkspace(jobDir) {
+  return rollbackSemanticRevalidationWorkspace(jobDir);
+}
+
+export async function commitSemanticRevalidationWorkspace(jobDir, journal, options = {}) {
+  const removeBackup = options.removeBackup || rm;
+  const removeJournal = options.removeJournal || unlink;
+  const committed = { ...journal, phase: "committed", committedAt: new Date().toISOString() };
+  await writeSemanticTransaction(jobDir, committed);
+  // The committed marker is the transaction point of no return. Cleanup is
+  // idempotent and may be finished by startup recovery; it must never turn a
+  // successfully sealed child into a parent rollback.
+  const backupPath = join(jobDir, journal.backupDir);
+  const journalPath = join(jobDir, SEMANTIC_REVALIDATION_TRANSACTION);
+  const cleanupErrors = [];
+  let backupRemoved = false;
+  try {
+    await removeBackup(backupPath, { recursive: true, force: true });
+    backupRemoved = true;
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  // Keep the committed marker whenever backup cleanup did not finish. Startup
+  // can then complete the idempotent cleanup without guessing transaction state.
+  if (backupRemoved) {
+    await removeJournal(journalPath).catch((error) => {
+      if (error?.code !== "ENOENT") cleanupErrors.push(error);
+    });
+  }
+  await syncDirectory(jobDir).catch((error) => cleanupErrors.push(error));
+  if (cleanupErrors.length) {
+    const markerPresent = await stat(journalPath).then(() => true, (error) => {
+      if (error?.code === "ENOENT") return false;
+      cleanupErrors.push(error);
+      return false;
+    });
+    const backupPresent = await stat(backupPath).then(() => true, (error) => {
+      if (error?.code === "ENOENT") return false;
+      cleanupErrors.push(error);
+      return false;
+    });
+    console.error(`semantic revalidation committed cleanup deferred: marker=${markerPresent} backup=${backupPresent}; ${cleanupErrors.map((error) => error.message).join("; ")}`);
+  }
+  return committed;
+}
 function providerPolicy(provider) {
   if (provider === "gemini-browser") return "no-local-video-fallback";
   if (provider === "local-video") return "local-video-command-adapter-no-fallback";
@@ -2201,8 +2469,11 @@ export async function runProviderGenerationWithSemanticPreflight({
   return { semanticVerifier, generation: await generate() };
 }
 
-async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVideoClips = false) {
-  const names = preserveGemini ? MUTABLE_OUTPUTS : [...MUTABLE_OUTPUTS, "gemini-generation.json"];
+async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVideoClips = false, preserveGeminiInputs = false) {
+  const mutable = preserveGeminiInputs
+    ? MUTABLE_OUTPUTS.filter((name) => !["script.json", "sources.json"].includes(name))
+    : MUTABLE_OUTPUTS;
+  const names = preserveGemini ? mutable : [...mutable, "gemini-generation.json"];
   const voiceoverParts = (await readdir(jobDir).catch(() => [])).filter((name) => /^voiceover-\d{2}(?:-calibrated|-padded)?\.aiff$/.test(name));
   await Promise.all([...names, ...voiceoverParts].map((name) => unlink(join(jobDir, name)).catch(() => {})));
   if (clearLocalVideoClips) {
@@ -2214,9 +2485,451 @@ async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVid
   await mkdir(join(jobDir, "normalized"), { recursive: true });
 }
 
+export function shouldPreserveGeminiRecoveryArtifacts(previousGeneration, job = null) {
+  const pendingOrPartial = ["failed", "running"].includes(previousGeneration?.status)
+    && (
+      (Array.isArray(previousGeneration?.segments) && previousGeneration.segments.length > 0)
+      || Boolean(previousGeneration?.pendingSegment)
+    );
+  const interruptedAfterGeneration = previousGeneration?.status === "completed"
+    && !previousGeneration?.pendingSegment
+    && Array.isArray(previousGeneration?.segments)
+    && previousGeneration.segments.length > 0
+    && ["running", "failed"].includes(job?.status)
+    && ["running", "failed"].includes(job?.runStatus)
+    && job?.runId === previousGeneration.runId;
+  return pendingOrPartial || interruptedAfterGeneration;
+}
+
+async function readGeminiRecoveryInputs(job, jobDir) {
+  const generationPath = join(jobDir, "gemini-generation.json");
+  const generation = await readGeminiGenerationReceipt(generationPath);
+  if (!generation || !shouldPreserveGeminiRecoveryArtifacts(generation, job)) return null;
+  let sourceFile;
+  let script;
+  try {
+    sourceFile = JSON.parse(await readFile(join(jobDir, "sources.json"), "utf8"));
+    script = JSON.parse(await readFile(join(jobDir, "script.json"), "utf8"));
+  } catch (error) {
+    throw new Error(`Gemini 복구 입력을 읽을 수 없습니다. 기존 산출물을 지우지 않습니다 (${error.message}).`);
+  }
+  if (sourceFile?.jobId !== job.id || !Array.isArray(sourceFile.records)
+    || !script || typeof script !== "object" || !Array.isArray(script.segments)
+    || script.segments.length !== Number(job.clipCount)) {
+    throw new Error("Gemini 복구 입력이 저장된 job·클립 수와 일치하지 않습니다. 기존 산출물을 지우지 않습니다.");
+  }
+  const evidenceCheck = verifyEvidenceBoundScript(script, sourceFile.records, job.clipCount, job.format);
+  if (evidenceCheck.verified !== true) {
+    throw new Error(`Gemini 복구 대본의 근거 결속을 확인할 수 없습니다. 기존 산출물을 지우지 않습니다 (${evidenceCheck.error || "binding mismatch"}).`);
+  }
+  return {
+    generation,
+    sourceBundle: {
+      schemaVersion: sourceFile.schemaVersion,
+      status: sourceFile.status,
+      fetchedCount: sourceFile.fetchedCount,
+      totalCount: sourceFile.totalCount,
+      evidenceCount: sourceFile.evidenceCount,
+      records: sourceFile.records
+    },
+    script,
+    completedGenerationRunId: generation.status === "completed" ? generation.runId : null
+  };
+}
+
+function exactSemanticPolicyBinding(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.keys(value).sort().join(",") === "hash,name,version"
+    && value.name === LOCAL_SEMANTIC_POLICY_BINDING.name
+    && value.version === LOCAL_SEMANTIC_POLICY_BINDING.version
+    && value.hash === LOCAL_SEMANTIC_POLICY_BINDING.hash
+  );
+}
+
+function semanticRevalidationExpectedArtifactPath(sourceRunId, name) {
+  return `runs/${sourceRunId}/artifacts/${String(name).replace(/[^A-Za-z0-9._-]+/g, "__")}`;
+}
+
+async function verifySemanticRevalidationImmutableArtifacts(jobDir, sourceRunId, manifest) {
+  const artifacts = Array.isArray(manifest?.immutableArtifacts) ? manifest.immutableArtifacts : [];
+  if (!artifacts.length || new Set(artifacts.map((artifact) => artifact?.name)).size !== artifacts.length) {
+    throw new Error("의미 재검수 원본의 immutable 산출물 선언이 비어 있거나 중복됩니다.");
+  }
+  for (const artifact of artifacts) {
+    const expectedPath = semanticRevalidationExpectedArtifactPath(sourceRunId, artifact?.name);
+    if (!artifact?.name || artifact.path !== expectedPath || !/^sha256:[a-f0-9]{64}$/.test(String(artifact.sha256 || ""))) {
+      throw new Error(`의미 재검수 원본의 immutable 산출물 경로·해시 선언이 유효하지 않습니다: ${artifact?.name || "unknown"}`);
+    }
+    const path = join(jobDir, artifact.path);
+    const fileStat = await stat(path).catch(() => null);
+    if (!fileStat?.isFile() || fileStat.size !== Number(artifact.bytes) || await hashFile(path).catch(() => null) !== artifact.sha256) {
+      throw new Error(`의미 재검수 원본 immutable 산출물 무결성이 깨졌습니다: ${artifact.name}`);
+    }
+  }
+  return new Map(artifacts.map((artifact) => [artifact.name, artifact]));
+}
+
+/**
+ * Reads a sealed source run exclusively through its immutable copies. This is
+ * intentionally independent from the mutable job root so a revalidation never
+ * turns a stale mutable file into new provenance.
+ */
+export async function readGeminiSemanticRevalidationInputs(job, jobDir, context) {
+  const sourceRunId = String(context?.sourceRunId || "");
+  const sourceManifestPath = `runs/${sourceRunId}/manifest.json`;
+  if (
+    context?.schemaVersion !== 1
+    || context?.mode !== SEMANTIC_REVALIDATION_MODE
+    || job?.provider !== "gemini-browser"
+    || job?.status !== "needs-improvement"
+    || job?.runStatus !== "needs-improvement"
+    || job?.runId !== sourceRunId
+    || !sourceRunId
+    || context?.sourceManifest?.path !== sourceManifestPath
+    || context?.sourceManifest?.status !== "needs-improvement"
+    || context?.sourceManifest?.runStatus !== "needs-improvement"
+    || !/^sha256:[a-f0-9]{64}$/.test(String(context?.sourceManifest?.sha256 || ""))
+    || context?.providerRequestPolicy?.allowed !== false
+    || context?.providerRequestPolicy?.maximumCalls !== 0
+    || Object.keys(context.providerRequestPolicy).sort().join(",") !== "allowed,maximumCalls"
+    || !exactSemanticPolicyBinding(context?.semanticPolicy)
+  ) {
+    throw new Error("의미 재검수 요청이 현재 봉인 run·provider 0회 정책·semantic policy에 정확히 결속되지 않았습니다.");
+  }
+  const manifestPath = join(jobDir, sourceManifestPath);
+  if (await hashFile(manifestPath).catch(() => null) !== context.sourceManifest.sha256) {
+    throw new Error("의미 재검수 원본 manifest 해시가 요청과 다릅니다.");
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch (error) {
+    throw new Error(`의미 재검수 원본 manifest를 읽을 수 없습니다 (${error.message}).`);
+  }
+  if (
+    manifest?.jobId !== job.id
+    || manifest.runId !== sourceRunId
+    || manifest.status !== "needs-improvement"
+    || manifest.runStatus !== "needs-improvement"
+    || !Array.isArray(manifest.ledgerErrors)
+    || manifest.ledgerErrors.length !== 0
+    || manifest.request?.provider !== "gemini-browser"
+    || manifest.providerDecision?.requested !== "gemini-browser"
+    || manifest.providerDecision?.selected !== "gemini-browser"
+    || manifest.providerDecision?.fallbackUsed !== false
+    || manifest.providerDecision?.policy !== "no-local-video-fallback"
+    || manifest.providerDecisionHash !== hashJson(manifest.providerDecision)
+    || manifest.semanticRevalidation != null
+    || hashJson(manifest.immutableArtifacts) !== context.sourceImmutableArtifactsHash
+  ) {
+    throw new Error("의미 재검수 원본 manifest의 봉인 상태·provider 결정·immutable closure가 유효하지 않습니다.");
+  }
+  const immutableByName = await verifySemanticRevalidationImmutableArtifacts(jobDir, sourceRunId, manifest);
+  const declaredProviderProvenance = context.sourceProviderProvenance;
+  const generationDeclaration = immutableByName.get("gemini-generation.json");
+  if (
+    !declaredProviderProvenance
+    || Object.keys(declaredProviderProvenance).sort().join(",") !== "path,sha256"
+    || declaredProviderProvenance.path !== generationDeclaration?.path
+    || declaredProviderProvenance.sha256 !== generationDeclaration?.sha256
+  ) throw new Error("의미 재검수 요청의 immutable Gemini provider provenance 결속이 유효하지 않습니다.");
+  const requiredNames = [
+    "script.json",
+    "sources.json",
+    "gemini-generation.json",
+    `runs/${sourceRunId}/input-manifest.json`,
+    `runs/${sourceRunId}/semantic/receipt.json`,
+    `runs/${sourceRunId}/benchmarks/channel-analysis.json`,
+    `runs/${sourceRunId}/benchmarks/shorts-metadata.json`,
+    `runs/${sourceRunId}/benchmarks/rlm-benchmark-analysis.json`
+  ];
+  if (!requiredNames.every((name) => immutableByName.has(name))) {
+    throw new Error("의미 재검수에 필요한 immutable 대본·출처·provider·입력·벤치마크 산출물이 없습니다.");
+  }
+  const readImmutableJson = async (name) => {
+    const artifact = immutableByName.get(name);
+    try {
+      return JSON.parse(await readFile(join(jobDir, artifact.path), "utf8"));
+    } catch (error) {
+      throw new Error(`의미 재검수 immutable JSON을 읽을 수 없습니다: ${name} (${error.message})`);
+    }
+  };
+  const script = await readImmutableJson("script.json");
+  const sourceFile = await readImmutableJson("sources.json");
+  const generation = await readGeminiGenerationReceipt(join(jobDir, generationDeclaration.path));
+  const inputManifest = await readImmutableJson(`runs/${sourceRunId}/input-manifest.json`);
+  const sourceSemanticReceipt = await readImmutableJson(`runs/${sourceRunId}/semantic/receipt.json`);
+  const evidenceCheck = verifyEvidenceBoundScript(script, sourceFile?.records, job.clipCount, job.format);
+  const sessionBinding = canonicalGeminiSessionBinding(job);
+  const sessionBindingHash = geminiSessionBindingHash(job);
+  const expectedRequest = buildGeminiGenerationRequest(job, script);
+  const expectedScriptHash = hashJson(script);
+  const expectedResumeScriptHash = canonicalGeminiResumeScriptHash(script);
+  const expectedRequestHash = hashJson({ ...expectedRequest, scriptHash: expectedScriptHash });
+  const expectedResumeRequestHash = hashJson({ ...expectedRequest, scriptHash: expectedResumeScriptHash });
+  if (
+    !Array.isArray(script?.segments)
+    || script.segments.length !== Number(job.clipCount)
+    || sourceFile?.jobId !== job.id
+    || !Array.isArray(sourceFile.records)
+    || evidenceCheck.verified !== true
+    || inputManifest?.jobId !== job.id
+    || inputManifest.runId !== sourceRunId
+    || sourceSemanticReceipt?.schemaVersion !== 1
+    || sourceSemanticReceipt.jobId !== job.id
+    || sourceSemanticReceipt.runId !== sourceRunId
+    || sourceSemanticReceipt.status !== "failed"
+    || !Array.isArray(inputManifest.entries)
+    || inputManifest.entries.length !== script.segments.length
+    || generation?.provider !== "gemini-browser"
+    || generation.jobId !== job.id
+    || generation.runId !== sourceRunId
+    || generation.status !== "completed"
+    || generation.pendingSegment != null
+    || !Array.isArray(generation.segments)
+    || generation.segments.length !== script.segments.length
+    || generation.requestHash !== expectedRequestHash
+    || generation.scriptHash !== expectedScriptHash
+    || generation.resumeRequestHash !== expectedResumeRequestHash
+    || generation.resumeScriptHash !== expectedResumeScriptHash
+    || hashJson(generation.request) !== hashJson(expectedRequest)
+    || !sessionBinding
+    || !sessionBindingHash
+    || manifest.request?.geminiSessionBindingHash !== sessionBindingHash
+    || hashJson(manifest.request?.geminiSessionBinding) !== sessionBindingHash
+    || generation.sessionBindingHash !== sessionBindingHash
+    || hashJson(generation.sessionBinding) !== sessionBindingHash
+    || generation.providerDecisionHash !== manifest.providerDecisionHash
+    || hashJson(generation.providerDecision) !== manifest.providerDecisionHash
+    || generation.providerAttestationHash !== hashJson(generation.providerAttestation)
+    || generation.providerAttestation?.sessionBindingHash !== sessionBindingHash
+  ) {
+    throw new Error("의미 재검수 immutable 대본·출처·입력·Gemini 완료 영수증의 결속이 유효하지 않습니다.");
+  }
+  const inputByPath = new Map(inputManifest.entries.map((entry) => [entry?.relativePath, entry]));
+  const clipNames = [];
+  for (const segment of generation.segments) {
+    const relativePath = segment?.path || segment?.output;
+    const input = inputByPath.get(relativePath);
+    const artifact = immutableByName.get(relativePath);
+    const scriptSegment = script.segments[Number(segment?.index) - 1];
+    const expectedPrompt = scriptSegment ? buildGeminiClipPrompt(job, script, scriptSegment) : null;
+    const expectedPromptBinding = scriptSegment ? providerPromptBindingForSegment(scriptSegment, "gemini-browser") : null;
+    if (
+      !/^clips\/[A-Za-z0-9._-]+$/.test(String(relativePath || ""))
+      || segment.path !== relativePath
+      || segment.output !== relativePath
+      || segment.runId !== sourceRunId
+      || segment.requestHash !== expectedRequestHash
+      || segment.scriptHash !== expectedScriptHash
+      || segment.resumeRequestHash !== expectedResumeRequestHash
+      || segment.resumeScriptHash !== expectedResumeScriptHash
+      || segment.providerDecisionHash !== manifest.providerDecisionHash
+      || segment.providerAttestationHash !== generation.providerAttestationHash
+      || segment.prompt !== expectedPrompt
+      || segment.promptHash !== hashJson({ prompt: expectedPrompt })
+      || segment.providerVisualPromptHash !== expectedPromptBinding?.providerVisualPromptHash
+      || segment.submittedToProvider !== true
+      || segment.submissionAcknowledgement?.verified !== true
+      || input?.sha256 !== segment.sha256
+      || artifact?.sha256 !== segment.sha256
+      || input?.name !== relativePath.slice("clips/".length)
+    ) {
+      throw new Error(`의미 재검수 Gemini 클립의 immutable/input/provider 결속이 유효하지 않습니다: ${relativePath || "unknown"}`);
+    }
+    clipNames.push(relativePath);
+  }
+  if (new Set(clipNames).size !== clipNames.length || inputByPath.size !== clipNames.length) {
+    throw new Error("의미 재검수 Gemini 클립 집합이 정확한 일대일 집합이 아닙니다.");
+  }
+  const legacyEvidence = generation.legacySubmissionAbandonmentEvidence;
+  const legacyNames = legacyEvidence ? [legacyEvidence.generationPath, legacyEvidence.receiptPath] : [];
+  if (legacyEvidence && (
+    legacyEvidence.schemaVersion !== 1
+    || !legacyNames.every((name) => typeof name === "string" && name.startsWith("legacy-gemini-evidence/") && immutableByName.has(name))
+    || immutableByName.get(legacyEvidence.generationPath)?.sha256 !== legacyEvidence.generationSha256
+    || immutableByName.get(legacyEvidence.receiptPath)?.sha256 !== legacyEvidence.receiptSha256
+    || generation.legacySubmissionAbandonment?.receiptHash !== legacyEvidence.receiptHash
+    || generation.legacySubmissionAbandonment?.sourceGenerationSha256 !== legacyEvidence.generationSha256
+  )) {
+    throw new Error("의미 재검수 Gemini legacy abandonment 증거가 immutable closure에 결속되지 않았습니다.");
+  }
+  const benchmarkNames = {
+    channel: `runs/${sourceRunId}/benchmarks/channel-analysis.json`,
+    duration: `runs/${sourceRunId}/benchmarks/shorts-metadata.json`,
+    rlm: `runs/${sourceRunId}/benchmarks/rlm-benchmark-analysis.json`
+  };
+  if (
+    manifest.benchmarkSnapshot?.path !== benchmarkNames.channel
+    || manifest.benchmarkSnapshot.sha256 !== immutableByName.get(benchmarkNames.channel)?.sha256
+    || manifest.benchmarkSnapshot.durationMetadata?.path !== benchmarkNames.duration
+    || manifest.benchmarkSnapshot.durationMetadata.sha256 !== immutableByName.get(benchmarkNames.duration)?.sha256
+    || manifest.benchmarkSnapshot.rlmMediaEvidence?.path !== benchmarkNames.rlm
+    || manifest.benchmarkSnapshot.rlmMediaEvidence.sha256 !== immutableByName.get(benchmarkNames.rlm)?.sha256
+  ) {
+    throw new Error("의미 재검수 원본 benchmark snapshot 결속이 유효하지 않습니다.");
+  }
+  return {
+    sourceRunId,
+    manifest,
+    manifestPath,
+    manifestHash: context.sourceManifest.sha256,
+    immutableByName,
+    script,
+    sourceBundle: {
+      schemaVersion: sourceFile.schemaVersion,
+      status: sourceFile.status,
+      fetchedCount: sourceFile.fetchedCount,
+      totalCount: sourceFile.totalCount,
+      evidenceCount: sourceFile.evidenceCount,
+      records: sourceFile.records
+    },
+    generation,
+    inputManifest,
+    clipNames,
+    legacyNames,
+    benchmarkNames,
+    completedGenerationRunId: sourceRunId,
+    semanticPolicy: { ...LOCAL_SEMANTIC_POLICY_BINDING },
+    context
+  };
+}
+
+export async function hydrateGeminiSemanticRevalidationInputs(jobDir, runDir, runId, inputs, parentJob, options = {}) {
+  const renameEntry = options.renameEntry || rename;
+  // Recheck every immutable byte immediately before any mutable source is replaced.
+  if (await hashFile(inputs.manifestPath).catch(() => null) !== inputs.manifestHash) {
+    throw new Error("의미 재검수 시작 직전 원본 manifest가 변경되었습니다.");
+  }
+  await verifySemanticRevalidationImmutableArtifacts(jobDir, inputs.sourceRunId, inputs.manifest);
+  await recoverSemanticRevalidationWorkspace(jobDir);
+  const stagingDir = await mkdtemp(join(jobDir, ".semantic-revalidation-staging-"));
+  await chmod(stagingDir, 0o700);
+  const backupName = `.semantic-revalidation-backup-${runId}`;
+  const backupDir = join(jobDir, backupName);
+  let transaction = null;
+  let backupCreated = false;
+  const copyVerified = async (name, target) => {
+    const artifact = inputs.immutableByName.get(name);
+    if (!artifact) throw new Error(`의미 재검수 복원 산출물이 없습니다: ${name}`);
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(join(jobDir, artifact.path), target);
+    const targetStat = await stat(target);
+    if (targetStat.size !== Number(artifact.bytes) || await hashFile(target) !== artifact.sha256) {
+      throw new Error(`의미 재검수 mutable 복원본이 immutable 원본과 다릅니다: ${name}`);
+    }
+  };
+  try {
+    await copyVerified("script.json", join(stagingDir, "script.json"));
+    await copyVerified("sources.json", join(stagingDir, "sources.json"));
+    await copyVerified("gemini-generation.json", join(stagingDir, "gemini-generation.json"));
+    for (const name of inputs.clipNames) await copyVerified(name, join(stagingDir, name));
+    for (const name of inputs.legacyNames) await copyVerified(name, join(stagingDir, name));
+    for (const name of Object.values(inputs.benchmarkNames)) {
+      const basename = name.slice(name.lastIndexOf("/") + 1);
+      await copyVerified(name, join(stagingDir, "benchmarks", basename));
+    }
+    const mutableEntries = await semanticMutableEntries(jobDir);
+    const parentJobBytes = await readFile(join(jobDir, "job.json"));
+    transaction = {
+      schemaVersion: 1,
+      mode: SEMANTIC_REVALIDATION_MODE,
+      phase: "prepared",
+      jobId: parentJob.id,
+      sourceRunId: inputs.sourceRunId,
+      childRunId: runId,
+      createdAt: new Date().toISOString(),
+      backupDir: backupName,
+      mutableEntries,
+      parentJob,
+      parentJobBytesBase64: parentJobBytes.toString("base64"),
+      parentJobBytesSha256: `sha256:${createHash("sha256").update(parentJobBytes).digest("hex")}`,
+      sourceProviderProvenance: inputs.context.sourceProviderProvenance,
+      installedArtifacts: [
+        ...["script.json", "sources.json", "gemini-generation.json"],
+        ...inputs.clipNames
+      ].map((name) => ({ name, sha256: inputs.immutableByName.get(name).sha256 }))
+    };
+    await mkdir(backupDir, { recursive: false, mode: 0o700 });
+    backupCreated = true;
+    await writeSemanticTransaction(jobDir, transaction);
+    for (const name of mutableEntries) await renameEntry(join(jobDir, name), join(backupDir, name));
+    await syncDirectory(backupDir);
+    await syncDirectory(jobDir);
+    for (const name of ["script.json", "sources.json", "gemini-generation.json"]) {
+      await renameEntry(join(stagingDir, name), join(jobDir, name));
+    }
+    for (const name of inputs.clipNames) {
+      await mkdir(dirname(join(jobDir, name)), { recursive: true });
+      await renameEntry(join(stagingDir, name), join(jobDir, name));
+    }
+    for (const name of inputs.legacyNames) {
+      await mkdir(dirname(join(jobDir, name)), { recursive: true });
+      await rename(join(stagingDir, name), join(jobDir, name));
+    }
+    for (const name of Object.values(inputs.benchmarkNames)) {
+      const basename = name.slice(name.lastIndexOf("/") + 1);
+      await mkdir(join(runDir, "benchmarks"), { recursive: true });
+      await renameEntry(join(stagingDir, "benchmarks", basename), join(runDir, "benchmarks", basename));
+    }
+    await syncDirectory(jobDir);
+    await syncDirectory(join(jobDir, "clips"));
+    await syncDirectory(runDir);
+    await syncDirectory(join(runDir, "benchmarks"));
+    for (const artifact of transaction.installedArtifacts) {
+      if (await hashFile(join(jobDir, artifact.name)).catch(() => null) !== artifact.sha256) {
+        throw new Error(`의미 재검수 설치 산출물이 immutable 원본과 다릅니다: ${artifact.name}`);
+      }
+    }
+    transaction = { ...transaction, phase: "installed", installedAt: new Date().toISOString() };
+    await writeSemanticTransaction(jobDir, transaction);
+  } catch (error) {
+    let journalStat;
+    try {
+      journalStat = await stat(join(jobDir, SEMANTIC_REVALIDATION_TRANSACTION));
+    } catch (statError) {
+      if (statError?.code !== "ENOENT") throw new AggregateError([error, statError], "의미 재검수 journal 상태를 확인할 수 없어 backup을 보존합니다.");
+      journalStat = null;
+    }
+    if (journalStat) {
+      await rollbackSemanticRevalidationWorkspace(jobDir);
+    } else if (backupCreated) {
+      await rm(backupDir, { recursive: true, force: true });
+    }
+    throw error;
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+  }
+  const replaceRun = (reference) => ({
+    ...reference,
+    path: String(reference.path).replace(`runs/${inputs.sourceRunId}/`, `runs/${runId}/`)
+  });
+  return {
+    transaction,
+    benchmarkSnapshot: {
+      ...inputs.manifest.benchmarkSnapshot,
+      path: `runs/${runId}/benchmarks/channel-analysis.json`,
+      durationMetadata: replaceRun(inputs.manifest.benchmarkSnapshot.durationMetadata),
+      rlmMediaEvidence: replaceRun(inputs.manifest.benchmarkSnapshot.rlmMediaEvidence)
+    }
+  };
+}
+
 export async function runJob(jobId, options = {}) {
-  let job = await readJob(jobId);
   const jobDir = join(JOBS_DIR, jobId);
+  await recoverSemanticRevalidationWorkspace(jobDir);
+  let job = await readJob(jobId);
+  const semanticRevalidationInputs = options.semanticRevalidation
+    ? await readGeminiSemanticRevalidationInputs(job, jobDir, options.semanticRevalidation)
+    : null;
+  const semanticParentJob = semanticRevalidationInputs ? JSON.parse(JSON.stringify(job)) : null;
+  let semanticWorkspaceTransaction = null;
+  const geminiRecoveryInputs = semanticRevalidationInputs || (job.provider === "gemini-browser"
+    ? await readGeminiRecoveryInputs(job, jobDir)
+    : null);
   const previousRunEntries = await readdir(join(jobDir, "runs"), { withFileTypes: true }).catch(() => []);
   const previousRunIds = previousRunEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
   const attempt = previousRunIds.length + 1;
@@ -2262,7 +2975,20 @@ export async function runJob(jobId, options = {}) {
     providerDecision,
     providerDecisionHash,
     eventsPath: `runs/${runId}/events.jsonl`,
-    inputManifest: null
+    inputManifest: null,
+    ...(semanticRevalidationInputs ? {
+      semanticRevalidation: {
+        schemaVersion: 1,
+        mode: SEMANTIC_REVALIDATION_MODE,
+        sourceRunId: semanticRevalidationInputs.sourceRunId,
+        parentManifestHash: semanticRevalidationInputs.manifestHash,
+        sourceImmutableArtifactsHash: options.semanticRevalidation.sourceImmutableArtifactsHash,
+        sourceProviderProvenance: { ...options.semanticRevalidation.sourceProviderProvenance },
+        semanticPolicy: { ...LOCAL_SEMANTIC_POLICY_BINDING },
+        providerRequestPolicy: { allowed: false, maximumCalls: 0 },
+        providerRequestSent: false
+      }
+    } : {})
   };
   const record = async (event) => {
     try {
@@ -2275,8 +3001,12 @@ export async function runJob(jobId, options = {}) {
   try {
     await mkdir(runDir, { recursive: true });
     if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
-    await clearMutableOutputs(jobDir, job.provider === "gemini-browser", job.provider === "local-video");
     await writeRunManifest(runDir, runManifest);
+    const hydration = semanticRevalidationInputs
+      ? await hydrateGeminiSemanticRevalidationInputs(jobDir, runDir, runId, semanticRevalidationInputs, semanticParentJob)
+      : null;
+    semanticWorkspaceTransaction = hydration?.transaction || null;
+    await clearMutableOutputs(jobDir, job.provider === "gemini-browser", job.provider === "local-video", Boolean(geminiRecoveryInputs));
     job = await updateJob(jobId, {
       status: "running",
       stage: "준비",
@@ -2290,8 +3020,8 @@ export async function runJob(jobId, options = {}) {
       duration: null,
       error: null
     });
-    const benchmarkSnapshot = await snapshotBenchmarkFiles(runDir, runId);
-    runManifest = { ...runManifest, benchmarkSnapshot };
+    if (typeof options.onRunCreated === "function") await options.onRunCreated({ job, runId, parentRunId });
+    runManifest = { ...runManifest, benchmarkSnapshot: hydration?.benchmarkSnapshot || await snapshotBenchmarkFiles(runDir, runId) };
     await writeRunManifest(runDir, runManifest);
   } catch (error) {
     await record({ type: "failed", phase: "initialization", error: error.message, stack: error.stack || null });
@@ -2303,24 +3033,42 @@ export async function runJob(jobId, options = {}) {
       ledgerErrors.push(manifestError.message);
       console.error(`initialization failure manifest write failed: ${manifestError.message}`);
     }
-    job = await updateJob(jobId, {
-      status: "failed",
-      stage: "오류",
-      progress: job.progress || 0,
-      message: `실행 준비 실패: ${error.message}`,
-      error: error.stack || error.toString(),
-      warnings: [...(job.warnings || []), ...ledgerErrors.map((entry) => `실행 기록 저장 실패: ${entry}`)],
-      runId,
-      runStatus: "failed",
-      artifacts: [],
-      qualitySummary: null,
-      duration: null
-    });
+    if (semanticRevalidationInputs) {
+      await rollbackSemanticRevalidationWorkspace(jobDir, semanticWorkspaceTransaction).catch((rollbackError) => {
+        throw new Error(`의미 재검수 준비 실패 후 원본 작업영역 복구에도 실패했습니다: ${rollbackError.message}`);
+      });
+      job = await updateJob(jobId, {
+        ...semanticParentJob,
+        status: "needs-improvement",
+        stage: "개선 필요",
+        progress: 100,
+        message: `로컬 의미 재검수 child ${runId} 실패 · 원본 봉인 run을 유지합니다.`,
+        error: null,
+        warnings: [...(semanticParentJob.warnings || []), `로컬 의미 재검수 child ${runId} 준비 실패: ${error.message}`],
+        providerProvenance: options.semanticRevalidation.sourceProviderProvenance,
+        semanticRevalidationFailure: { childRunId: runId, phase: "initialization", message: error.message }
+      });
+    } else {
+      job = await updateJob(jobId, {
+        status: "failed",
+        stage: "오류",
+        progress: job.progress || 0,
+        message: `실행 준비 실패: ${error.message}`,
+        error: error.stack || error.toString(),
+        warnings: [...(job.warnings || []), ...ledgerErrors.map((entry) => `실행 기록 저장 실패: ${entry}`)],
+        runId,
+        runStatus: "failed",
+        artifacts: [],
+        qualitySummary: null,
+        duration: null
+      });
+    }
     if (options.onProgress) await options.onProgress(job);
     return job;
   }
 
   let inputManifest = null;
+  let geminiGeneration = null;
   let localVideoGeneration = null;
   let localSemanticResult = null;
   const captureRunInputs = async (requestedNames = null, expectedCount = job.clipCount) => {
@@ -2351,8 +3099,8 @@ export async function runJob(jobId, options = {}) {
     if (job.provider === "local") await captureRunInputs();
 
     if (job.provider === "gemini-browser") {
-      const previousGeneration = existsSync(join(jobDir, "gemini-generation.json")) ? JSON.parse(await readFile(join(jobDir, "gemini-generation.json"), "utf8")) : null;
-      const preservePartial = previousGeneration?.status === "failed" && Array.isArray(previousGeneration.segments) && previousGeneration.segments.length > 0;
+      const previousGeneration = await readGeminiGenerationReceipt(join(jobDir, "gemini-generation.json"));
+      const preservePartial = Boolean(geminiRecoveryInputs) || shouldPreserveGeminiRecoveryArtifacts(previousGeneration);
       if (!preservePartial) {
         const existing = await readdir(join(jobDir, "clips"), { withFileTypes: true }).catch(() => []);
         for (const entry of existing) {
@@ -2360,17 +3108,85 @@ export async function runJob(jobId, options = {}) {
         }
       }
     }
-    const sourceBundle = await captureSources(job);
-    await writeJsonAtomic(join(jobDir, "sources.json"), { jobId, runId, ...sourceBundle });
+    const sourceBundle = geminiRecoveryInputs?.sourceBundle || await captureSources(job);
+    if (!geminiRecoveryInputs) await writeJsonAtomic(join(jobDir, "sources.json"), { jobId, runId, ...sourceBundle });
     job = await updateJob(jobId, { sources: sourceBundle.records, sourceBundle: { status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 } });
     await record({ type: "sources_captured", status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 });
 
-    const script = await buildScript(job);
-    await writeJsonAtomic(join(jobDir, "script.json"), script);
+    const script = geminiRecoveryInputs?.script || await buildScript(job);
+    if (!geminiRecoveryInputs) await writeJsonAtomic(join(jobDir, "script.json"), script);
+    else await record({
+      type: "gemini_recovery_inputs_reused",
+      sourceRunId: geminiRecoveryInputs.generation.runId,
+      generationStatus: geminiRecoveryInputs.generation.status,
+      sourceBundleHash: hashJson(geminiRecoveryInputs.sourceBundle),
+      scriptHash: hashJson(script)
+    });
+    const shotPatternReceiptName = `runs/${runId}/shot-pattern-receipt.json`;
+    const shotPatternReceiptPath = join(runDir, "shot-pattern-receipt.json");
+    let shotPatternReceipt;
+    let shotPatternReceiptReference;
+    const persistShotPatternReceipt = async (providerEvidence = {}) => {
+      shotPatternReceipt = createShotPatternReceipt(script, job, runId, providerEvidence);
+      await writeJsonAtomic(shotPatternReceiptPath, shotPatternReceipt);
+      shotPatternReceiptReference = {
+        path: shotPatternReceiptName,
+        sha256: await hashFile(shotPatternReceiptPath),
+        receiptHash: shotPatternReceipt.receiptHash,
+        catalogId: shotPatternReceipt.catalogId,
+        catalogHash: shotPatternReceipt.catalogHash,
+        continuityContractHash: shotPatternReceipt.continuityContractHash,
+        segmentCount: shotPatternReceipt.segments.length,
+        applicationMode: shotPatternReceipt.applicationMode,
+        providerEligible: shotPatternReceipt.providerEligible,
+        providerSubmissionPlanned: shotPatternReceipt.providerSubmissionPlanned,
+        submittedToProvider: shotPatternReceipt.submittedToProvider,
+        providerRequestSentThisRun: shotPatternReceipt.providerRequestSentThisRun,
+        inheritedProviderSubmission: shotPatternReceipt.inheritedProviderSubmission,
+        sourceSubmissionRunId: shotPatternReceipt.sourceSubmissionRunId,
+        sourceGenerationHash: shotPatternReceipt.sourceGenerationHash,
+        providerRequestHash: shotPatternReceipt.providerRequestHash,
+        providerGenerationHash: shotPatternReceipt.providerGenerationHash
+      };
+      runManifest = { ...runManifest, shotPatterns: shotPatternReceiptReference };
+      await writeRunManifest(runDir, runManifest);
+      return shotPatternReceiptReference;
+    };
+    await persistShotPatternReceipt();
+    await record({
+      type: "shot_patterns_planned",
+      jobId,
+      runId,
+      shotPatterns: shotPatternReceiptReference,
+      segments: shotPatternReceipt.segments.map((segment) => ({
+        index: segment.index,
+        patternId: segment.patternId,
+        renderedPromptHash: segment.renderedPromptHash,
+        providerVisualPromptHash: segment.providerVisualPromptHash,
+        continuityContractHash: segment.continuityContractHash,
+        visualPromptHash: segment.visualPromptHash,
+        providerSubmissionPlanned: segment.providerSubmissionPlanned,
+        submittedToProvider: segment.submittedToProvider
+      }))
+    });
     await progress(18, "기획", `${script.generatedBy === "gemini-api" ? "Gemini" : "로컬 템플릿"} 대본과 ${script.segments.length}개 장면을 준비했습니다.`);
 
     if (job.provider === "gemini-browser") {
       await progress(22, "의미 검수 준비", "영상 생성 전에 로컬 OMLX 의미 검증 모델을 확인하는 중입니다.");
+      if (semanticRevalidationInputs) {
+        if (
+          geminiRecoveryInputs?.completedGenerationRunId !== semanticRevalidationInputs.sourceRunId
+          || geminiRecoveryInputs.generation?.runId !== semanticRevalidationInputs.sourceRunId
+          || geminiRecoveryInputs.generation?.status !== "completed"
+        ) throw new Error("의미 재검수는 봉인된 완료 Gemini generation resume 경로만 사용할 수 있습니다. 새 provider 요청을 보내지 않습니다.");
+        await record({
+          type: "semantic_revalidation_provider_zero_asserted",
+          phase: "before-resume",
+          sourceRunId: semanticRevalidationInputs.sourceRunId,
+          providerRequestSent: false,
+          semanticPolicy: LOCAL_SEMANTIC_POLICY_BINDING
+        });
+      }
       const { generation } = await runProviderGenerationWithSemanticPreflight({
         provider: job.provider,
         preflight: options.semanticVerifierPreflight || preflightLocalSemanticVerifier,
@@ -2379,12 +3195,58 @@ export async function runJob(jobId, options = {}) {
         onReady: (ready) => record({ type: "semantic_verifier_preflight", provider: ready.provider, model: ready.model, available: true }),
         generate: async () => {
           await progress(24, "Gemini 영상", "Chrome의 Gemini 동영상 만들기 화면을 제어하는 중입니다.");
-          return generateGeminiClips(job, script, async (value, message) => progress(24 + Math.round(value * 0.30), "Gemini 영상", message));
+          const generationJob = geminiRecoveryInputs?.completedGenerationRunId
+            ? {
+                ...job,
+                resumeCompletedGenerationRunId: geminiRecoveryInputs.completedGenerationRunId,
+                ...(semanticRevalidationInputs ? { providerRequestsForbidden: true } : {})
+              }
+            : job;
+          const generateGemini = options.generateGeminiClips || generateGeminiClips;
+          return generateGemini(generationJob, script, async (value, message) => progress(24 + Math.round(value * 0.30), "Gemini 영상", message));
         }
       });
+      geminiGeneration = generation;
       if (!generation || generation.status !== "completed" || generation.runId !== runId || !generation.requestHash || !generation.scriptHash) {
         throw new Error("Gemini generation provenance가 현재 runId·요청 해시에 결속되지 않았습니다.");
       }
+      if (semanticRevalidationInputs && (
+        generation.resumedFromCompletedGeneration?.sourceRunId !== semanticRevalidationInputs.sourceRunId
+        || generation.resumedFromCompletedGeneration.providerRequestSent !== false
+        || generation.segments.some((segment) => segment?.resumedCompletedGeneration !== true)
+      )) {
+        throw new Error("의미 재검수 Gemini resume 영수증이 provider 요청 0회에 결속되지 않았습니다.");
+      }
+      if (semanticRevalidationInputs) {
+        runManifest = {
+          ...runManifest,
+          semanticRevalidation: {
+            ...runManifest.semanticRevalidation,
+            childGenerationHash: hashJson(generation),
+            providerRequestSent: false
+          }
+        };
+        await writeRunManifest(runDir, runManifest);
+        await record({
+          type: "semantic_revalidation_provider_zero_asserted",
+          phase: "after-resume",
+          sourceRunId: semanticRevalidationInputs.sourceRunId,
+          providerRequestSent: false,
+          resumedGenerationHash: hashJson(generation)
+        });
+      }
+      await persistShotPatternReceipt({
+        submittedToProvider: true,
+        ...(semanticRevalidationInputs ? {
+          providerRequestSentThisRun: false,
+          inheritedProviderSubmission: true,
+          sourceSubmissionRunId: semanticRevalidationInputs.sourceRunId,
+          sourceGenerationHash: hashJson(semanticRevalidationInputs.generation)
+        } : {}),
+        providerRequestHash: generation.requestHash,
+        providerGenerationHash: await hashFile(join(jobDir, "gemini-generation.json"))
+      });
+      await record({ type: "shot_patterns_provider_bound", jobId, runId, provider: job.provider, shotPatterns: shotPatternReceiptReference });
       await captureRunInputs(script.segments.map((_, index) => `${String(index + 1).padStart(2, "0")}.mp4`), script.segments.length);
     } else if (job.provider === "local-video") {
       await progress(22, "의미 검수 준비", "영상 생성 전에 로컬 OMLX 의미 검증 모델을 확인하는 중입니다.");
@@ -2400,6 +3262,12 @@ export async function runJob(jobId, options = {}) {
         }
       });
       localVideoGeneration = prepared.generation;
+      await persistShotPatternReceipt({
+        submittedToProvider: true,
+        providerRequestHash: localVideoGeneration.requestHash,
+        providerGenerationHash: localVideoGeneration.receipt.sha256
+      });
+      await record({ type: "shot_patterns_provider_bound", jobId, runId, provider: job.provider, shotPatterns: shotPatternReceiptReference });
       const providerReceipt = {
         ...localVideoGeneration.receipt,
         provider: "local-video",
@@ -2439,8 +3307,15 @@ export async function runJob(jobId, options = {}) {
       runId,
       jobDir,
       runDir,
-      sourceEntailment: verifyEvidenceBoundScript(script, job.sources, job.clipCount)
+      sourceEntailment: verifyEvidenceBoundScript(script, job.sources, job.clipCount, job.format)
     });
+    if (semanticRevalidationInputs && (
+      localSemanticResult.receipt?.schemaVersion !== LOCAL_SEMANTIC_POLICY_BINDING.version
+      || !exactSemanticPolicyBinding(localSemanticResult.receipt?.semanticPolicy)
+      || localSemanticResult.receipt?.evaluator?.verdictPolicyHash !== LOCAL_SEMANTIC_POLICY_BINDING.hash
+    )) {
+      throw new Error("의미 재검수 child receipt가 현재 schema 2 purpose-aware policy에 정확히 결속되지 않았습니다.");
+    }
     runManifest = { ...runManifest, semanticReceipt: localSemanticResult.receiptReference };
     await writeRunManifest(runDir, runManifest);
     await record({
@@ -2502,7 +3377,12 @@ export async function runJob(jobId, options = {}) {
       { name: "frame-audio-caption.json", kind: "analysis", url: mediaPath(job.id, "frame-audio-caption.json") },
       { name: "sources.json", kind: "source-bundle", url: mediaPath(job.id, "sources.json") },
       ...(existsSync(join(jobDir, "gemini-generation.json")) ? [{ name: "gemini-generation.json", kind: "provider-provenance", url: mediaPath(job.id, "gemini-generation.json") }] : []),
+      ...(geminiGeneration?.legacySubmissionAbandonmentEvidence ? [
+        { name: geminiGeneration.legacySubmissionAbandonmentEvidence.generationPath, kind: "legacy-provider-provenance", url: mediaPath(job.id, geminiGeneration.legacySubmissionAbandonmentEvidence.generationPath), sha256: geminiGeneration.legacySubmissionAbandonmentEvidence.generationSha256 },
+        { name: geminiGeneration.legacySubmissionAbandonmentEvidence.receiptPath, kind: "legacy-abandonment-receipt", url: mediaPath(job.id, geminiGeneration.legacySubmissionAbandonmentEvidence.receiptPath), sha256: geminiGeneration.legacySubmissionAbandonmentEvidence.receiptSha256 }
+      ] : []),
       ...(localVideoGeneration ? [{ name: `runs/${runId}/local-video-generation.json`, kind: "provider-provenance", url: mediaPath(job.id, `runs/${runId}/local-video-generation.json`) }] : []),
+      { name: shotPatternReceiptName, kind: "shot-pattern-receipt", url: mediaPath(job.id, shotPatternReceiptName) },
       { name: `runs/${runId}/events.jsonl`, kind: "run-events", url: mediaPath(job.id, `runs/${runId}/events.jsonl`) },
       { name: `runs/${runId}/input-manifest.json`, kind: "input-manifest", url: mediaPath(job.id, `runs/${runId}/input-manifest.json`) },
       { name: `runs/${runId}/benchmarks/channel-analysis.json`, kind: "benchmark-snapshot", url: mediaPath(job.id, `runs/${runId}/benchmarks/channel-analysis.json`) },
@@ -2519,7 +3399,7 @@ export async function runJob(jobId, options = {}) {
       ...runManifest,
       status: "finalizing",
       runStatus,
-      script: { generatedBy: script.generatedBy, segmentCount: script.segments.length, targetDurationSec: job.targetDurationSec, sourceBundle: job.sourceBundle || { status: "missing" }, providerProvenance: localVideoGeneration ? `runs/${runId}/local-video-generation.json` : existsSync(join(jobDir, "gemini-generation.json")) ? "gemini-generation.json" : null },
+      script: { generatedBy: script.generatedBy, segmentCount: script.segments.length, targetDurationSec: job.targetDurationSec, sourceBundle: job.sourceBundle || { status: "missing" }, providerProvenance: localVideoGeneration ? `runs/${runId}/local-video-generation.json` : existsSync(join(jobDir, "gemini-generation.json")) ? "gemini-generation.json" : null, shotPatterns: shotPatternReceiptReference },
       inputs: sourceEntries,
       artifacts: await artifactReceipt(jobDir, snapshotArtifacts),
       qualitySummary,
@@ -2594,7 +3474,10 @@ export async function runJob(jobId, options = {}) {
       blockers: finalizedQuality.blockers,
       inputManifest: inputManifest.receipt
     };
-    const semanticSuccess = finalizedQuality.status === "passed" && finalizedQuality.semanticGate === true;
+    if (semanticRevalidationInputs && (finalizedQuality.status === "passed" || finalizedQuality.semanticGate === true)) {
+      throw new Error("로컬 의미 재검수만으로 reviewer 승인을 위조하거나 완료 상태로 승격할 수 없습니다.");
+    }
+    const semanticSuccess = !semanticRevalidationInputs && finalizedQuality.status === "passed" && finalizedQuality.semanticGate === true;
     const finalizedRunStatus = semanticSuccess ? "verified" : "needs-improvement";
     const finalizedManifestStatus = semanticSuccess ? "completed" : "needs-improvement";
     const qualitySnapshotInputs = [
@@ -2644,6 +3527,15 @@ export async function runJob(jobId, options = {}) {
       ...finalizedImmutableDeclarations,
       { name: `runs/${runId}/manifest.json`, kind: "run-manifest", url: mediaPath(job.id, `runs/${runId}/manifest.json`) }
     ];
+    const immutableProviderArtifactName = job.provider === "gemini-browser"
+      ? "gemini-generation.json"
+      : job.provider === "local-video" ? `runs/${runId}/local-video-generation.json` : null;
+    const immutableProviderArtifact = immutableProviderArtifactName
+      ? immutableArtifacts.find((artifact) => artifact.name === immutableProviderArtifactName)
+      : null;
+    const providerProvenance = immutableProviderArtifact
+      ? { path: immutableProviderArtifact.path, sha256: immutableProviderArtifact.sha256 }
+      : null;
     job = await updateJob(jobId, {
       status: semanticSuccess ? "completed" : "needs-improvement",
       stage: semanticSuccess ? "완료" : "개선 필요",
@@ -2658,14 +3550,50 @@ export async function runJob(jobId, options = {}) {
       qualitySummary: finalizedQualitySummary,
       runId,
       runStatus: finalizedRunStatus,
+      providerProvenance,
+      ...(semanticRevalidationInputs ? {
+        semanticRevalidationSummary: {
+          status: "sealed",
+          mode: SEMANTIC_REVALIDATION_MODE,
+          sourceRunId: semanticRevalidationInputs.sourceRunId,
+          childRunId: runId,
+          semanticPolicy: { ...LOCAL_SEMANTIC_POLICY_BINDING },
+          providerRequests: 0
+        }
+      } : {}),
       error: null
     });
-    if (options.onProgress) await options.onProgress(job);
+    if (semanticWorkspaceTransaction) {
+      semanticWorkspaceTransaction = await commitSemanticRevalidationWorkspace(jobDir, semanticWorkspaceTransaction);
+      if (options.onProgress) await options.onProgress(job).catch((error) => {
+        console.error(`semantic revalidation post-commit progress callback failed: ${error.message}`);
+      });
+    } else if (options.onProgress) await options.onProgress(job);
     return job;
   } catch (error) {
+    if (semanticRevalidationInputs) {
+      let committedTransaction;
+      try {
+        committedTransaction = await readSemanticTransaction(jobDir);
+      } catch (transactionError) {
+        throw new AggregateError([error, transactionError], "의미 재검수 transaction 상태를 읽을 수 없어 자동 rollback을 중단합니다.");
+      }
+      if (committedTransaction?.phase === "committed") {
+        // Publication is irreversible once the durable committed marker is
+        // readable. Never append a failure event or rewrite the sealed child
+        // manifest after that point; leave cleanup for this call or startup.
+        await rollbackSemanticRevalidationWorkspace(jobDir, committedTransaction).catch((cleanupError) => {
+          console.error(`semantic revalidation committed cleanup deferred: ${cleanupError.message}`);
+        });
+        if (options.onProgress) await options.onProgress(job).catch(() => {});
+        return job;
+      }
+    }
     await record({ type: "failed", error: error.message, stack: error.stack || null });
     const provenancePath = join(jobDir, "gemini-generation.json");
-    const providerProvenance = existsSync(provenancePath) ? { path: "gemini-generation.json", sha256: await hashFile(provenancePath).catch(() => null) } : null;
+    const providerProvenance = semanticRevalidationInputs
+      ? options.semanticRevalidation.sourceProviderProvenance
+      : existsSync(provenancePath) ? { path: "gemini-generation.json", sha256: await hashFile(provenancePath).catch(() => null) } : null;
     const eventLog = { path: `runs/${runId}/events.jsonl`, sha256: await hashFile(join(runDir, "events.jsonl")).catch(() => null) };
     runManifest = { ...runManifest, completedAt: new Date().toISOString(), status: "failed", runStatus: "failed", error: error.message, providerProvenance, eventLog, ledgerErrors: [...ledgerErrors] };
     try {
@@ -2674,7 +3602,26 @@ export async function runJob(jobId, options = {}) {
       ledgerErrors.push(manifestError.message);
       console.error(`failed run manifest write failed: ${manifestError.message}`);
     }
-    job = await updateJob(jobId, { status: "failed", stage: "오류", progress: job.progress || 0, message: error.message, error: error.stack || error.toString(), warnings: [...(job.warnings || []), ...ledgerErrors.map((entry) => `실행 기록 저장 실패: ${entry}`)], providerProvenance, runId, runStatus: "failed" });
+    if (semanticRevalidationInputs) {
+      const diskTransaction = await readSemanticTransaction(jobDir);
+      const effectiveTransaction = diskTransaction || semanticWorkspaceTransaction;
+      await rollbackSemanticRevalidationWorkspace(jobDir, effectiveTransaction).catch((rollbackError) => {
+        throw new Error(`의미 재검수 실패 후 원본 작업영역 복구에도 실패했습니다: ${rollbackError.message}`);
+      });
+      job = await updateJob(jobId, {
+        ...semanticParentJob,
+        status: "needs-improvement",
+        stage: "개선 필요",
+        progress: 100,
+        message: `로컬 의미 재검수 child ${runId} 실패 · 원본 봉인 run을 유지합니다.`,
+        error: null,
+        warnings: [...(semanticParentJob.warnings || []), `로컬 의미 재검수 child ${runId} 실패: ${error.message}`],
+        providerProvenance,
+        semanticRevalidationFailure: { childRunId: runId, phase: "pipeline", message: error.message }
+      });
+    } else {
+      job = await updateJob(jobId, { status: "failed", stage: "오류", progress: job.progress || 0, message: error.message, error: error.stack || error.toString(), warnings: [...(job.warnings || []), ...ledgerErrors.map((entry) => `실행 기록 저장 실패: ${entry}`)], providerProvenance, runId, runStatus: "failed" });
+    }
     if (options.onProgress) await options.onProgress(job);
     return job;
   }

@@ -6,6 +6,8 @@ import { analyzeJobMedia } from "./frame-analysis.mjs";
 import { semanticReceiptArtifactPaths, verifyLocalSemanticReceipt } from "./local-semantic-verifier.mjs";
 import { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 import { hashFile } from "./run-ledger.mjs";
+import { buildGeminiClipPrompt, providerPromptBindingForSegment, providerRequestFieldsForSegment, shotPatternRequiredForScript, verifyShotPatternReceipt } from "./shot-patterns.mjs";
+import { loadSemanticRevalidationSource, verifySemanticRevalidationProviderZeroBinding } from "./semantic-revalidation-closure.mjs";
 
 export { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 
@@ -219,7 +221,8 @@ function expectedGeminiRequest(job, script) {
       durationHint: segment.durationHint || null,
       visualPrompt: segment.visualPrompt || "",
       caption: segment.caption || "",
-      narration: segment.narration || ""
+      narration: segment.narration || "",
+      ...providerRequestFieldsForSegment(segment, "gemini-browser")
     }))
   };
 }
@@ -234,14 +237,29 @@ function expectedLocalVideoRequest(job, script, runId, scriptHash) {
     format: job.format || "vertical",
     targetDurationSec: Number(job.targetDurationSec || 0),
     targetDurationRangeSec: job.targetDurationRangeSec || null,
-    segments: (script?.segments || []).map((segment, index) => ({
-      index: index + 1,
-      durationHint: segment.durationHint || null,
-      prompt: segment.visualPrompt || "",
-      visualPrompt: segment.visualPrompt || "",
-      caption: segment.caption || "",
-      narration: segment.narration || ""
-    }))
+    segments: (script?.segments || []).map((segment, index) => {
+      const providerBinding = providerPromptBindingForSegment(segment, "local-video");
+      return {
+        index: index + 1,
+        durationHint: segment.durationHint || null,
+        prompt: providerBinding.providerVisualPrompt,
+        visualPrompt: segment.visualPrompt || "",
+        caption: segment.caption || "",
+        narration: segment.narration || "",
+        ...providerRequestFieldsForSegment(segment, "local-video")
+      };
+    }),
+    ...(script?.shotPatternPlan ? {
+      shotPatternPlan: {
+        catalogId: script.shotPatternPlan.catalogId,
+        catalogHash: script.shotPatternPlan.catalogHash,
+        planHash: script.shotPatternPlan.planHash,
+        continuityContractHash: script.shotPatternPlan.continuityContractHash,
+        applicationMode: script.shotPatternPlan.applicationMode,
+        providerEligible: script.shotPatternPlan.providerEligible,
+        providerSubmissionPlanned: script.shotPatternPlan.providerSubmissionPlanned
+      }
+    } : {})
   };
   const requestHash = hashJson({ ...base, scriptHash });
   return { ...base, requestHash, scriptHash };
@@ -1235,10 +1253,15 @@ export async function evaluateJob(jobId, options = {}) {
   const target = mediaTarget(job.format);
   const expectedSegments = Math.max(1, Number(script?.segments?.length || job.clipCount || 1));
   const actualClipTarget = Math.max(1, Number(job.clipCount || expectedSegments));
-  const geminiGeneration = await readJsonOptional(join(jobDir, "gemini-generation.json"));
+  const geminiGenerationPath = join(jobDir, "gemini-generation.json");
+  const geminiGeneration = await readJsonOptional(geminiGenerationPath);
+  const geminiGenerationFileHash = await hashExisting(geminiGenerationPath);
   const localVideoGenerationPath = join(runDir, "local-video-generation.json");
   const localVideoGeneration = await readJsonOptional(localVideoGenerationPath);
   const localVideoReceiptHash = await hashExisting(localVideoGenerationPath);
+  const shotPatternReceiptPath = join(runDir, "shot-pattern-receipt.json");
+  const shotPatternReceipt = await readJsonOptional(shotPatternReceiptPath);
+  const shotPatternReceiptHash = await hashExisting(shotPatternReceiptPath);
   const currentClipHashes = await Promise.all(clips.map((path) => hashExisting(path)));
   const generationSegments = Array.isArray(geminiGeneration?.segments) ? geminiGeneration.segments : [];
   const geminiRequest = expectedGeminiRequest(job, script);
@@ -1292,6 +1315,8 @@ export async function evaluateJob(jobId, options = {}) {
     && generationSegments.length === actualClipTarget
     && generationSegments.every((segment, index) => {
       const expectedPath = evidenceRelative(jobDir, clips[index] || "");
+      const expectedPattern = geminiRequest.segments[index]?.shotPattern || null;
+      const expectedPrompt = buildGeminiClipPrompt(job, script, script.segments[index]);
       return segment.index === index + 1
         && segment.runId === currentRunId
         && segment.requestHash === geminiGeneration.requestHash
@@ -1301,7 +1326,14 @@ export async function evaluateJob(jobId, options = {}) {
         && segment.sha256
         && segment.sha256 === currentClipHashes[index]
         && segment.providerDecisionHash === expectedProviderDecisionHash
-        && segment.providerAttestationHash === geminiGeneration.providerAttestationHash;
+        && segment.providerAttestationHash === geminiGeneration.providerAttestationHash
+        && (!expectedPattern || (
+          segment.providerVisualPromptHash === geminiRequest.segments[index].providerVisualPromptHash
+          && hashJson(segment.shotPattern) === hashJson(expectedPattern)
+          && segment.prompt === expectedPrompt
+          && segment.promptHash === hashJson({ prompt: expectedPrompt })
+          && segment.submittedToProvider === true
+        ));
     });
   const localVideoScriptHash = hashJson(script);
   const localVideoRequest = expectedLocalVideoRequest(job, script, currentRunId, localVideoScriptHash);
@@ -1324,6 +1356,7 @@ export async function evaluateJob(jobId, options = {}) {
     && localVideoSegments.length === actualClipTarget
     && localVideoSegments.every((segment, index) => {
       const expectedPath = evidenceRelative(jobDir, clips[index] || "");
+      const expectedPattern = localVideoRequest.segments[index]?.shotPattern || null;
       return segment.index === index + 1
         && segment.runId === currentRunId
         && segment.requestHash === localVideoRequestHash
@@ -1331,7 +1364,13 @@ export async function evaluateJob(jobId, options = {}) {
         && segment.path === expectedPath
         && segment.output === expectedPath
         && segment.sha256
-        && segment.sha256 === currentClipHashes[index];
+        && segment.sha256 === currentClipHashes[index]
+        && (!expectedPattern || (
+          segment.providerVisualPrompt === localVideoRequest.segments[index].providerVisualPrompt
+          && segment.providerVisualPromptHash === localVideoRequest.segments[index].providerVisualPromptHash
+          && hashJson(segment.shotPattern) === hashJson(expectedPattern)
+          && segment.submittedToProvider === true
+        ));
     });
   const localVideoReceiptBinding = Boolean(
     job.provider === "local-video"
@@ -1340,6 +1379,77 @@ export async function evaluateJob(jobId, options = {}) {
     && runManifest.providerReceipt.sha256 === localVideoReceiptHash
     && runManifest.providerArtifact?.sha256 === localVideoReceiptHash
   );
+  const shotPatternRequired = shotPatternRequiredForScript(script);
+  const shotPatternReceiptReference = runManifest?.shotPatterns;
+  const shotPatternProviderEvidenceBinding = Boolean(
+    !shotPatternRequired
+    || (job.provider === "local"
+      ? shotPatternReceipt?.submittedToProvider === false
+        && shotPatternReceipt?.providerRequestHash === null
+        && shotPatternReceipt?.providerGenerationHash === null
+      : shotPatternReceipt?.submittedToProvider === true
+        && shotPatternReceipt?.providerRequestHash === (job.provider === "gemini-browser" ? geminiGeneration?.requestHash : localVideoGeneration?.requestHash)
+        && shotPatternReceipt?.providerGenerationHash === (job.provider === "gemini-browser" ? await hashExisting(join(jobDir, "gemini-generation.json")) : localVideoReceiptHash))
+  );
+  const shotPatternReceiptBinding = Boolean(
+    !shotPatternRequired
+    || (
+      verifyShotPatternReceipt(shotPatternReceipt)
+      && shotPatternReceipt.jobId === jobId
+      && shotPatternReceipt.runId === currentRunId
+      && shotPatternReceipt.provider === job.provider
+      && shotPatternReceipt.planHash === script.shotPatternPlan.planHash
+      && shotPatternReceipt.catalogId === script.shotPatternPlan.catalogId
+      && shotPatternReceipt.catalogHash === script.shotPatternPlan.catalogHash
+      && shotPatternReceipt.continuityContractHash === script.shotPatternPlan.continuityContractHash
+      && shotPatternReceipt.segmentCount === script.shotPatternPlan.segmentCount
+      && shotPatternReceipt.segments.length === script.segments.length
+      && shotPatternReceipt.evidenceTextBindingHash === script.evidenceTextBindingHash
+      && shotPatternReceiptReference?.path === evidenceRelative(jobDir, shotPatternReceiptPath)
+      && shotPatternReceiptReference.sha256 === shotPatternReceiptHash
+      && shotPatternReceiptReference.receiptHash === shotPatternReceipt.receiptHash
+      && shotPatternReceiptReference.catalogId === shotPatternReceipt.catalogId
+      && shotPatternReceiptReference.catalogHash === shotPatternReceipt.catalogHash
+      && shotPatternReceiptReference.continuityContractHash === shotPatternReceipt.continuityContractHash
+      && shotPatternReceiptReference.segmentCount === shotPatternReceipt.segmentCount
+      && shotPatternReceiptReference.applicationMode === shotPatternReceipt.applicationMode
+      && shotPatternReceiptReference.providerEligible === shotPatternReceipt.providerEligible
+      && shotPatternReceiptReference.providerSubmissionPlanned === shotPatternReceipt.providerSubmissionPlanned
+      && shotPatternReceiptReference.submittedToProvider === shotPatternReceipt.submittedToProvider
+      && (shotPatternReceiptReference.providerRequestSentThisRun ?? shotPatternReceipt.submittedToProvider) === (shotPatternReceipt.providerRequestSentThisRun ?? shotPatternReceipt.submittedToProvider)
+      && (shotPatternReceiptReference.inheritedProviderSubmission ?? false) === (shotPatternReceipt.inheritedProviderSubmission ?? false)
+      && (shotPatternReceiptReference.sourceSubmissionRunId ?? null) === (shotPatternReceipt.sourceSubmissionRunId ?? null)
+      && (shotPatternReceiptReference.sourceGenerationHash ?? null) === (shotPatternReceipt.sourceGenerationHash ?? null)
+      && shotPatternReceiptReference.providerRequestHash === shotPatternReceipt.providerRequestHash
+      && shotPatternReceiptReference.providerGenerationHash === shotPatternReceipt.providerGenerationHash
+      && shotPatternProviderEvidenceBinding
+      && shotPatternReceipt.segments.every((segment, index) => (
+        segment.patternId === script.segments[index]?.shotPattern?.patternId
+        && segment.providerVisualPromptHash === script.segments[index]?.shotPattern?.providerVisualPromptHash
+        && segment.visualPromptHash === hashJson(script.segments[index]?.visualPrompt)
+      ))
+    )
+  );
+  let semanticRevalidationProviderZero = { required: false, verified: true, blockers: [] };
+  try {
+    const semanticRevalidationSource = await loadSemanticRevalidationSource(jobDir, runManifest);
+    semanticRevalidationProviderZero = verifySemanticRevalidationProviderZeroBinding({
+      jobId,
+      runId: currentRunId,
+      manifest: runManifest,
+      generation: geminiGeneration,
+      childGenerationFileHash: geminiGenerationFileHash,
+      shotPatternReceipt,
+      source: semanticRevalidationSource
+    });
+  } catch (error) {
+    semanticRevalidationProviderZero = {
+      required: Boolean(runManifest?.semanticRevalidation),
+      verified: false,
+      blockers: [error.message]
+    };
+  }
+  const semanticRevalidationProviderZeroBinding = semanticRevalidationProviderZero.verified === true;
   const runInputReceipt = runManifest?.inputManifest;
   const inputManifestReceiptBound = Boolean(
     runInputReceipt
@@ -1526,8 +1636,8 @@ export async function evaluateJob(jobId, options = {}) {
     }))).every(Boolean)
   );
   const providerProof = job.provider === "local"
-    || (job.provider === "gemini-browser" && generationClipBinding && providerDecisionBinding && providerDecisionEventBinding)
-    || (job.provider === "local-video" && localVideoClipBinding && localVideoReceiptBinding && providerDecisionBinding && providerDecisionEventBinding);
+    || (job.provider === "gemini-browser" && generationClipBinding && shotPatternReceiptBinding && providerDecisionBinding && providerDecisionEventBinding && semanticRevalidationProviderZeroBinding)
+    || (job.provider === "local-video" && localVideoClipBinding && localVideoReceiptBinding && shotPatternReceiptBinding && providerDecisionBinding && providerDecisionEventBinding);
   const providerGenerationProvenance = job.provider === "gemini-browser" ? generationProvenance : job.provider === "local-video" ? localVideoModelBinding : false;
   const generatedCaptionCuesPerMinute = finalMedia?.duration > 0 ? round(captions.length * 60 / finalMedia.duration, 2) : null;
   const benchmarkCaptionDensity = Number(rlmBenchmark?.mediaEvidence?.averageCaptionCuesPerMinute);
@@ -1544,7 +1654,7 @@ export async function evaluateJob(jobId, options = {}) {
   });
   const sourceQuality = sources.length > 0 && sourceSetBinding && sourceContentBinding && sourceBundle?.status === "complete" && sourceBundle.records?.length === sources.length && sourceBundle.records.every((source) => source.fetchStatus === "fetched" && source.sha256 && source.byteLength > 0) && sources.every((source) => source.url && /^https?:\/\//i.test(source.url) && !isPlaceholderSource(source));
   const researchStatusVerified = script?.researchStatus === "verified";
-  const evidenceTextBinding = verifyEvidenceBoundScript(script, sources, expectedSegments);
+  const evidenceTextBinding = verifyEvidenceBoundScript(script, sources, expectedSegments, job.format);
   const evidenceTextBindingVerified = evidenceTextBinding.verified === true;
   const claimEvidencePass = researchStatusVerified && evidenceTextBindingVerified && segmentClaimEvidence(script, sources);
   const title = script?.title || job.topic || "";
@@ -1598,6 +1708,7 @@ export async function evaluateJob(jobId, options = {}) {
     ...(voiceoverSync ? [join(jobDir, "voiceover-mastered.wav")] : []),
     ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
     ...(localVideoGeneration ? [localVideoGenerationPath] : []),
+    ...(shotPatternReceipt ? [shotPatternReceiptPath] : []),
     ...localSemanticEvidencePaths,
     join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
     ...clips,
@@ -1740,7 +1851,8 @@ export async function evaluateJob(jobId, options = {}) {
     && sourceContentBinding
     && researchStatusVerified
     && evidenceTextBindingVerified
-    && claimEvidencePass;
+    && claimEvidencePass
+    && semanticRevalidationProviderZeroBinding;
   // This gate is deliberately narrower than ASR or human editorial review. It
   // combines immutable loopback-VLM frame/OCR observations with deterministic
   // black-frame, extractive source, and TTS generation-provenance bindings.
@@ -1759,6 +1871,8 @@ export async function evaluateJob(jobId, options = {}) {
   if (!inputDiversityBinding) blockers.push("입력 클립의 SHA-256 고유성 또는 시간축 지각 다양성 gate가 검증되지 않았습니다.");
   if (!inputManifestBinding) blockers.push("현재 실행의 입력 manifest가 요청한 클립 집합과 결속되지 않았습니다.");
   if (!runManifestBinding) blockers.push("현재 실행의 run manifest가 작업·요청 식별자와 결속되지 않았습니다.");
+  if (shotPatternRequired && !shotPatternReceiptBinding) blockers.push("shot pattern의 evidence visualPrompt·providerVisualPrompt·연속성 계약 해시가 현재 run 영수증과 결속되지 않았습니다.");
+  if (semanticRevalidationProviderZero.required && !semanticRevalidationProviderZeroBinding) blockers.push(`semantic child의 parent provenance·provider 요청 0회 폐쇄가 검증되지 않았습니다: ${semanticRevalidationProviderZero.blockers.join(", ")}`);
   if (job.provider === "gemini-browser" && !geminiRequestSessionBinding) blockers.push("run manifest의 Gemini 요청이 저장된 세션의 정규화 binding hash와 결속되지 않았습니다.");
   if (!benchmarkReceiptBinding) blockers.push("벤치마크 스냅샷 영수증이 현재 실행과 결속되지 않았습니다.");
   if (!eventLogParsePass) blockers.push("불변 run 이벤트 로그에 해석할 수 없는 JSON 행이 있습니다.");
@@ -1828,6 +1942,23 @@ export async function evaluateJob(jobId, options = {}) {
       localVideoRequestBinding: Boolean(localVideoGeneration?.request && hashJson(localVideoGeneration.request) === hashJson(localVideoRequest)),
       localVideoClipBinding,
       localVideoReceiptBinding,
+      shotPatternReceipt: shotPatternReceipt ? {
+        path: evidenceRelative(jobDir, shotPatternReceiptPath),
+        sha256: shotPatternReceiptHash,
+        receiptHash: shotPatternReceipt.receiptHash,
+        catalogId: shotPatternReceipt.catalogId,
+        applicationMode: shotPatternReceipt.applicationMode,
+        submittedToProvider: shotPatternReceipt.submittedToProvider,
+        providerRequestSentThisRun: shotPatternReceipt.providerRequestSentThisRun ?? shotPatternReceipt.submittedToProvider,
+        inheritedProviderSubmission: shotPatternReceipt.inheritedProviderSubmission ?? false,
+        sourceSubmissionRunId: shotPatternReceipt.sourceSubmissionRunId ?? null,
+        sourceGenerationHash: shotPatternReceipt.sourceGenerationHash ?? null,
+        segmentCount: shotPatternReceipt.segments?.length || 0
+      } : null,
+      shotPatternReceiptBinding,
+      shotPatternProviderEvidenceBinding,
+      semanticRevalidationProviderZero,
+      semanticRevalidationProviderZeroBinding,
       providerGenerationProvenance,
       generationClipBinding,
       generationProvenance,
