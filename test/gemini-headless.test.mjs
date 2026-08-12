@@ -226,6 +226,42 @@ describe("Gemini browser generation safety", () => {
     });
   });
 
+  test("treats Quill blank-line and zero-width residue as a cleared editor", () => {
+    const field = {
+      tagName: "DIV",
+      innerText: "\n\u200b\ufeff",
+      textContent: "\n\u200b\ufeff",
+      getBoundingClientRect: () => ({ width: 600, height: 80 }),
+      getAttribute: (name) => name === "role" ? "textbox" : null,
+      contains: () => false
+    };
+    const userMessage = {
+      tagName: "USER-QUERY",
+      innerText: "궁궐 배수의 비밀",
+      textContent: "궁궐 배수의 비밀",
+      getBoundingClientRect: () => ({ width: 500, height: 60 }),
+      getAttribute: () => null,
+      contains: () => false
+    };
+    const root = {
+      querySelectorAll(selector) {
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [field];
+        if (selector === 'button,[role="button"]') return [];
+        if (selector.includes("user-query")) return [userMessage];
+        return [];
+      }
+    };
+    const state = geminiPromptSubmissionDomState("궁궐 배수의 비밀", root, "https://gemini.google.com/app/thread-1");
+    expect(state.promptValue).toBe("");
+    expect(geminiPromptSubmissionEvidence("궁궐 배수의 비밀", {
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    }, state)).toMatchObject({ verified: true, promptCleared: true, evidenceTypes: ["user-message", "generation"] });
+  });
+
   test("requires both a cleared editor and post-click acknowledgement evidence", () => {
     const prompt = "exact prompt";
     const baseline = {

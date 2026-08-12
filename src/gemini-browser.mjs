@@ -509,7 +509,8 @@ async function verifyVideoAspectRatio(browser, format = "vertical") {
 }
 
 export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
-  const expectedPrompt = String(prompt);
+  const normalizeEditorText = (value) => String(value ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
+  const expectedPrompt = normalizeEditorText(prompt);
   const query = (selector) => {
     try {
       return [...root.querySelectorAll(selector)];
@@ -541,7 +542,7 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
     });
   const field = fields[0] || null;
   const promptValue = field
-    ? String(field.tagName === "TEXTAREA" || field.tagName === "INPUT" ? field.value || "" : field.innerText ?? field.textContent ?? "")
+    ? normalizeEditorText(field.tagName === "TEXTAREA" || field.tagName === "INPUT" ? field.value || "" : field.innerText ?? field.textContent ?? "")
     : null;
   const buttons = query('button,[role="button"]').filter(visible);
   const send = buttons.find(exactSendLabel) || null;
@@ -557,7 +558,7 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
   ].join(","));
   const userMessageMatchCount = userMessageNodes.filter((element) => {
     if (!visible(element) || element === field || element.contains?.(field)) return false;
-    const value = String(element.innerText ?? element.textContent ?? "").trim();
+    const value = normalizeEditorText(element.innerText ?? element.textContent ?? "");
     return value === expectedPrompt;
   }).length;
   const generationNodes = query([
@@ -593,7 +594,7 @@ export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
 }
 
 export function geminiPromptSubmissionEvidence(prompt, baseline = {}, observation = {}) {
-  const expectedPrompt = String(prompt);
+  const expectedPrompt = String(prompt ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
   const baselineKeys = new Set(Array.isArray(baseline.generationEvidenceKeys) ? baseline.generationEvidenceKeys : []);
   const currentKeys = Array.isArray(observation.generationEvidenceKeys) ? observation.generationEvidenceKeys : [];
   const userMessageAppeared = Number(observation.userMessageMatchCount || 0) > Number(baseline.userMessageMatchCount || 0);
@@ -648,7 +649,8 @@ export async function confirmGeminiPromptSubmission({
     throw new TypeError("Gemini 제출 확인에는 observe, initialClick, retryClick 함수가 필요합니다.");
   }
   const baseline = await observe();
-  if (baseline?.promptFieldVisible !== true || baseline.promptValue !== String(prompt)) {
+  const expectedPrompt = String(prompt ?? "").replace(/[\u200B\uFEFF]/g, "").trim();
+  if (baseline?.promptFieldVisible !== true || baseline.promptValue !== expectedPrompt) {
     return { submitted: false, reason: "exact-prompt-not-ready", clickCount: 0, baseline };
   }
   const firstClick = await initialClick();
