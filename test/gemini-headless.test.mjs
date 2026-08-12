@@ -5,8 +5,12 @@ import {
   assertGeminiChromeRuntime,
   buildGeminiChromeLaunchArgs,
   canonicalGeminiResumeScriptHash,
+  confirmGeminiPromptSubmission,
   geminiAspectRatioEvidence,
   geminiChromeMajorVersion,
+  geminiPromptRetryDecision,
+  geminiPromptSubmissionDomState,
+  geminiPromptSubmissionEvidence,
   geminiVideoQuotaMessage,
   isHeadlessChromeVersion,
   resolveGeminiChromeLaunchPolicy
@@ -159,5 +163,213 @@ describe("Gemini browser generation safety", () => {
       mutate(changed);
       expect(canonicalGeminiResumeScriptHash(changed)).not.toBe(canonicalGeminiResumeScriptHash(script));
     }
+  });
+
+  test("reads exact prompt, send control, and fresh acknowledgement evidence from the DOM", () => {
+    const prompt = "Create a vertical 9:16 documentary clip.";
+    const element = (input = {}) => ({
+      tagName: input.tagName || "DIV",
+      innerText: input.innerText || "",
+      textContent: input.textContent ?? input.innerText ?? "",
+      value: input.value,
+      disabled: input.disabled || false,
+      href: input.href || "",
+      src: input.src || "",
+      currentSrc: input.currentSrc || "",
+      getBoundingClientRect: () => ({ width: input.width ?? 100, height: input.height ?? 40 }),
+      getAttribute: (name) => input.attributes?.[name] ?? null,
+      contains: (candidate) => Array.isArray(input.children) && input.children.includes(candidate)
+    });
+    const field = element({ tagName: "TEXTAREA", value: prompt, width: 600, height: 120 });
+    const createVideo = element({ tagName: "BUTTON", attributes: { "aria-label": "Create videos" } });
+    const send = element({ tagName: "BUTTON", attributes: { "aria-label": "Send message" } });
+    const stop = element({ tagName: "BUTTON", attributes: { "aria-label": "Stop response" } });
+    const userMessage = element({ tagName: "USER-QUERY", innerText: prompt });
+    const response = element({ tagName: "MODEL-RESPONSE", innerText: "Generating video" });
+    let acknowledged = false;
+    const root = {
+      querySelectorAll(selector) {
+        if (selector === 'textarea,[contenteditable="true"],[role="textbox"]') return [field];
+        if (selector === 'button,[role="button"]') return acknowledged ? [createVideo, send, stop] : [createVideo, send];
+        if (selector.includes("user-query")) return acknowledged ? [userMessage] : [];
+        if (selector.includes("model-response")) return acknowledged ? [response] : [];
+        return [];
+      }
+    };
+
+    const baseline = geminiPromptSubmissionDomState(prompt, root, "https://gemini.google.com/videos");
+    expect(baseline).toMatchObject({
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      sendLabel: "Send message",
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      conversationUrl: null
+    });
+
+    acknowledged = true;
+    field.value = "";
+    const after = geminiPromptSubmissionDomState(prompt, root, "https://gemini.google.com/app/conversation-1");
+    expect(after).toMatchObject({
+      promptValue: "",
+      userMessageMatchCount: 1,
+      stopResponseCount: 1,
+      generationEvidenceCount: 1,
+      conversationUrl: "https://gemini.google.com/app/conversation-1"
+    });
+    expect(geminiPromptSubmissionEvidence(prompt, baseline, after)).toMatchObject({
+      verified: true,
+      promptCleared: true,
+      hasNewEvidence: true
+    });
+  });
+
+  test("requires both a cleared editor and post-click acknowledgement evidence", () => {
+    const prompt = "exact prompt";
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    expect(geminiPromptSubmissionEvidence(prompt, baseline, {
+      ...baseline,
+      promptValue: ""
+    })).toMatchObject({ verified: false, promptCleared: true, hasNewEvidence: false });
+    expect(geminiPromptSubmissionEvidence(prompt, baseline, {
+      ...baseline,
+      userMessageMatchCount: 1
+    })).toMatchObject({ verified: false, promptCleared: false, hasNewEvidence: true });
+    expect(geminiPromptSubmissionEvidence(prompt, baseline, {
+      ...baseline,
+      promptValue: "",
+      stopResponseCount: 1
+    })).toMatchObject({ verified: true, promptCleared: true, hasNewEvidence: true });
+    expect(geminiPromptRetryDecision(prompt, "vertical", baseline, {
+      ...baseline,
+      userMessageMatchCount: 1
+    }, {
+      configured: true,
+      contradiction: false
+    })).toMatchObject({ eligible: false, reason: "submission-evidence-observed" });
+  });
+
+  test("performs one bounded retry only for the same prompt with portrait still selected", async () => {
+    const prompt = "exact vertical prompt";
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    const observations = [
+      baseline,
+      baseline,
+      { ...baseline, promptValue: "", userMessageMatchCount: 1 }
+    ];
+    let initialClicks = 0;
+    let retryClicks = 0;
+    const result = await confirmGeminiPromptSubmission({
+      prompt,
+      format: "vertical",
+      observe: async () => observations.shift(),
+      initialClick: async () => { initialClicks += 1; return { clicked: true, method: "button" }; },
+      retryClick: async ({ baseline: boundBaseline, observation }) => {
+        retryClicks += 1;
+        const decision = geminiPromptRetryDecision(prompt, "vertical", boundBaseline, observation, {
+          configured: true,
+          contradiction: false,
+          desiredRatio: "portrait"
+        });
+        expect(decision).toMatchObject({ eligible: true, reason: "safe-bounded-retry" });
+        return { clicked: true, method: "button", evidence: decision.submission };
+      },
+      sleepFn: async () => {},
+      pollsPerWindow: 1,
+      maxClickAttempts: 2
+    });
+
+    expect(result).toMatchObject({ submitted: true, verified: true, clickCount: 2 });
+    expect(result.evidenceTypes).toContain("user-message");
+    expect(initialClicks).toBe(1);
+    expect(retryClicks).toBe(1);
+  });
+
+  test("never retries after any acknowledgement evidence appears", async () => {
+    const prompt = "do not duplicate this prompt";
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    const observations = [
+      baseline,
+      { ...baseline, stopResponseCount: 1 },
+      { ...baseline, promptValue: "", stopResponseCount: 1 }
+    ];
+    let retryCalls = 0;
+    const result = await confirmGeminiPromptSubmission({
+      prompt,
+      observe: async () => observations.shift(),
+      initialClick: async () => ({ clicked: true, method: "button" }),
+      retryClick: async () => { retryCalls += 1; return { clicked: true }; },
+      sleepFn: async () => {},
+      pollsPerWindow: 2,
+      maxClickAttempts: 2
+    });
+
+    expect(result).toMatchObject({ submitted: true, verified: true, clickCount: 1 });
+    expect(result.evidenceTypes).toContain("stop-response");
+    expect(retryCalls).toBe(0);
+  });
+
+  test("fails closed before result waiting when acknowledgement cannot be verified", async () => {
+    const prompt = "unacknowledged prompt";
+    const baseline = {
+      promptFieldVisible: true,
+      promptValue: prompt,
+      sendEnabled: true,
+      userMessageMatchCount: 0,
+      stopResponseCount: 0,
+      generationEvidenceCount: 0,
+      generationEvidenceKeys: [],
+      conversationUrl: null
+    };
+    let resultWaitStarted = false;
+    const result = await confirmGeminiPromptSubmission({
+      prompt,
+      format: "vertical",
+      observe: async () => baseline,
+      initialClick: async () => ({ clicked: true, method: "button" }),
+      retryClick: async ({ baseline: boundBaseline, observation }) => {
+        const decision = geminiPromptRetryDecision(prompt, "vertical", boundBaseline, observation, {
+          configured: false,
+          contradiction: true
+        });
+        return { clicked: false, reason: decision.reason, evidence: decision.submission };
+      },
+      sleepFn: async () => {},
+      pollsPerWindow: 1,
+      maxClickAttempts: 2
+    });
+    if (result.submitted && result.verified) resultWaitStarted = true;
+
+    expect(result).toMatchObject({ submitted: false, reason: "portrait-ratio-unverified", clickCount: 1 });
+    expect(resultWaitStarted).toBe(false);
   });
 });

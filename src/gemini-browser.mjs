@@ -508,6 +508,218 @@ async function verifyVideoAspectRatio(browser, format = "vertical") {
   })()`);
 }
 
+export function geminiPromptSubmissionDomState(prompt, root, currentHref = "") {
+  const expectedPrompt = String(prompt);
+  const query = (selector) => {
+    try {
+      return [...root.querySelectorAll(selector)];
+    } catch {
+      return [];
+    }
+  };
+  const visible = (element) => {
+    const rect = element?.getBoundingClientRect?.();
+    return Boolean(rect && rect.width > 0 && rect.height > 0);
+  };
+  const labels = (element) => [
+    element?.innerText,
+    element?.getAttribute?.("aria-label"),
+    element?.getAttribute?.("title")
+  ].filter(Boolean).map((value) => String(value).trim()).filter(Boolean);
+  const exactSendLabel = (element) => labels(element).some((value) => /^(?:send(?: message)?|send message button|보내기|메시지 보내기|보내기 버튼)$/i.test(value));
+  const disabled = (element) => Boolean(
+    element?.disabled
+    || /^(?:true|disabled)$/i.test(element?.getAttribute?.("aria-disabled") || "")
+    || /^(?:disabled)$/i.test(element?.getAttribute?.("data-state") || "")
+  );
+  const fields = query('textarea,[contenteditable="true"],[role="textbox"]')
+    .filter(visible)
+    .sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      return (rightRect.width * rightRect.height) - (leftRect.width * leftRect.height);
+    });
+  const field = fields[0] || null;
+  const promptValue = field
+    ? String(field.tagName === "TEXTAREA" || field.tagName === "INPUT" ? field.value || "" : field.innerText ?? field.textContent ?? "")
+    : null;
+  const buttons = query('button,[role="button"]').filter(visible);
+  const send = buttons.find(exactSendLabel) || null;
+  const stopResponseCount = buttons.filter((element) => labels(element).some((value) => /^(?:stop response|stop generating|응답 중지|생성 중지)(?: button| 버튼)?$/i.test(value))).length;
+  const userMessageNodes = query([
+    "user-query",
+    '[data-message-author-role="user"]',
+    '[data-test-id*="user-query"]',
+    '[data-testid*="user-query"]',
+    '[class*="user-query"]',
+    '[class*="user-message"]',
+    '[class*="query-content"]'
+  ].join(","));
+  const userMessageMatchCount = userMessageNodes.filter((element) => {
+    if (!visible(element) || element === field || element.contains?.(field)) return false;
+    const value = String(element.innerText ?? element.textContent ?? "").trim();
+    return value === expectedPrompt;
+  }).length;
+  const generationNodes = query([
+    "model-response",
+    '[data-test-id*="model-response"]',
+    '[data-testid*="model-response"]',
+    '[class*="model-response"]',
+    '[role="progressbar"]',
+    '[aria-busy="true"]',
+    "video",
+    'a[href*="download"]',
+    'a[href$=".mp4"]'
+  ].join(",")).filter(visible);
+  const generationEvidenceKeys = generationNodes.map((element, index) => {
+    const href = element.href || element.getAttribute?.("href") || "";
+    const source = element.currentSrc || element.src || element.getAttribute?.("src") || "";
+    const label = labels(element).join(" ").slice(0, 160);
+    return `${String(element.tagName || "node").toLowerCase()}:${href || source || label || index}`;
+  });
+  const conversationUrl = /gemini\.google\.com\/app\/[^/?#]+/i.test(String(currentHref)) ? String(currentHref) : null;
+  return {
+    promptFieldVisible: Boolean(field),
+    promptValue,
+    sendPresent: Boolean(send),
+    sendEnabled: Boolean(send && !disabled(send)),
+    sendLabel: send ? labels(send).join(" ") : null,
+    userMessageMatchCount,
+    stopResponseCount,
+    generationEvidenceCount: generationNodes.length,
+    generationEvidenceKeys,
+    conversationUrl
+  };
+}
+
+export function geminiPromptSubmissionEvidence(prompt, baseline = {}, observation = {}) {
+  const expectedPrompt = String(prompt);
+  const baselineKeys = new Set(Array.isArray(baseline.generationEvidenceKeys) ? baseline.generationEvidenceKeys : []);
+  const currentKeys = Array.isArray(observation.generationEvidenceKeys) ? observation.generationEvidenceKeys : [];
+  const userMessageAppeared = Number(observation.userMessageMatchCount || 0) > Number(baseline.userMessageMatchCount || 0);
+  const stopResponseAppeared = Number(observation.stopResponseCount || 0) > Number(baseline.stopResponseCount || 0);
+  const generationEvidenceAppeared = Number(observation.generationEvidenceCount || 0) > Number(baseline.generationEvidenceCount || 0)
+    || currentKeys.some((key) => !baselineKeys.has(key))
+    || Boolean(observation.conversationUrl && observation.conversationUrl !== baseline.conversationUrl);
+  const evidenceTypes = [
+    userMessageAppeared ? "user-message" : null,
+    stopResponseAppeared ? "stop-response" : null,
+    generationEvidenceAppeared ? "generation" : null
+  ].filter(Boolean);
+  const promptCleared = observation.promptFieldVisible === true && observation.promptValue === "";
+  const exactPromptRetained = observation.promptFieldVisible === true && observation.promptValue === expectedPrompt;
+  return {
+    verified: promptCleared && evidenceTypes.length > 0,
+    promptCleared,
+    exactPromptRetained,
+    hasNewEvidence: evidenceTypes.length > 0,
+    evidenceTypes,
+    sendEnabled: observation.sendEnabled === true
+  };
+}
+
+export function geminiPromptRetryDecision(prompt, format, baseline = {}, observation = {}, ratioEvidence = {}) {
+  const submission = geminiPromptSubmissionEvidence(prompt, baseline, observation);
+  if (submission.hasNewEvidence) return { eligible: false, reason: "submission-evidence-observed", submission };
+  if (!submission.exactPromptRetained) return { eligible: false, reason: "exact-prompt-not-retained", submission };
+  if (!submission.sendEnabled) return { eligible: false, reason: "send-control-not-enabled", submission };
+  if (ratioEvidence.configured !== true || ratioEvidence.contradiction === true) {
+    return {
+      eligible: false,
+      reason: `${format === "vertical" ? "portrait" : "landscape"}-ratio-unverified`,
+      submission
+    };
+  }
+  return { eligible: true, reason: "safe-bounded-retry", submission };
+}
+
+export async function confirmGeminiPromptSubmission({
+  prompt,
+  format = "vertical",
+  observe,
+  initialClick,
+  retryClick,
+  sleepFn = sleep,
+  pollsPerWindow = 32,
+  pollIntervalMs = 250,
+  maxClickAttempts = 2
+}) {
+  if (typeof observe !== "function" || typeof initialClick !== "function" || typeof retryClick !== "function") {
+    throw new TypeError("Gemini 제출 확인에는 observe, initialClick, retryClick 함수가 필요합니다.");
+  }
+  const baseline = await observe();
+  if (baseline?.promptFieldVisible !== true || baseline.promptValue !== String(prompt)) {
+    return { submitted: false, reason: "exact-prompt-not-ready", clickCount: 0, baseline };
+  }
+  const firstClick = await initialClick();
+  if (firstClick?.clicked !== true) {
+    return { submitted: false, reason: firstClick?.reason || "initial-submit-control-unavailable", clickCount: 0, baseline, click: firstClick || null };
+  }
+
+  let clickCount = 1;
+  let evidenceObserved = false;
+  const evidenceTypes = new Set();
+  let lastObservation = baseline;
+  let lastSubmission = geminiPromptSubmissionEvidence(prompt, baseline, baseline);
+  const windows = Math.max(1, Number(maxClickAttempts) || 1);
+  const polls = Math.max(1, Number(pollsPerWindow) || 1);
+
+  for (let windowIndex = 0; windowIndex < windows; windowIndex += 1) {
+    for (let pollIndex = 0; pollIndex < polls; pollIndex += 1) {
+      lastObservation = await observe();
+      lastSubmission = geminiPromptSubmissionEvidence(prompt, baseline, lastObservation);
+      for (const type of lastSubmission.evidenceTypes) evidenceTypes.add(type);
+      evidenceObserved ||= lastSubmission.hasNewEvidence;
+      if (lastSubmission.promptCleared && evidenceObserved) {
+        return {
+          submitted: true,
+          verified: true,
+          method: firstClick.method || "button",
+          clickCount,
+          evidenceTypes: [...evidenceTypes],
+          observation: lastObservation
+        };
+      }
+      if (pollIndex + 1 < polls) await sleepFn(pollIntervalMs);
+    }
+
+    if (evidenceObserved) {
+      if (windowIndex + 1 < windows) continue;
+      break;
+    }
+    if (clickCount >= windows) break;
+    const retry = await retryClick({ baseline, observation: lastObservation, clickCount });
+    if (retry?.evidence?.hasNewEvidence) {
+      for (const type of retry.evidence.evidenceTypes || []) evidenceTypes.add(type);
+      evidenceObserved = true;
+      lastObservation = retry.observation || lastObservation;
+      continue;
+    }
+    if (retry?.clicked !== true) {
+      return {
+        submitted: false,
+        reason: retry?.reason || "bounded-retry-rejected",
+        clickCount,
+        evidenceTypes: [...evidenceTypes],
+        observation: retry?.observation || lastObservation
+      };
+    }
+    clickCount += 1;
+  }
+
+  return {
+    submitted: false,
+    reason: evidenceObserved
+      ? "submission-evidence-without-cleared-input"
+      : lastSubmission.promptCleared
+        ? "prompt-cleared-without-submission-evidence"
+        : "submission-unverified",
+    clickCount,
+    evidenceTypes: [...evidenceTypes],
+    observation: lastObservation
+  };
+}
+
 async function fillPrompt(browser, prompt) {
   const prepared = await browser.evaluate(`(() => {
     const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -551,37 +763,83 @@ async function fillPrompt(browser, prompt) {
   return prepared;
 }
 
-async function submitPrompt(browser) {
-  const button = await browser.evaluate(`(() => {
-    const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const text = (el) => [el.innerText, el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').trim().toLowerCase();
-    const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible);
-    const send = buttons.find((el) => /보내기|send|생성|generate|create/.test(text(el)) && !/파일|file|mode|모드/.test(text(el)));
-    if (!send) return null;
-    send.click();
-    return text(send);
+async function inspectPromptSubmission(browser, prompt) {
+  return browser.evaluate(`(() => {
+    const stateFor = ${geminiPromptSubmissionDomState.toString()};
+    return stateFor(${JSON.stringify(String(prompt))}, document, location.href);
   })()`);
-  if (button) return { submitted: true, method: "button", label: button };
-  const hasField = await browser.evaluate(`(() => [...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].some((el) => {
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  }))()`);
-  if (!hasField) return { submitted: false };
-  try {
-    await browser.command("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }, true);
-    await browser.command("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }, true);
-  } catch {
-    await browser.evaluate(`(() => {
-      const field = [...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].find((el) => {
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      });
-      if (!field) return false;
-      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-      return true;
-    })()`);
-  }
-  return { submitted: true, method: "enter" };
+}
+
+async function clickPromptSubmit(browser, prompt) {
+  return browser.evaluate(`(() => {
+    const stateFor = ${geminiPromptSubmissionDomState.toString()};
+    const expectedPrompt = ${JSON.stringify(String(prompt))};
+    const observation = stateFor(expectedPrompt, document, location.href);
+    if (!observation.promptFieldVisible || observation.promptValue !== expectedPrompt) {
+      return { clicked: false, reason: 'exact-prompt-not-ready', observation };
+    }
+    if (!observation.sendEnabled) {
+      return { clicked: false, reason: observation.sendPresent ? 'send-control-disabled' : 'send-control-missing', observation };
+    }
+    const visible = (element) => { const rect = element?.getBoundingClientRect?.(); return Boolean(rect && rect.width > 0 && rect.height > 0); };
+    const labels = (element) => [element?.innerText, element?.getAttribute?.('aria-label'), element?.getAttribute?.('title')]
+      .filter(Boolean).map((value) => String(value).trim()).filter(Boolean);
+    const exactSendLabel = (element) => labels(element).some((value) => /^(?:send(?: message)?|send message button|보내기|메시지 보내기|보내기 버튼)$/i.test(value));
+    const send = [...document.querySelectorAll('button,[role="button"]')].filter(visible).find(exactSendLabel);
+    if (!send) return { clicked: false, reason: 'send-control-missing', observation };
+    send.click();
+    return { clicked: true, method: 'button', label: labels(send).join(' '), observation };
+  })()`);
+}
+
+async function retryPromptSubmit(browser, prompt, format, baseline) {
+  return browser.evaluate(`(() => {
+    const stateFor = ${geminiPromptSubmissionDomState.toString()};
+    const geminiPromptSubmissionEvidence = ${geminiPromptSubmissionEvidence.toString()};
+    const retryFor = ${geminiPromptRetryDecision.toString()};
+    const ratioEvidenceFor = ${geminiAspectRatioEvidence.toString()};
+    const expectedPrompt = ${JSON.stringify(String(prompt))};
+    const requestedFormat = ${JSON.stringify(format)};
+    const baseline = ${JSON.stringify(baseline)};
+    const visible = (element) => { const rect = element?.getBoundingClientRect?.(); return Boolean(rect && rect.width > 0 && rect.height > 0); };
+    const labels = (element) => [element?.innerText, element?.getAttribute?.('aria-label'), element?.getAttribute?.('title')]
+      .filter(Boolean).map((value) => String(value).trim()).filter(Boolean);
+    const text = (element) => labels(element).join(' ').trim().toLowerCase();
+    const ratioLabel = (element) => /aspect ratio|가로세로|화면비|landscape|portrait|가로 모드|세로 모드|9\\s*[:/x×]\\s*16|16\\s*[:/x×]\\s*9/i.test(text(element));
+    const ratioOptionElement = (element) => element.matches('input-companion-item,[role="menuitemradio"],[role="radio"],[role="option"]')
+      || Boolean(element.closest('[role="menu"],[role="listbox"]'));
+    const selected = (element) => {
+      if (typeof element.checked === 'boolean' && element.checked === true) return true;
+      return [element.getAttribute('aria-checked'), element.getAttribute('aria-selected'), element.getAttribute('data-state')]
+        .some((value) => /^(?:true|checked|selected|on)$/i.test(value || ''));
+    };
+    const controls = [...document.querySelectorAll('button,[role="button"]')].filter((element) => visible(element) && !ratioOptionElement(element));
+    const ratioControl = controls.find((element) => /aspect ratio|가로세로|화면비/i.test(text(element))) || controls.find(ratioLabel) || null;
+    const options = [...document.querySelectorAll('input-companion-item,[role="menuitemradio"],[role="radio"],button,[role="option"]')]
+      .filter((element) => visible(element) && ratioLabel(element))
+      .map((element) => ({ label: text(element), selected: selected(element) }));
+    const ratioVerification = ratioEvidenceFor(requestedFormat, { controlLabel: ratioControl ? text(ratioControl) : '', options });
+    const observation = stateFor(expectedPrompt, document, location.href);
+    const decision = retryFor(expectedPrompt, requestedFormat, baseline, observation, ratioVerification);
+    if (!decision.eligible) {
+      return { clicked: false, reason: decision.reason, observation, evidence: decision.submission, ratioVerification };
+    }
+    const exactSendLabel = (element) => labels(element).some((value) => /^(?:send(?: message)?|send message button|보내기|메시지 보내기|보내기 버튼)$/i.test(value));
+    const send = [...document.querySelectorAll('button,[role="button"]')].filter(visible).find(exactSendLabel);
+    if (!send) return { clicked: false, reason: 'send-control-missing', observation, evidence: decision.submission, ratioVerification };
+    send.click();
+    return { clicked: true, method: 'button', label: labels(send).join(' '), observation, evidence: decision.submission, ratioVerification };
+  })()`);
+}
+
+async function submitPrompt(browser, prompt, format) {
+  return confirmGeminiPromptSubmission({
+    prompt,
+    format,
+    observe: () => inspectPromptSubmission(browser, prompt),
+    initialClick: () => clickPromptSubmit(browser, prompt),
+    retryClick: ({ baseline }) => retryPromptSubmit(browser, prompt, format, baseline)
+  });
 }
 
 async function inspectMedia(browser) {
@@ -889,8 +1147,10 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         links: new Set((known.links || []).map((item) => item.href).filter(Boolean)),
         chats: new Set((known.chats || []).map((item) => item.href).filter(Boolean))
       };
-      const submitted = await submitPrompt(browser);
-      if (!submitted.submitted) throw new Error("Gemini 영상 요청을 전송하지 못했습니다.");
+      const submitted = await submitPrompt(browser, prompt, job.format);
+      if (!submitted.submitted || submitted.verified !== true) {
+        throw new Error(`Gemini 영상 요청 전송을 확인하지 못했습니다 (${submitted.reason || "authoritative-submit-evidence-missing"}). 입력창 초기화와 사용자 메시지·응답 중지·생성 상태 중 하나를 함께 확인해야 합니다.`);
+      }
       const bytes = await waitForClip(browser, knownMedia, Date.now() + DOWNLOAD_TIMEOUT_MS);
       await writeFile(target, bytes);
       if (!(await clipMatchesFormat(target, job.format))) {
@@ -906,6 +1166,11 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         resumeScriptHash,
         durationHint: segment.durationHint || null,
         prompt,
+        submissionAcknowledgement: {
+          verified: true,
+          clickCount: submitted.clickCount,
+          evidenceTypes: submitted.evidenceTypes
+        },
         path: `clips/${String(index + 1).padStart(2, "0")}.mp4`,
         output: `clips/${String(index + 1).padStart(2, "0")}.mp4`,
         sha256: await hashFile(target).catch(() => null),
