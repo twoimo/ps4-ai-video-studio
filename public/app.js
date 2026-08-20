@@ -41,6 +41,13 @@ const PROVIDER_COPY = {
     generationDetail: "Chrome 브라우저 자동화",
     status: "Gemini Chrome"
   },
+  "grok-imagine": {
+    short: "Grok Imagine 공장",
+    detail: "Grok Imagine 공장 · 공식 grok CLI",
+    generation: "Grok Imagine factory",
+    generationDetail: "훅 잠금 · image_edit · 10초 720p · 대화 자막",
+    status: "Grok Imagine 공장"
+  },
   "local-video": {
     short: "로컬 영상 모델",
     detail: "로컬 영상 모델 명령 어댑터",
@@ -230,7 +237,7 @@ function renderPipeline(job) {
   const generationStep = $('[data-role="generation"]');
   const copy = providerCopy(job?.provider);
   if (generationStep) {
-    generationStep.dataset.stage = job?.provider === "local-video" ? "로컬 영상 생성" : job?.provider === "gemini-browser" ? "Gemini 영상" : "영상 생성";
+    generationStep.dataset.stage = job?.provider === "local-video" ? "로컬 영상 생성" : job?.provider === "gemini-browser" ? "Gemini 영상" : job?.provider === "grok-imagine" ? "Grok Imagine 공장" : "영상 생성";
     const title = generationStep.querySelector("b");
     const description = generationStep.querySelector("small");
     if (title) title.textContent = job ? copy.generation : "Video generation";
@@ -238,7 +245,7 @@ function renderPipeline(job) {
   }
   const stageIndexFor = (stage = "") => {
     if (stage.includes("준비") || stage === "대기") return 1;
-    if (stage.includes("Gemini") || stage.includes("영상 생성") || stage.includes("로컬 영상")) return 2;
+    if (stage.includes("Gemini") || stage.includes("영상 생성") || stage.includes("로컬 영상") || stage.includes("Grok Imagine")) return 2;
     if (stage.includes("편집") || stage.includes("정규화")) return 3;
     if (stage.includes("자막") || stage.includes("음성")) return 4;
     if (stage.includes("검수") || stage.includes("검증")) return 5;
@@ -264,6 +271,24 @@ function renderPipeline(job) {
   $("#pipeline-status").textContent = job ? `${copy.status} · ${statusLabel(job.status)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
 }
 
+function renderFactoryGallery(artifactRecords = []) {
+  const groups = [
+    ["훅 잠금", artifactRecords.filter((artifact) => artifact.kind === "hook-lock")],
+    ["스틸", artifactRecords.filter((artifact) => artifact.kind === "still")],
+    ["클립", artifactRecords.filter((artifact) => artifact.kind === "clip")],
+    ["마스터", artifactRecords.filter((artifact) => artifact.kind === "master-video")],
+    ["채팅 파일", artifactRecords.filter((artifact) => artifact.kind === "chat-video")],
+    ["파트", artifactRecords.filter((artifact) => artifact.kind === "part")]
+  ].filter(([, items]) => items.length);
+  if (!groups.length) return "";
+  return `<div class="factory-gallery"><span class="panel-kicker">GROK IMAGINE FACTORY</span>${groups.map(([label, items]) => `<div class="factory-row"><b>${escapeHtml(label)}</b><div>${items.map((item) => {
+    const isImage = /\.(png|jpe?g|webp)$/i.test(item.name);
+    return isImage && item.url
+      ? `<a class="factory-thumb" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.name)}" /><small>${escapeHtml(item.name)}</small></a>`
+      : `<a class="artifact-link" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noreferrer"><span>${item.kind?.includes("video") || item.kind === "clip" || item.kind === "part" ? "▶" : "≡"}</span>${escapeHtml(item.name)}<b>↗</b></a>`;
+  }).join("")}</div></div>`).join("")}</div>`;
+}
+
 function renderJobDetail(job) {
   const detail = $("#job-detail");
   if (!job) return;
@@ -274,7 +299,10 @@ function renderJobDetail(job) {
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status) ? `<div class="upload-box"><label for="detail-upload"><span>클립을 여기에 올리세요</span><small>MP4, MOV, WebM · 여러 파일 가능</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local">업로드된 클립으로 편집 실행</button></div>` : "";
   const providerNotice = job.provider === "local-video"
     ? `<div class="pending-evidence">로컬 영상 모델 명령 어댑터 · 설정된 로컬 생성기 실행 결과만 사용합니다. 로컬 클립 업로드 경로가 아닙니다.</div>`
-    : "";
+    : job.provider === "grok-imagine"
+      ? `<div class="pending-evidence">Grok Imagine 공장 · 공식 grok CLI OAuth만 사용합니다. Gemini로 대체하지 않으며, 훅 잠금 이후에는 image_edit만 합니다.</div>`
+      : "";
+  const factoryGallery = renderFactoryGallery(artifactRecords);
   const detailState = state.qualityDetails[job.id];
   const quality = detailState?.quality || job.qualitySummary;
   const history = detailState?.history || [];
@@ -285,9 +313,9 @@ function renderJobDetail(job) {
     ? `<video controls playsinline preload="metadata" poster="${escapeHtml(previewThumbnail.url || "")}" src="${escapeHtml(previewVideo.url)}"></video>`
     : `<div class="preview-unavailable">현재 실행의 불변 미리보기 산출물이 없습니다.</div>`;
   const qualityPanel = quality
-    ? `<div class="ahp-summary ${quality.semanticGate ? "passed" : "needs-improvement"}"><div><span class="panel-kicker">${quality.semanticGate ? "AHP QUALITY SCORE" : "MECHANICAL CHECK · SEMANTIC GATE CLOSED"}</span><strong>${scoreText(quality.totalScore)}<small>/ 100</small></strong></div><span>${quality.semanticGate ? (job.provider === "gemini-browser" ? "위원회·Gemini 근거 검토 가능" : "위원회 근거 검토 가능") : "기계 점수만 표시 · 의미론 판정 보류"}</span></div>${renderAHPPanel(quality, history)}${quality.blockers?.length ? `<div class="warning-box"><b>차단·개선 항목</b><ul>${quality.blockers.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}`
+    ? `<div class="ahp-summary ${quality.semanticGate ? "passed" : "needs-improvement"}"><div><span class="panel-kicker">${quality.semanticGate ? "AHP QUALITY SCORE" : "MECHANICAL CHECK · SEMANTIC GATE CLOSED"}</span><strong>${scoreText(quality.totalScore)}<small>/ 100</small></strong></div><span>${quality.semanticGate ? (job.provider === "gemini-browser" ? "위원회·Gemini 근거 검토 가능" : job.provider === "grok-imagine" ? "위원회·Imagine 근거 검토 가능" : "위원회 근거 검토 가능") : "기계 점수만 표시 · 의미론 판정 보류"}</span></div>${renderAHPPanel(quality, history)}${quality.blockers?.length ? `<div class="warning-box"><b>차단·개선 항목</b><ul>${quality.blockers.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}`
     : `<div class="pending-evidence">품질 검수 대기 · 현재 상태 ${escapeHtml(statusLabel(job.status))}${detailState?.error ? ` · ${escapeHtml(detailState.error)}` : ""}</div>`;
-  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}${job.status === "completed" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${providerNotice}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}${job.status === "completed" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${providerNotice}${factoryGallery}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
@@ -337,8 +365,9 @@ async function createProduction(event) {
   event.preventDefault();
   const provider = $("#provider").value;
   const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, captions: $("#captions").checked, voiceover: $("#voiceover").checked };
-  if (provider === "gemini-browser") body.autoStart = true;
+  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
+  if (provider === "gemini-browser" || provider === "grok-imagine") body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;
   button.querySelector("span").textContent = "파이프라인 시작 중…";
@@ -349,6 +378,8 @@ async function createProduction(event) {
     document.querySelector("#rendering").scrollIntoView({ behavior: "smooth", block: "start" });
     const message = provider === "gemini-browser"
       ? "Gemini Chrome 자동 생성 작업을 시작했습니다."
+      : provider === "grok-imagine"
+        ? "Grok Imagine 공장 작업을 시작했습니다. 공식 grok CLI OAuth가 있는 기기에서만 진행됩니다."
       : provider === "local-video"
         ? "로컬 영상 모델 명령 어댑터 작업을 만들었습니다. 설정된 생성기 명령이 필요합니다."
         : "로컬 클립 편집 작업을 만들었습니다. 클립을 업로드하세요.";
@@ -385,7 +416,7 @@ async function refreshHealth() {
     $("#system-label").textContent = ready ? "시스템 준비 완료" : "설정 확인 필요";
     $("#browser-start").classList.toggle("connected", browserConnected);
     $("#browser-start").innerHTML = `<span class="button-dot"></span>${browserConnected ? "Gemini Chrome 연결됨" : "Gemini Chrome 연결"}`;
-    $("#health-capabilities").innerHTML = `<div class="health-title">LOCAL CAPABILITIES <small>${ready ? "READY" : "CHECK REQUIRED"}</small></div><div class="health-items">${checks.map(([name, value]) => `<span class="${value ? "ok" : "missing"}"><i></i>${name} ${value ? "PASS" : "MISSING"}</span>`).join("")}<span class="${browserConnected ? "ok" : "missing"}"><i></i>Gemini Chrome ${browserConnected ? "CONNECTED" : "DISCONNECTED"}</span><span class="${health.capabilities.geminiApiKey ? "ok" : "muted"}"><i></i>Gemini text API ${health.capabilities.geminiApiKey ? "CONFIGURED" : "NOT CONFIGURED"}</span><span class="muted"><i></i>yt-dlp ${escapeHtml(ytDlp.version || "unknown")} · ${escapeHtml(ytDlp.maintenance || "maintenance unavailable")}</span><span class="${monitorProfiles.some((profile) => profile.available) ? "ok" : "muted"}"><i></i>Gemini quota monitor ${escapeHtml(monitorLabel)}</span></div>`;
+    $("#health-capabilities").innerHTML = `<div class="health-title">LOCAL CAPABILITIES <small>${ready ? "READY" : "CHECK REQUIRED"}</small></div><div class="health-items">${checks.map(([name, value]) => `<span class="${value ? "ok" : "missing"}"><i></i>${name} ${value ? "PASS" : "MISSING"}</span>`).join("")}<span class="${browserConnected ? "ok" : "missing"}"><i></i>Gemini Chrome ${browserConnected ? "CONNECTED" : "DISCONNECTED"}</span><span class="${health.capabilities.geminiApiKey ? "ok" : "muted"}"><i></i>Gemini text API ${health.capabilities.geminiApiKey ? "CONFIGURED" : "NOT CONFIGURED"}</span><span class="${health.capabilities.grokCli ? "ok" : "muted"}"><i></i>Grok Imagine CLI ${health.capabilities.grokCli ? "READY" : "NOT ON THIS MACHINE"}</span><span class="muted"><i></i>yt-dlp ${escapeHtml(ytDlp.version || "unknown")} · ${escapeHtml(ytDlp.maintenance || "maintenance unavailable")}</span><span class="${monitorProfiles.some((profile) => profile.available) ? "ok" : "muted"}"><i></i>Gemini quota monitor ${escapeHtml(monitorLabel)}</span></div>`;
     if (!health.capabilities.ffmpeg) showToast("ffmpeg가 없습니다. 터미널에서 brew install ffmpeg를 실행하세요.", "error");
   } catch (error) {
     $("#system-label").textContent = "서버 연결 실패";
@@ -405,8 +436,46 @@ async function connectBrowser() {
   finally { button.disabled = false; await refreshHealth(); }
 }
 
+function syncProviderForm() {
+  const provider = $("#provider")?.value;
+  const factsField = $("#facts-field");
+  const help = $("#provider-help");
+  const voiceover = $("#voiceover");
+  const clipCount = $("#clip-count");
+  const format = $("#format");
+  if (factsField) factsField.hidden = provider !== "grok-imagine";
+  if (help) {
+    help.textContent = provider === "grok-imagine"
+      ? "Grok Imagine 공장은 PATH의 grok 또는 ~/.grok/bin/grok와 이미 되어 있는 SuperGrok OAuth만 사용합니다. XAI_API_KEY와 grok login/logout은 쓰지 않으며 Gemini로 대체하지 않습니다. 훅 잠금 후 image_edit, 10초 720p, 대화 자막 MarginV=450."
+      : provider === "local-video"
+        ? "로컬 영상 모델은 설정된 생성기 명령이 필요합니다. 로컬 클립 업로드와는 별도이며, 생성기를 대신 제공하지 않습니다."
+        : provider === "local"
+          ? "업로드한 로컬 클립만 편집합니다. 영상을 생성하지 않습니다."
+          : "Gemini 모드는 전용 Chrome 프로필의 쿠키·세션을 재사용합니다. CAPTCHA·로그인 입력은 우회하지 않습니다.";
+  }
+  if (voiceover) {
+    if (provider === "grok-imagine") {
+      voiceover.checked = false;
+      voiceover.disabled = true;
+    } else {
+      voiceover.disabled = false;
+    }
+  }
+  if (clipCount) {
+    clipCount.value = provider === "grok-imagine" ? "7" : clipCount.value;
+    clipCount.disabled = provider === "grok-imagine";
+  }
+  if (format) {
+    if (provider === "grok-imagine") format.value = "vertical";
+    format.disabled = provider === "grok-imagine";
+  }
+  syncToggleLabels();
+}
+
 function bindEvents() {
   $("#create-form").addEventListener("submit", createProduction);
+  $("#provider")?.addEventListener("change", syncProviderForm);
+  syncProviderForm();
   $("#browser-start").addEventListener("click", connectBrowser);
   $("#refresh-all").addEventListener("click", async () => { await Promise.all([refreshJobs(), renderVideos(), refreshHealth()]); showToast("데이터를 갱신했습니다."); });
   $$('[data-topic]').forEach((button) => button.addEventListener("click", () => { $("#topic").value = button.dataset.topic; $("#topic").focus(); }));

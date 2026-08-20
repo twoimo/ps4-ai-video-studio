@@ -11,6 +11,7 @@
     "benchmark:media": "bun scripts/benchmark-media.mjs",
     "monitor:gemini": "bun scripts/monitor-gemini-production.mjs",
     "dev": "bun --watch src/server.mjs",
-    "start": "bun src/server.mjs"
+    "start": "bun src/server.mjs",
+    "test": "node --test test/grok-imagine-factory.test.mjs"
   }
 }

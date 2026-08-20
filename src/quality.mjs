@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { JOBS_DIR, ROOT, readJob } from "./pipeline.mjs";
 import { analyzeJobMedia } from "./frame-analysis.mjs";
 import { hashFile } from "./run-ledger.mjs";
+import { expectedGrokImagineRequest, factoryMediaTarget, PROVIDER_ID as GROK_IMAGINE_PROVIDER, unsupportedProviderMessage } from "./grok-imagine-factory.mjs";
 
 export const AHP_CRITERIA = [
   { id: "hookStory", label: "훅·서사 구조", weight: 25 },
@@ -19,7 +20,7 @@ const RANDOM_INDEX = { 1: 0, 2: 0, 3: 0.58, 4: 0.9, 5: 1.12, 6: 1.24, 7: 1.32, 8
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
 const REQUIRED_ARTIFACTS = ["final.mp4", "captions.srt", "script.json", "thumbnail.jpg"];
 const QUALITY_DIR = "quality";
-const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser"]);
+const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser", "grok-imagine"]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function clamp(value, min = 0, max = 100) {
@@ -85,6 +86,7 @@ function expectedLocalVideoRequest(job, script, runId, scriptHash) {
 function providerPolicy(provider) {
   if (provider === "gemini-browser") return "no-local-video-fallback";
   if (provider === "local-video") return "local-video-command-adapter-no-fallback";
+  if (provider === GROK_IMAGINE_PROVIDER) return "official-grok-cli-imagine-factory-no-fallback";
   return "local-upload-edit";
 }
 
@@ -210,7 +212,8 @@ function calculateAHP() {
   return { matrix, weights: AHP_CRITERIA.map((criterion, index) => ({ id: criterion.id, label: criterion.label, targetWeight: criterion.weight, calculatedWeight: round(weights[index] * 100, 2) })), lambdaMax: round(lambdaMax, 6), consistencyIndex: round(consistencyIndex, 6), consistencyRatio: round(consistencyRatio, 6) };
 }
 
-function mediaTarget(format) {
+function mediaTarget(format, provider) {
+  if (provider === GROK_IMAGINE_PROVIDER) return factoryMediaTarget();
   return format === "landscape" ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 };
 }
 
@@ -281,7 +284,7 @@ export async function saveCommitteeReview(jobId, review) {
   const jobDir = join(JOBS_DIR, jobId);
   const job = await readJob(jobId);
   const latest = await readJsonOptional(join(jobDir, QUALITY_DIR, "latest.json"));
-  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
+  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error(unsupportedProviderMessage());
   if (review.jobId && review.jobId !== job.id) throw new Error("위원회 리뷰가 현재 작업 식별자에 결속되어 있지 않습니다.");
   if (!review.runId || review.runId !== job.runId) throw new Error("위원회 리뷰가 현재 실행 runId에 결속되어 있지 않습니다.");
   if (!latest || latest.jobId !== job.id || latest.runId !== job.runId) throw new Error("현재 run에 결속된 품질 산출물이 없습니다.");
@@ -310,7 +313,7 @@ export async function persistQuality(jobDir, quality) {
 }
 export async function evaluateJob(jobId, options = {}) {
   const job = await readJob(jobId);
-  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
+  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error(unsupportedProviderMessage());
   if (options.runId && options.runId !== job.runId) throw new Error("품질 검사는 현재 작업의 runId만 허용합니다.");
   const currentRunId = job.runId || null;
   if (!currentRunId) throw new Error("현재 실행 산출물이 없어 품질 검사를 시작할 수 없습니다.");
@@ -363,13 +366,16 @@ export async function evaluateJob(jobId, options = {}) {
   const sources = normalizeSources(script?.sources || job.sources);
   const captionTiming = await readJsonOptional(join(jobDir, "caption-timing.json"));
   const voiceoverSync = await readJsonOptional(join(jobDir, "voiceover-sync.json"));
-  const target = mediaTarget(job.format);
+  const target = mediaTarget(job.format, job.provider);
   const expectedSegments = Math.max(1, Number(script?.segments?.length || job.clipCount || 1));
   const actualClipTarget = Math.max(1, Number(job.clipCount || expectedSegments));
   const geminiGeneration = await readJsonOptional(join(jobDir, "gemini-generation.json"));
   const localVideoGenerationPath = join(runDir, "local-video-generation.json");
   const localVideoGeneration = await readJsonOptional(localVideoGenerationPath);
   const localVideoReceiptHash = await hashExisting(localVideoGenerationPath);
+  const grokImagineGenerationPath = join(runDir, "grok-imagine-generation.json");
+  const grokImagineGeneration = await readJsonOptional(grokImagineGenerationPath);
+  const grokImagineReceiptHash = await hashExisting(grokImagineGenerationPath);
   const currentClipHashes = await Promise.all(clips.map((path) => hashExisting(path)));
   const generationSegments = Array.isArray(geminiGeneration?.segments) ? geminiGeneration.segments : [];
   const geminiRequest = expectedGeminiRequest(job, script);
@@ -461,6 +467,43 @@ export async function evaluateJob(jobId, options = {}) {
     && runManifest?.providerReceipt?.path === evidenceRelative(jobDir, localVideoGenerationPath)
     && runManifest.providerReceipt.sha256 === localVideoReceiptHash
     && runManifest.providerArtifact?.sha256 === localVideoReceiptHash
+  );
+  const grokImagineScriptHash = hashJson(script);
+  const grokImagineRequest = expectedGrokImagineRequest(job, script, currentRunId, grokImagineScriptHash);
+  const grokImagineRequestHash = hashJson({ ...grokImagineRequest, scriptHash: grokImagineScriptHash });
+  const grokImagineSegments = Array.isArray(grokImagineGeneration?.segments) ? grokImagineGeneration.segments : [];
+  const grokImagineModelBinding = Boolean(
+    grokImagineGeneration?.provider === GROK_IMAGINE_PROVIDER
+    && grokImagineGeneration.jobId === jobId
+    && grokImagineGeneration.runId === currentRunId
+    && grokImagineGeneration.model
+    && grokImagineGeneration.modelVersion
+    && grokImagineGeneration.modelId
+    && grokImagineGeneration.requestHash === grokImagineRequestHash
+    && grokImagineGeneration.scriptHash === grokImagineScriptHash
+    && grokImagineGeneration.hookLock?.sha256
+    && grokImagineGeneration.stills?.every((still, index) => index === 0 ? still.tool === "image_gen" : still.tool === "image_edit")
+  );
+  const grokImagineClipBinding = grokImagineModelBinding
+    && grokImagineGeneration.status === "completed"
+    && grokImagineSegments.length === actualClipTarget
+    && grokImagineSegments.every((segment, index) => {
+      const expectedPath = evidenceRelative(jobDir, clips[index] || "");
+      return segment.index === index + 1
+        && segment.runId === currentRunId
+        && segment.requestHash === grokImagineRequestHash
+        && segment.scriptHash === grokImagineScriptHash
+        && segment.path === expectedPath
+        && segment.output === expectedPath
+        && segment.sha256
+        && segment.sha256 === currentClipHashes[index];
+    });
+  const grokImagineReceiptBinding = Boolean(
+    job.provider === GROK_IMAGINE_PROVIDER
+    && grokImagineModelBinding
+    && runManifest?.providerReceipt?.path === evidenceRelative(jobDir, grokImagineGenerationPath)
+    && runManifest.providerReceipt.sha256 === grokImagineReceiptHash
+    && runManifest.providerArtifact?.sha256 === grokImagineReceiptHash
   );
   const runInputReceipt = runManifest?.inputManifest;
   const inputManifestReceiptBound = Boolean(
@@ -603,8 +646,15 @@ export async function evaluateJob(jobId, options = {}) {
   );
   const providerProof = job.provider === "local"
     || (job.provider === "gemini-browser" && generationClipBinding && providerDecisionBinding && providerDecisionEventBinding)
-    || (job.provider === "local-video" && localVideoClipBinding && localVideoReceiptBinding && providerDecisionBinding && providerDecisionEventBinding);
-  const providerGenerationProvenance = job.provider === "gemini-browser" ? generationProvenance : job.provider === "local-video" ? localVideoModelBinding : false;
+    || (job.provider === "local-video" && localVideoClipBinding && localVideoReceiptBinding && providerDecisionBinding && providerDecisionEventBinding)
+    || (job.provider === GROK_IMAGINE_PROVIDER && grokImagineClipBinding && grokImagineReceiptBinding && providerDecisionBinding && providerDecisionEventBinding);
+  const providerGenerationProvenance = job.provider === "gemini-browser"
+    ? generationProvenance
+    : job.provider === "local-video"
+      ? localVideoModelBinding
+      : job.provider === GROK_IMAGINE_PROVIDER
+        ? grokImagineModelBinding
+        : false;
   const generatedCaptionCuesPerMinute = finalMedia?.duration > 0 ? round(captions.length * 60 / finalMedia.duration, 2) : null;
   const benchmarkCaptionDensity = Number(rlmBenchmark?.mediaEvidence?.averageCaptionCuesPerMinute);
   const normalizedSpecs = normalizedMedia.filter(Boolean).map((media) => `${media.width}x${media.height}@${round(media.fps, 2)}`);
@@ -664,6 +714,7 @@ export async function evaluateJob(jobId, options = {}) {
     ...(voiceoverSync ? [join(jobDir, "voiceover-sync.json")] : []),
     ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
     ...(localVideoGeneration ? [localVideoGenerationPath] : []),
+    ...(grokImagineGeneration ? [grokImagineGenerationPath] : []),
     join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
     ...clips,
     ...normalized,
@@ -767,7 +818,7 @@ export async function evaluateJob(jobId, options = {}) {
   const ahp = calculateAHP();
   const totalScore = round(criteria.reduce((sum, criterion) => sum + criterion.score * (AHP_CRITERIA.find((item) => item.id === criterion.id)?.weight || 0) / 100, 0));
   const blockers = criteria.flatMap((criterion) => criterion.blockers.map((blocker) => `${criterion.label}: ${blocker}`));
-  const semanticGate = (job.provider === "gemini-browser" || job.provider === "local-video")
+  const semanticGate = (job.provider === "gemini-browser" || job.provider === "local-video" || job.provider === GROK_IMAGINE_PROVIDER)
     && (job.status === "completed" || finalizationReady)
     && providerProof
     && providerGenerationProvenance
@@ -800,6 +851,9 @@ export async function evaluateJob(jobId, options = {}) {
   if (job.provider === "gemini-browser" && !immutableEvidenceBinding) blockers.push("Gemini 의미론 판정에 사용한 품질·미디어 해시가 불변 run 산출물과 일치하지 않습니다.");
   if (job.provider === "local-video" && !localVideoModelBinding) blockers.push("local-video 생성 영수증의 provider·model·요청·스크립트 해시 결속이 검증되지 않았습니다.");
   if (job.provider === "local-video" && !localVideoReceiptBinding) blockers.push("local-video 생성 영수증이 현재 run 산출물로 봉인되지 않았습니다.");
+  if (job.provider === GROK_IMAGINE_PROVIDER && !grokImagineModelBinding) blockers.push("Grok Imagine 공장 영수증의 image_gen 훅 잠금·image_edit·요청 해시 결속이 검증되지 않았습니다. 의미론 통과를 주장하지 않습니다.");
+  if (job.provider === GROK_IMAGINE_PROVIDER && !grokImagineReceiptBinding) blockers.push("Grok Imagine 공장 영수증이 현재 run 산출물로 봉인되지 않았습니다.");
+  if (job.provider === GROK_IMAGINE_PROVIDER && !grokImagineClipBinding) blockers.push("Grok Imagine 클립이 공장 영수증과 결속되지 않았습니다.");
   if (!claimEvidencePass) blockers.push("장면별 주장에 연결된 인용 가능한 출처 근거가 없습니다.");
   const reportedJobStatus = finalizationReady ? "completed" : job.status;
   const quality = {
@@ -828,6 +882,10 @@ export async function evaluateJob(jobId, options = {}) {
       localVideoModelBinding,
       localVideoClipBinding,
       localVideoReceiptBinding,
+      grokImagineGeneration: grokImagineGeneration ? { status: grokImagineGeneration.status, segmentCount: grokImagineSegments.length, model: grokImagineGeneration.model, hookLock: grokImagineGeneration.hookLock || null, receiptPath: evidenceRelative(jobDir, grokImagineGenerationPath), receiptSha256: grokImagineReceiptHash } : null,
+      grokImagineModelBinding,
+      grokImagineClipBinding,
+      grokImagineReceiptBinding,
       providerGenerationProvenance,
       generationClipBinding,
       generationProvenance,

@@ -19,6 +19,8 @@ import { appendRunEvent, hashFile, readRunManifest, writeRunManifest } from "./r
 import { geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
 import { evaluateJob, runQualityLoop, saveCommitteeReview } from "./quality.mjs";
 import { ytDlpInfo } from "./yt-dlp.mjs";
+import { resolveGrokBinary } from "./grok-imagine-cli.mjs";
+import { PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -221,6 +223,7 @@ function contentType(path) {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
+    ".ass": "text/plain; charset=utf-8",
     ".json": "application/json; charset=utf-8",
     ".srt": "text/plain; charset=utf-8",
     ".vtt": "text/vtt; charset=utf-8"
@@ -382,7 +385,7 @@ async function rehydrateCompletedRun(job, manifest) {
     requested: job.provider,
     selected: job.provider,
     fallbackUsed: false,
-    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : job.provider === "local-video" ? "local-video-command-adapter-no-fallback" : "local-upload-edit"
+    policy: job.provider === "gemini-browser" ? "no-local-video-fallback" : job.provider === "local-video" ? "local-video-command-adapter-no-fallback" : job.provider === GROK_IMAGINE_PROVIDER ? "official-grok-cli-imagine-factory-no-fallback" : "local-upload-edit"
   };
   const expectedProviderDecisionHash = hashJson(expectedProviderDecision);
   const providerDecisionEvent = events.find((event) => event.type === "provider_decision");
@@ -665,6 +668,7 @@ async function health() {
       macSay: command("say"),
       geminiApiKey: Boolean(process.env.GEMINI_API_KEY),
       localVideoGenerator: Boolean(String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()),
+      grokCli: Boolean(resolveGrokBinary()),
       ytDlp
     },
     analysis: existsSync(ANALYSIS_PATH),
@@ -706,7 +710,7 @@ async function handleApi(request, url) {
       const body = await readJson(request);
       if (!body.topic || String(body.topic).trim().length < 4) throw new Error("영상 주제를 4자 이상 입력하세요.");
       const job = await createJob(body);
-      if (job.provider === "gemini-browser") {
+      if (job.provider === "gemini-browser" || job.provider === GROK_IMAGINE_PROVIDER) {
         await startJob(job.id);
       } else if (body.autoStart === true) {
         if (job.provider === "local-video") {
