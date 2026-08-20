@@ -15,6 +15,7 @@ import {
   FACTORY_UNIQUE_COUNT,
   GROK_MISSING_ERROR,
   inventedSiIn,
+  numberizeCaptionText,
   numberizeLegalQuantities,
   stillPromptFor,
   topicNouns,
@@ -37,7 +38,15 @@ import {
   ASS_OUTLINE,
   assertNoSpecPills,
   buildAssDocument,
+  buildDialogueCues,
+  CAPTION_TIMING_FALLBACK,
+  CAPTION_TIMING_PAUSE,
+  CHAT_SAFE_ACODEC,
+  CHAT_SAFE_VCODEC,
+  CHAT_SAFE_X264_PARAMS,
+  chatSafeEncodeArgs,
   composeVideoFilter,
+  dialogueCuesFromScript,
   FILL_SCALE_CROP,
   freezeStillFilter,
   MAX_PART_SEC,
@@ -173,6 +182,66 @@ test("compose fill vf and ASS MarginV=450", () => {
   assert.ok(parts.length >= 5);
 });
 
+test("chat-safe encode is constrained baseline without B-frames", () => {
+  assert.deepEqual(CHAT_SAFE_VCODEC, [
+    "-c:v", "libx264",
+    "-profile:v", "baseline",
+    "-level", "3.1",
+    "-pix_fmt", "yuv420p",
+    "-preset", "medium",
+    "-crf", "20",
+    "-x264-params", "keyint=15:min-keyint=15:scenecut=0:bframes=0",
+    "-movflags", "+faststart"
+  ]);
+  assert.equal(CHAT_SAFE_X264_PARAMS, "keyint=15:min-keyint=15:scenecut=0:bframes=0");
+  assert.deepEqual(CHAT_SAFE_ACODEC, ["-c:a", "aac", "-ar", "44100", "-ac", "2"]);
+  const args = chatSafeEncodeArgs("chat.mp4");
+  assert.ok(args.includes("baseline"));
+  assert.ok(args.includes("3.1"));
+  assert.ok(args.includes(CHAT_SAFE_X264_PARAMS));
+  assert.ok(!args.includes("main"));
+  assert.ok(!args.includes("4.0"));
+  assert.doesNotMatch(args.join(" "), /drawbox|drawtext/);
+});
+
+test("dialogue cues follow speech pauses when timestamps exist", () => {
+  const script = {
+    legalQuantities: extractLegalQuantities(["지붕 면적 2만 m²", "500톤", "50층"]),
+    segments: [
+      { caption: "지붕 면적 2만 m²", durationHint: 10 },
+      { caption: "500톤 문이 닫힙니다", durationHint: 10 }
+    ]
+  };
+  const fallback = buildDialogueCues(script);
+  assert.equal(fallback.pauseTimed, false);
+  assert.equal(fallback.source, CAPTION_TIMING_FALLBACK);
+  assert.equal(fallback.cues[0].start, 0);
+  assert.equal(fallback.cues[0].end, 10);
+  assert.match(fallback.cues[0].text, /10,000|20,000/);
+
+  const paused = buildDialogueCues(script, {
+    wordTimestamps: [
+      { text: "지붕", start: 0.4, end: 0.7 },
+      { text: "면적", start: 0.7, end: 1.1 },
+      { text: "20000m²", start: 1.1, end: 1.8 },
+      { text: "500톤", start: 3.2, end: 3.8 },
+      { text: "문", start: 3.8, end: 4.4 }
+    ]
+  });
+  assert.equal(paused.pauseTimed, true);
+  assert.equal(paused.source, CAPTION_TIMING_PAUSE);
+  assert.equal(paused.cues[0].start, 0.4);
+  assert.ok(paused.cues[0].end <= 1.8);
+  assert.ok(paused.cues[1].start >= 3.2);
+
+  const fromSilence = dialogueCuesFromScript(script, {
+    silencedetect: [{ start: 1.9, end: 3.1 }, { start: 5.0, end: 6.0 }]
+  });
+  assert.equal(fromSilence.pauseTimed, true);
+  assert.equal(fromSilence.source, CAPTION_TIMING_PAUSE);
+  assert.ok(fromSilence[0].end <= 1.9);
+});
+
 test("official grok CLI adapter never uses key or login", async () => {
   assert.equal(resolveGrokBinary({ HOME: "/tmp/missing-home-ps4" }, () => null), null);
   const env = grokEnv({ PATH: "/usr/bin", XAI_API_KEY: "secret", HOME: "/tmp" });
@@ -293,8 +362,15 @@ test("mocked factory retries emptier then freezes without Ken Burns", async () =
 });
 
 test("dialogue captions stay numberized and sentence-free of invented SI", () => {
-  const legal = extractLegalQuantities(["지붕 면적 2만 m²"]);
+  const legal = extractLegalQuantities(["지붕 면적 2만 m²", "500톤", "5cm", "50층", "200m", "2.1m"]);
   const line = dialogueForShot({ fact: "지붕 면적 2만 m²", role: "scale" }, legal);
-  assert.ok(/2만/.test(line));
+  assert.match(line, /20,000\s*m²|20,000㎡/);
   assert.deepEqual(inventedSiIn(line, legal), []);
+  const numbered = numberizeCaptionText("10,000㎡ 500톤 5cm 50층 200m 2.1m", legal);
+  assert.match(numbered, /10,000/);
+  assert.match(numbered, /500톤/);
+  assert.match(numbered, /5cm/);
+  assert.match(numbered, /50층/);
+  assert.match(numbered, /200m/);
+  assert.match(numbered, /2\.1m/);
 });

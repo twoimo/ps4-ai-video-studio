@@ -21,6 +21,10 @@ test("seed catalog names playground-cistern and refuge-floor", async () => {
   assert.match(catalog.episodes[0].topic, /놀이터/);
   assert.match(catalog.episodes[1].topic, /중간층|피난|아파트/);
   assert.equal(seedJobRecord(catalog.episodes[0]).id, "seed-playground-cistern");
+  assert.equal(catalog.episodes[0].duration, 53.3);
+  assert.equal(catalog.episodes[1].duration, 48.2);
+  assert.equal(seedJobRecord(catalog.episodes[0]).duration, 53.3);
+  assert.equal(seedJobRecord(catalog.episodes[1]).duration, 48.2);
   assert.equal(seedJobRecord(catalog.episodes[1]).provider, "grok-imagine");
   assert.ok(matchesEpisodeSlug("playground-cistern.mp4", "playground-cistern"));
   assert.ok(matchesEpisodeSlug("refuge-floor", "refuge-floor"));

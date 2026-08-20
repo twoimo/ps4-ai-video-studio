@@ -19,7 +19,7 @@ export const GROK_MISSING_ERROR = "공식 grok CLI를 찾지 못했습니다. Su
 export const GROK_AUTH_ERROR = "공식 grok CLI는 있으나 SuperGrok OAuth 세션이 없습니다. 이미 로그인된 기기에서 실행하세요. grok login/logout을 대신 실행하지 않으며 Gemini로 대체하지 않습니다.";
 export const NO_GEMINI_FALLBACK = "Grok Imagine 공장은 Gemini로 대체하지 않습니다.";
 
-const SI_PATTERN = /(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:\s*)(?:m²|m2|㎡|km²|km2|km|mm|cm|m\b|°C|℃|t\b|톤|ℓ|L\b)|(?:[일이삼사오육칠팔구십백천만억]+)\s*(?:m²|m2|㎡|제곱미터|평)/giu;
+const SI_PATTERN = /(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?:\s*)(?:m²|m2|㎡|km²|km2|km|mm|cm|m\b|층|°C|℃|t\b|톤|ℓ|L\b)|(?:[일이삼사오육칠팔구십백천만억]+)\s*(?:만)?\s*(?:m²|m2|㎡|제곱미터|평|층)|(?:\d+(?:\.\d+)?)\s*만\s*(?:m²|m2|㎡|제곱미터|평|톤|층)?/giu;
 const FORBIDDEN_TOOLS_AFTER_HOOK = ["image_gen"];
 
 export const UNIQUE_SLOT_TEMPLATES = [
@@ -78,16 +78,21 @@ export function extractLegalQuantities(facts = []) {
 function numberizeToken(raw) {
   const koreanMap = { 일: 1, 이: 2, 삼: 3, 사: 4, 오: 5, 육: 6, 칠: 7, 팔: 8, 구: 9 };
   let value = String(raw).replace(/\s+/g, "");
-  value = value.replace(/만/g, "만 ").replace(/억/g, "억 ");
-  if (/[일이삼사오육칠팔구]만/.test(value)) {
-    value = value.replace(/([일이삼사오육칠팔구])만/g, (_, digit) => `${koreanMap[digit]}만`);
-  }
-  return value
+  value = value.replace(/([일이삼사오육칠팔구])만/g, (_, digit) => String(koreanMap[digit] * 10000));
+  value = value.replace(/(\d+(?:\.\d+)?)만/g, (_, n) => String(Number(n) * 10000));
+  value = value
     .replace(/제곱미터/g, "m²")
     .replace(/m2/gi, "m²")
     .replace(/㎡/g, "m²")
-    .replace(/km2/gi, "km²")
-    .trim();
+    .replace(/km2/gi, "km²");
+  value = value.replace(/\d{4,}(?!\.)/g, (digits) => Number(digits).toLocaleString("en-US"));
+  return value.trim();
+}
+
+export function numberizeCaptionText(text, legalQuantities = []) {
+  let next = numberizeLegalQuantities(text, legalQuantities);
+  next = String(next).replace(new RegExp(SI_PATTERN.source, "giu"), (match) => numberizeToken(match));
+  return next;
 }
 
 export function numberizeLegalQuantities(text, legalQuantities = []) {
@@ -119,7 +124,7 @@ export function inventedSiIn(text, legalQuantities = []) {
 }
 
 function normalizeSi(value) {
-  return numberizeToken(value).replace(/\s+/g, "").toLowerCase();
+  return numberizeToken(value).replace(/,/g, "").replace(/\s+/g, "").toLowerCase();
 }
 
 export function topicAgnosticSlots(nouns = []) {
@@ -209,7 +214,7 @@ export function dialogueForShot(shot, legalQuantities) {
   const raw = String(source || "").replace(/\s+/g, " ").trim();
   if (!raw) return shot.role === "hook" ? "이 구조부터 보겠습니다" : "같은 현장에서 이어서 봅니다";
   const clause = raw.split(/[.。]/)[0].trim();
-  return numberizeLegalQuantities(clause, legalQuantities);
+  return numberizeCaptionText(clause, legalQuantities);
 }
 
 export function stillPromptFor(shot, { legalQuantities = [], emptier = false, siblingPath = null, worldSlots = null } = {}) {

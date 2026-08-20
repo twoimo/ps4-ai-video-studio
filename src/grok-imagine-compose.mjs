@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
-import { FACTORY_HEIGHT, FACTORY_WIDTH, SHOT_DURATION_SEC } from "./grok-imagine-factory.mjs";
+import { FACTORY_HEIGHT, FACTORY_WIDTH, SHOT_DURATION_SEC, numberizeCaptionText } from "./grok-imagine-factory.mjs";
 import { factoryStageEvent, liveArtifact } from "./grok-imagine-live.mjs";
 
 export const FILL_SCALE_CROP = `scale=${FACTORY_WIDTH}:${FACTORY_HEIGHT}:force_original_aspect_ratio=increase,crop=${FACTORY_WIDTH}:${FACTORY_HEIGHT}`;
@@ -12,8 +12,20 @@ export const ASS_OUTLINE = 6;
 export const ASS_MARGIN_V = 450;
 export const ASS_CENTER_Y = FACTORY_HEIGHT - ASS_MARGIN_V - Math.round(ASS_FONTSIZE / 2);
 export const MAX_PART_SEC = 16;
-export const CHAT_SAFE_VCODEC = ["-c:v", "libx264", "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "20", "-movflags", "+faststart"];
+export const CHAT_SAFE_X264_PARAMS = "keyint=15:min-keyint=15:scenecut=0:bframes=0";
+export const CHAT_SAFE_VCODEC = [
+  "-c:v", "libx264",
+  "-profile:v", "baseline",
+  "-level", "3.1",
+  "-pix_fmt", "yuv420p",
+  "-preset", "medium",
+  "-crf", "20",
+  "-x264-params", CHAT_SAFE_X264_PARAMS,
+  "-movflags", "+faststart"
+];
 export const CHAT_SAFE_ACODEC = ["-c:a", "aac", "-ar", "44100", "-ac", "2"];
+export const CAPTION_TIMING_PAUSE = "speech-pause";
+export const CAPTION_TIMING_FALLBACK = "durationHint-fallback";
 const FORBIDDEN_FILTERS = ["drawbox", "drawtext"];
 
 export function composeVideoFilter({ burnAssPath = null } = {}) {
@@ -82,15 +94,175 @@ export function buildAssDocument(cues = []) {
   ].join("\n");
 }
 
-export function dialogueCuesFromScript(script) {
+function captionText(segment, legalQuantities = []) {
+  return numberizeCaptionText(segment?.caption || segment?.narration || "", legalQuantities);
+}
+
+function asRange(item = {}) {
+  const start = Number(item.start ?? item.silence_start ?? item.begin);
+  const end = Number(item.end ?? item.silence_end ?? item.stop);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end };
+}
+
+function collectWordTimestamps(timing = {}) {
+  const lists = [
+    timing.wordTimestamps,
+    timing.words,
+    timing.mix?.wordTimestamps,
+    timing.mix?.words,
+    timing.captionTiming?.wordTimestamps,
+    timing.captionTiming?.words
+  ];
+  for (const list of lists) {
+    if (!Array.isArray(list) || !list.length) continue;
+    return list.map((item) => {
+      const range = asRange(item);
+      const text = String(item.text || item.word || "").trim();
+      return range && text ? { ...range, text } : null;
+    }).filter(Boolean);
+  }
+  return [];
+}
+
+function collectSilence(timing = {}) {
+  const lists = [
+    timing.silencedetect,
+    timing.silence,
+    timing.pauses,
+    timing.mix?.silencedetect,
+    timing.mix?.silence,
+    timing.mix?.pauses
+  ];
+  for (const list of lists) {
+    if (!Array.isArray(list) || !list.length) continue;
+    return list.map(asRange).filter(Boolean).sort((left, right) => left.start - right.start);
+  }
+  return [];
+}
+
+function collectSpeech(timing = {}, duration = 0) {
+  const listed = timing.speech || timing.mix?.speech || timing.speechWindows;
+  if (Array.isArray(listed) && listed.length) return listed.map(asRange).filter(Boolean);
+  const silence = collectSilence(timing);
+  if (!silence.length) return [];
+  const windows = [];
+  let cursor = 0;
+  for (const gap of silence) {
+    if (gap.start > cursor + 0.04) windows.push({ start: cursor, end: gap.start });
+    cursor = Math.max(cursor, gap.end);
+  }
+  if (duration && cursor < duration - 0.04) windows.push({ start: cursor, end: duration });
+  return windows;
+}
+
+function fallbackDialogueCues(script, legalQuantities) {
   const segments = script?.segments || [];
   let cursor = 0;
   return segments.map((segment) => {
+    const text = captionText(segment, legalQuantities);
     const start = cursor;
     const duration = Number(segment.durationHint) || SHOT_DURATION_SEC;
     cursor += duration;
-    return { text: segment.caption || segment.narration || "", start, end: cursor };
-  }).filter((cue) => cue.text);
+    return text ? { text, start, end: Number(cursor.toFixed(3)), pauseTimed: false, source: CAPTION_TIMING_FALLBACK } : null;
+  }).filter(Boolean);
+}
+
+function groupWordsByPauses(words, gapSec = 0.25) {
+  const groups = [];
+  let current = [];
+  for (const word of words) {
+    if (current.length && word.start - current.at(-1).end >= gapSec) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(word);
+  }
+  if (current.length) groups.push(current);
+  return groups;
+}
+
+function cuesFromWordTimestamps(script, words, legalQuantities) {
+  const segments = (script?.segments || []).filter((segment) => captionText(segment, legalQuantities));
+  if (!segments.length || !words.length) return [];
+  const groups = groupWordsByPauses(words);
+  return segments.map((segment, segmentIndex) => {
+    const text = captionText(segment, legalQuantities);
+    const group = groups[Math.min(segmentIndex, groups.length - 1)] || words;
+    return {
+      text,
+      start: group[0].start,
+      end: group.at(-1).end,
+      pauseTimed: true,
+      source: CAPTION_TIMING_PAUSE
+    };
+  });
+}
+
+function cuesFromSpeechWindows(script, windows, legalQuantities) {
+  const texts = (script?.segments || []).map((segment) => captionText(segment, legalQuantities)).filter(Boolean);
+  if (!texts.length || !windows.length) return [];
+  return texts.map((text, index) => {
+    const window = windows[Math.min(index, windows.length - 1)];
+    const span = (window.end - window.start) / Math.max(1, texts.length - windows.length + 1);
+    if (windows.length >= texts.length) {
+      return { text, start: windows[index].start, end: windows[index].end, pauseTimed: true, source: CAPTION_TIMING_PAUSE };
+    }
+    const start = window.start + span * Math.max(0, index - (texts.length - windows.length));
+    return { text, start, end: Math.min(window.end, start + span), pauseTimed: true, source: CAPTION_TIMING_PAUSE };
+  });
+}
+
+export function resolveCaptionTiming(script = {}, timing = null) {
+  return timing || script.captionTiming || script.mix || (
+    script.wordTimestamps || script.silencedetect || script.speech
+      ? script
+      : null
+  );
+}
+
+export function buildDialogueCues(script, timing = null) {
+  const legalQuantities = script?.legalQuantities || [];
+  const source = resolveCaptionTiming(script, timing);
+  const words = collectWordTimestamps(source || {});
+  if (words.length) {
+    const cues = cuesFromWordTimestamps(script, words, legalQuantities);
+    if (cues.length) return { cues, pauseTimed: true, source: CAPTION_TIMING_PAUSE };
+  }
+  const duration = (script?.segments || []).reduce((sum, segment) => sum + (Number(segment.durationHint) || SHOT_DURATION_SEC), 0);
+  const speech = collectSpeech(source || {}, duration);
+  if (speech.length) {
+    const cues = cuesFromSpeechWindows(script, speech, legalQuantities);
+    if (cues.length) return { cues, pauseTimed: true, source: CAPTION_TIMING_PAUSE };
+  }
+  return {
+    cues: fallbackDialogueCues(script, legalQuantities),
+    pauseTimed: false,
+    source: CAPTION_TIMING_FALLBACK
+  };
+}
+
+export function dialogueCuesFromScript(script, timing = null) {
+  const { cues, pauseTimed, source } = buildDialogueCues(script, timing);
+  cues.pauseTimed = pauseTimed;
+  cues.source = source;
+  return cues;
+}
+
+export async function loadCaptionTiming(script, jobDir = "") {
+  const inline = resolveCaptionTiming(script);
+  if (inline) return inline;
+  if (!jobDir) return null;
+  for (const name of ["caption-timing.json", "mix.json", "silencedetect.json", "word-timestamps.json"]) {
+    const path = join(jobDir, name);
+    if (!existsSync(path)) continue;
+    try {
+      return JSON.parse(await readFile(path, "utf8"));
+    } catch {
+      // Skip a broken sidecar and keep looking.
+    }
+  }
+  return null;
 }
 
 export function splitPartPlan(durationSec, maxPartSec = MAX_PART_SEC) {
@@ -113,7 +285,7 @@ export function splitPartPlan(durationSec, maxPartSec = MAX_PART_SEC) {
 }
 
 export function chatSafeEncodeArgs(output) {
-  const args = ["-y", "-c:v", "libx264", "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "20", "-movflags", "+faststart", "-c:a", "aac", "-ar", "44100", "-ac", "2", output];
+  const args = ["-y", ...CHAT_SAFE_VCODEC, ...CHAT_SAFE_ACODEC, output];
   assertNoSpecPills(args.join(" "));
   return args;
 }
@@ -213,9 +385,19 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
     }));
   }
 
-  const cues = dialogueCuesFromScript(script);
+  const timing = await loadCaptionTiming(script, jobDir);
+  const built = buildDialogueCues(script, timing);
+  const cues = built.cues;
   const assPath = join(jobDir, "captions.ass");
   const srtPath = join(jobDir, "captions.srt");
+  await writeFile(join(jobDir, "caption-timing.json"), JSON.stringify({
+    schemaVersion: 1,
+    pauseTimed: built.pauseTimed,
+    source: built.source,
+    alignment: built.pauseTimed ? CAPTION_TIMING_PAUSE : CAPTION_TIMING_FALLBACK,
+    estimated: !built.pauseTimed,
+    cues
+  }, null, 2));
   await writeFile(assPath, buildAssDocument(cues));
   await writeFile(srtPath, cues.map((cue, index) => {
     const start = toSrt(cue.start);
@@ -283,7 +465,8 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
     parts,
     duration,
     vf: FILL_SCALE_CROP,
-    marginV: ASS_MARGIN_V
+    marginV: ASS_MARGIN_V,
+    captionTiming: { pauseTimed: built.pauseTimed, source: built.source }
   };
 }
 

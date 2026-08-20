@@ -33,15 +33,20 @@ export const SHOT_SKELETON = {
   type: "{{type}}",
   camera: "{{camera}}",
   redGraphics: ["pin", "measures", "SI"],
-  redGraphicsRule: "Red graphics only as pin / measures / SI. Never a sentence. Never a spec pill.",
+  redGraphicsRule: "Red graphics only as numbered pin / measures / SI lines with 8 percent safe margin. Never a sentence. Never a spec pill.",
   forbidden: [
     "people",
     "silhouette",
     "body in water",
     "leftover SI",
     "invented SI",
-    "sentences in pixels",
+    "Korean or English sentences in pixels",
     "second label",
+    "dashed box on park/sand/lawn/sky",
+    "gap-span area bracket",
+    "toy scale",
+    "second neighborhood",
+    "white studio gap",
     "image_gen after hook",
     "Ken Burns",
     "drawbox / drawtext"
@@ -54,14 +59,14 @@ export const FACTORY_LOCKS = [
   { id: "one-fact-one-label-one-shot", label: "한 사실 · 한 라벨 · 한 샷", rule: "One fact → one label → one shot. No sentences in pixels.", editable: false },
   { id: "area-on-roof", label: "면적은 지붕면에만", rule: "Area m² only on a roof plane, and only when sourced.", editable: false },
   { id: "hook-lock-then-edit", label: "훅 잠금 후 image_edit만", rule: "image_gen once for the hook lock. Every later still is image_edit. Never call image_gen after the hook.", editable: false },
-  { id: "caption-y", label: "자막 Y", rule: "ASS Alignment=2, Fontsize=50, Outline=6, MarginV=450 (center y≈805). Dialogue captions only.", editable: false },
+  { id: "caption-y", label: "자막 Y", rule: "ASS Alignment=2, Fontsize=50, Outline=6, MarginV=450 (center y≈805). Dialogue captions time to speech pauses when mix/silencedetect/word timestamps exist. Script-only is durationHint fallback and is not pause-timed. Numberize tokens.", editable: false },
   { id: "fill-720-1280", label: "채우기 720×1280", rule: "Fill 720×1280: scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280.", editable: false },
   { id: "no-ken-burns", label: "Ken Burns 없음", rule: "Failed animate retries freeze the still. No Ken Burns.", editable: false },
   { id: "qa-frames", label: "클립 QA 시각", rule: "Inspect frames at 0.3 / 5 / 9.5.", editable: false },
   { id: "no-invented-si", label: "발명 SI 없음", rule: "Legal quantities come from sourced facts only. Numberize those tokens. Do not invent SI.", editable: false }
 ];
 
-export const LOCKED_AVOID = "people, silhouettes, bodies in water, leftover SI, invented SI, sentences in pixels, cloned channel frames";
+export const LOCKED_AVOID = "people, silhouettes, bodies in water, leftover SI, invented SI, Korean or English sentences in pixels, dashed box on park/sand/lawn/sky, gap-span area bracket, toy scale, second neighborhood, white studio gap, cloned channel frames";
 
 export function sanitizeWorldSlotOverrides(input = {}) {
   const next = {};

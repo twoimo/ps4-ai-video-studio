@@ -24,7 +24,15 @@ test("locked 2026-08-21 template returns slots, skeleton, and locks", () => {
   assert.equal(template.skeleton.aspect, "9:16");
   assert.deepEqual(template.skeleton.redGraphics, ["pin", "measures", "SI"]);
   assert.ok(template.skeleton.forbidden.includes("people"));
+  assert.ok(template.skeleton.forbidden.includes("dashed box on park/sand/lawn/sky"));
+  assert.ok(template.skeleton.forbidden.includes("gap-span area bracket"));
+  assert.ok(template.skeleton.forbidden.includes("toy scale"));
+  assert.ok(template.skeleton.forbidden.includes("second neighborhood"));
+  assert.ok(template.skeleton.forbidden.includes("white studio gap"));
+  assert.ok(template.skeleton.forbidden.includes("Korean or English sentences in pixels"));
+  assert.match(template.skeleton.redGraphicsRule, /8 percent safe margin/);
   assert.ok(template.skeleton.lines.some((line) => line.includes("{{site}}") && line.includes("{{weather}}")));
+  assert.ok(template.skeleton.lines.some((line) => /numbered pin \/ measures \/ SI/.test(line)));
   assert.ok(FACTORY_LOCKS.some((lock) => /MarginV=450/.test(lock.rule)));
   assert.ok(FACTORY_LOCKS.some((lock) => /720:1280/.test(lock.rule)));
   assert.ok(template.locks.every((lock) => lock.editable === false));

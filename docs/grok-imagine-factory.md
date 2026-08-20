@@ -41,7 +41,7 @@ PATH의 grok 또는 ~/.grok/bin/grok로 실행하세요. Gemini로 대체하지 
 3. 이후 스틸은 잠금(또는 통과한 형제)에서 `image_edit`만. `image_gen` 재호출 없음.
 4. 스틸 QA: 같은 현장, 한국 스케일, 사람/실루엣 없음, 물속 신체 없음, 한 사실·한 라벨·한 샷, 면적 m²는 지붕면에만, 잔여 SI·픽셀 문장 없음.
 5. 통과한 스틸만 10초 720p `image_to_video`. 프레임 0.3 / 5 / 9.5 검사. 사람 생성 또는 SI 드리프트면 버리고 한 번 더 비우게 재시도한 뒤, 실패하면 스틸 고정(Ken Burns 없음).
-6. 합성: `scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280`. ASS Alignment=2, Fontsize=50, Outline=6, **MarginV=450**(중심 y≈805). 대화 자막만. `drawbox`/`drawtext` 스펙 알약 없음. 하드 컷. 채팅 안전 인코드 + 16초 이하 파트.
+6. 합성: `scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280`. ASS Alignment=2, Fontsize=50, Outline=6, **MarginV=450**(중심 y≈805). 대화 자막은 mix/silencedetect/word timestamps가 있으면 말 끊김에 맞추고, 대본만 있으면 durationHint 폴백이며 pause-timed를 주장하지 않습니다. 토큰은 10,000㎡·500톤·5cm·50층·200m·2.1m처럼 숫자화. `drawbox`/`drawtext` 스펙 알약 없음. 하드 컷. 채팅 안전 인코드는 Constrained Baseline · `keyint=15` · `bframes=0` · AAC 44.1k stereo · +faststart. 16초 이하 파트.
 7. 작업 상세에 훅 잠금, 각 스틸, 각 클립, 마스터, 채팅 파일, 파트를 표시.
 
 완벽을 약속하지 않습니다. 홀드가 나갈 수 있거나 고정될 때까지 돌립니다.

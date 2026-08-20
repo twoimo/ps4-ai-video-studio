@@ -24,9 +24,9 @@
 - World lock — site: {{site}}. weather: {{weather}}. palette: {{palette}}.
 - everyday_thing: {{everyday_thing}}. hidden_thing: {{hidden_thing}}.
 - materials: {{materials}}. wear: {{wear}}. trace: {{trace}}.
-- Red graphics only as pin / measures / SI. Never a sentence. Never a spec pill.
+- Red graphics only as numbered pin / measures / SI lines with 8 percent safe margin. Never a sentence. Never a spec pill.
 - sourced_si: {{sourced_si}}.
-- FORBIDDEN: people; silhouette; body in water; leftover SI; invented SI; sentences in pixels; second label; image_gen after hook; Ken Burns; drawbox / drawtext.
+- FORBIDDEN: people; silhouette; body in water; leftover SI; invented SI; Korean or English sentences in pixels; second label; dashed box on park/sand/lawn/sky; gap-span area bracket; toy scale; second neighborhood; white studio gap; image_gen after hook; Ken Burns; drawbox / drawtext.
 
 ## 공장 잠금
 
@@ -35,7 +35,7 @@
 - **한 사실 · 한 라벨 · 한 샷** (`one-fact-one-label-one-shot`): One fact → one label → one shot. No sentences in pixels.
 - **면적은 지붕면에만** (`area-on-roof`): Area m² only on a roof plane, and only when sourced.
 - **훅 잠금 후 image_edit만** (`hook-lock-then-edit`): image_gen once for the hook lock. Every later still is image_edit. Never call image_gen after the hook.
-- **자막 Y** (`caption-y`): ASS Alignment=2, Fontsize=50, Outline=6, MarginV=450 (center y≈805). Dialogue captions only.
+- **자막 Y** (`caption-y`): ASS Alignment=2, Fontsize=50, Outline=6, MarginV=450 (center y≈805). Dialogue captions time to speech pauses when mix/silencedetect/word timestamps exist. Script-only is durationHint fallback and is not pause-timed. Numberize tokens.
 - **채우기 720×1280** (`fill-720-1280`): Fill 720×1280: `scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280`.
 - **Ken Burns 없음** (`no-ken-burns`): Failed animate retries freeze the still. No Ken Burns.
 - **클립 QA 시각** (`qa-frames`): Inspect frames at 0.3 / 5 / 9.5.
