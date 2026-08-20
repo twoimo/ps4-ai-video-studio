@@ -59,6 +59,9 @@ function hashJson(value) {
 export async function ensureWorkspace() {
   await mkdir(JOBS_DIR, { recursive: true });
   await mkdir(join(WORKSPACE_DIR, "uploads"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "imports"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "masters"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "episodes"), { recursive: true });
 }
 
 export async function readAnalysis() {

@@ -19,6 +19,7 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(DEFAULT_CREATE_PROVIDER, "grok-imagine");
   assert.equal(shortStatusLabel({ status: "queued", provider: "local" }), "초안");
   assert.equal(shortStatus({ status: "queued", provider: "grok-imagine" }).label, "생성중");
+  assert.equal(shortStatus({ status: "queued", provider: "grok-imagine", queuePosition: 2 }).label, "대기 2");
   assert.equal(shortStatus({ status: "running" }).label, "생성중");
   assert.equal(shortStatus({ status: "verifying" }).label, "생성중");
   assert.equal(shortStatus({ status: "completed" }).label, "완료");
@@ -61,6 +62,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /id="create-tile"/);
   assert.match(html, /id="template-overlay"/);
   assert.match(html, /id="live-factory"/);
+  assert.match(html, /id="import-library"/);
   assert.match(html, /id="channel-dna"/);
   assert.match(html, /href="#template"/);
   assert.match(html, /option value="grok-imagine" selected/);

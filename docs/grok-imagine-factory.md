@@ -24,9 +24,11 @@ PATH의 grok 또는 ~/.grok/bin/grok로 실행하세요. Gemini로 대체하지 
 3. 타일을 누르면 기본 경로인 **Grok Imagine 공장** 시트가 열립니다. Gemini·로컬 업로드는 시트의 고급 칸에 있습니다.
 4. 주제와, 출처에 적힌 사실만 줄바꿈으로 넣습니다. 없는 SI는 쓰지 않습니다.
 5. 검증 출처 URL을 넣습니다.
-6. 자동 제작 시작. 작업은 바로 공장 파이프라인을 타고, 화면은 다시 그리드로 돌아갑니다. 생성 중 카드는 `생성중`, 끝나면 `완료` 또는 `실패·프리즈`입니다.
-7. 카드를 누르면 플레이어와 훅 잠금·스틸·클립·마스터/파트가 열립니다.
-8. **프롬프트 템플릿**에서 2026-08-21 잠금 슬롯·샷 스켈레톤·공장 실패표를 앱 안에서 봅니다. 쇼츠 상세에는 그 편이 실제로 쓴(또는 쓸) 채워진 프롬프트가 있습니다.
+6. 자동 제작 시작. 그 쇼츠를 연 채로 기획→훅 잠금→image_edit→QA→10초 영상→TTS/믹스→자막→합성→파트까지 실시간으로 봅니다. 생성 중 카드는 `생성중`, 끝나면 `완료` 또는 `실패·프리즈`입니다.
+7. **공장 작업은 한 번에 하나만** 돌아갑니다. 두 번째 요청은 그리드에 `대기 n번`으로 남고, 앞 작업이 끝난 뒤에 시작합니다.
+8. 이미 만든 `playground-cistern` / `refuge-floor` 마스터는 `workspace/imports` 또는 `workspace/masters`에 두면 카드로 등록됩니다. 없으면 시드 카드가 먼저 보입니다. `POST /api/library/import` 또는 라이브러리의 **이미 만든 편 가져오기**.
+9. 카드를 누르면 플레이어와 훅 잠금·스틸·클립·마스터/파트가 열립니다.
+10. **프롬프트 템플릿**에서 2026-08-21 잠금 슬롯·샷 스켈레톤·공장 실패표를 앱 안에서 봅니다. 쇼츠 상세에는 그 편이 실제로 쓴(또는 쓸) 채워진 프롬프트가 있습니다.
 
 잠긴 문장의 출처는 `src/grok-imagine-template.mjs`와 `docs/PROMPT_TEMPLATE.md`입니다. 형제 `video-pipeline` 체크아웃을 읽지 않습니다.
 
@@ -72,7 +74,7 @@ curl -s http://localhost:3000/api/jobs/JOB_ID/prompts
 ## 네트워크 없는 검사
 
 ```bash
-node --test test/grok-imagine-factory.test.mjs
+node --test test/grok-imagine-factory.test.mjs test/shorts-grid-ui.test.mjs test/grok-imagine-template.test.mjs test/grok-imagine-live.test.mjs test/episode-import-queue.test.mjs
 ```
 
-프롬프트 작성, QA 게이트, compose vf, ASS MarginV, grok 인자(키/로그인 금지)를 실제 Imagine 호출 없이 검사합니다.
+프롬프트 작성, QA 게이트, compose vf, ASS MarginV, grok 인자(키/로그인 금지), 시드/가져오기, 공장 대기열을 실제 Imagine 호출 없이 검사합니다.

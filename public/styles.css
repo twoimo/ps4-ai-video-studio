@@ -235,6 +235,10 @@ select { padding: 11px 10px; }
 .short-status.completed { color: var(--accent-2); }.short-status.completed i { background: var(--accent-2); }
 .short-status.failed, .short-status.frozen { color: var(--danger); }.short-status.failed i, .short-status.frozen i { background: var(--danger); }
 .short-status.draft { color: var(--amber); }.short-status.draft i { background: var(--amber); }
+.short-status.queued { color: var(--amber); }.short-status.queued i { background: var(--amber); }
+.short-origin { position: absolute; left: 8px; bottom: 8px; border-radius: 4px; padding: 3px 6px; background: rgba(8,10,15,.78); color: var(--accent-2); font: 400 8px var(--mono); }
+.library-drop-hint { color: var(--dim); font-size: 11px; line-height: 1.5; margin: 0 0 12px; }
+.library-drop-hint code { color: var(--accent-2); font: 400 10px var(--mono); }
 .job-status.frozen { color: var(--danger); }.job-status.frozen i { background: var(--danger); }
 .short-duration { position: absolute; right: 8px; top: 8px; border-radius: 4px; padding: 4px 6px; background: rgba(8,10,15,.78); color: var(--text); font: 400 9px var(--mono); }
 .thumb-progress { position: absolute; left: 8px; right: 8px; bottom: 8px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }

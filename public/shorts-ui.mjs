@@ -15,6 +15,7 @@ export function shortStatus(job = {}) {
       ? { key: "frozen", label: "실패·프리즈" }
       : { key: "completed", label: "완료" };
   }
+  if (Number(job.queuePosition) > 0) return { key: "queued", label: `대기 ${job.queuePosition}` };
   if (["running", "verifying"].includes(job.status)) return { key: "running", label: "생성중" };
   if (job.status === "queued" && (job.provider === "grok-imagine" || job.provider === "gemini-browser")) {
     return { key: "running", label: "생성중" };

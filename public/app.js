@@ -306,10 +306,12 @@ function renderShortCard(job) {
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
   const liveLine = liveLineFor(job);
-  return `<button type="button" class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && state.view === "detail"}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3><p class="short-oneliner">${escapeHtml(oneLiner)}</p>${liveLine ? `<p class="short-card-live">${escapeHtml(liveLine)}</p>` : ""}</div></button>`;
+  const origin = job.imported ? "가져온 편" : job.seed ? "시드" : "";
+  return `<button type="button" class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && state.view === "detail"}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${origin ? `<span class="short-origin">${escapeHtml(origin)}</span>` : ""}${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3><p class="short-oneliner">${escapeHtml(oneLiner)}</p>${liveLine ? `<p class="short-card-live">${escapeHtml(liveLine)}</p>` : ""}</div></button>`;
 }
 
 function liveLineFor(job = {}) {
+  if (Number(job.queuePosition) > 0) return job.message || `공장 대기열 ${job.queuePosition}번`;
   if (!["queued", "running", "verifying"].includes(job.status)) return "";
   return job.live?.message || job.message || "생성중";
 }
@@ -997,6 +999,19 @@ function openTemplate(event) {
   setView("template");
 }
 
+async function importLibrary(event) {
+  event?.preventDefault();
+  try {
+    const payload = await api("/api/library/import", { method: "POST" });
+    await refreshJobs();
+    const imported = payload.imported?.length || 0;
+    const seeded = payload.seeded?.length || 0;
+    showToast(imported ? `${imported}편 마스터를 카드로 올렸습니다.` : seeded ? "시드 카드가 라이브러리에 있습니다. 마스터를 workspace/imports에 두면 붙습니다." : "라이브러리를 다시 읽었습니다.");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 function closeOverlays(event) {
   event?.preventDefault();
   state.selectedJobId = state.view === "detail" ? null : state.selectedJobId;
@@ -1012,6 +1027,7 @@ function bindEvents() {
   $("#new-short")?.addEventListener("click", openCreate);
   $("#create-tile")?.addEventListener("click", openCreate);
   $("#open-template")?.addEventListener("click", openTemplate);
+  $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);
   $("#close-short")?.addEventListener("click", closeOverlays);
   $("#close-template")?.addEventListener("click", closeOverlays);

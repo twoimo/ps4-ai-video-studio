@@ -23,6 +23,8 @@ import { resolveGrokBinary } from "./grok-imagine-cli.mjs";
 import { inspectJobPrompts, previewFactoryPrompts, PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
 import { getLockedTemplate } from "./grok-imagine-template.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
+import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
+import { ensureLibraryEpisodes } from "./episode-import.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -44,6 +46,7 @@ function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
 }
 await ensureWorkspace();
+await ensureLibraryEpisodes().catch((error) => console.error(`library seed failed: ${error.message}`));
 
 function json(data, status = 200) {
   return Response.json(data, { status, headers: { "cache-control": "no-store" } });
@@ -626,11 +629,39 @@ async function markLaunchFailure(jobId, error) {
   });
 }
 
-async function startJob(jobId) {
+const grokQueue = createGrokFactoryQueue({
+  readJob,
+  updateJob,
+  launch: (jobId) => launchJobRunner(jobId, { waitUntilSettled: true })
+});
+
+function annotateFactoryQueue(jobs = []) {
+  const snap = grokQueue.snapshot();
+  return jobs.map((job) => {
+    if (job.provider !== GROK_IMAGINE_PROVIDER) return job;
+    if (snap.runningId === job.id) return { ...job, queuePosition: 0 };
+    const waiting = snap.waiting.indexOf(job.id);
+    if (waiting >= 0) {
+      return {
+        ...job,
+        status: job.status === "queued" ? "queued" : job.status,
+        queuePosition: waiting + 1,
+        message: job.message || `공장 대기열 ${waiting + 1}번 · 한 번에 하나만 실행합니다`
+      };
+    }
+    return job;
+  });
+}
+
+async function launchJobRunner(jobId, { waitUntilSettled = false } = {}) {
   if (activeJobs.has(jobId)) return false;
   let resolveStarted;
   const started = new Promise((resolve) => {
     resolveStarted = resolve;
+  });
+  let resolveSettled;
+  const settled = new Promise((resolve) => {
+    resolveSettled = resolve;
   });
   void withJob(jobId, async () => {
     let lease = null;
@@ -649,12 +680,25 @@ async function startJob(jobId) {
     } finally {
       if (lease) await releaseJobLease(lease);
     }
+  }).then((ran) => {
+    if (ran === false) resolveStarted(false);
   }).catch(async (error) => {
     console.error(`job ${jobId} runner failed: ${error.message}`);
     await markLaunchFailure(jobId, error).catch((persistError) => console.error(`job ${jobId} runner failure persistence failed: ${persistError.message}`));
     resolveStarted(false);
-  });
+  }).finally(() => resolveSettled());
+  if (waitUntilSettled) {
+    const ok = await started;
+    await settled;
+    return ok;
+  }
   return started;
+}
+
+async function startJob(jobId) {
+  const current = await readJob(jobId);
+  if (current.provider === GROK_IMAGINE_PROVIDER) return grokQueue.accept(jobId);
+  return launchJobRunner(jobId);
 }
 
 async function health() {
@@ -675,7 +719,8 @@ async function health() {
       ytDlp
     },
     analysis: existsSync(ANALYSIS_PATH),
-    rlmAnalysis: existsSync(join(ROOT, "data/rlm-benchmark-analysis.json"))
+    rlmAnalysis: existsSync(join(ROOT, "data/rlm-benchmark-analysis.json")),
+    factoryQueue: grokQueue.snapshot()
   };
 }
 
@@ -716,24 +761,39 @@ async function handleApi(request, url) {
       return errorResponse(error, 400);
     }
   }
-  if (path === "/api/jobs" && request.method === "GET") return json({ jobs: await recoverStaleJobs(await listJobs()) });
+  if (path === "/api/library/import" && request.method === "POST") {
+    const result = await ensureLibraryEpisodes();
+    return json({
+      ...result,
+      jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())),
+      factoryQueue: grokQueue.snapshot()
+    });
+  }
+  if (path === "/api/jobs" && request.method === "GET") {
+    await ensureLibraryEpisodes();
+    return json({
+      jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())),
+      factoryQueue: grokQueue.snapshot()
+    });
+  }
   if (path === "/api/jobs" && request.method === "POST") {
     try {
       const body = await readJson(request);
       if (!body.topic || String(body.topic).trim().length < 4) throw new Error("영상 주제를 4자 이상 입력하세요.");
-      const job = await createJob(body);
-      if (job.provider === "gemini-browser" || job.provider === GROK_IMAGINE_PROVIDER) {
-        await startJob(job.id);
+      const created = await createJob(body);
+      if (created.provider === "gemini-browser" || created.provider === GROK_IMAGINE_PROVIDER) {
+        await startJob(created.id);
       } else if (body.autoStart === true) {
-        if (job.provider === "local-video") {
+        if (created.provider === "local-video") {
           if (!String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()) throw new Error("PS4_LOCAL_VIDEO_GENERATOR가 설정되지 않아 local-video 자동 시작을 수행할 수 없습니다.");
-          await startJob(job.id);
+          await startJob(created.id);
         } else {
-          if (!(await hasUploadedVideo(job.id))) throw new Error("로컬 자동 시작에는 업로드된 영상 클립이 하나 이상 필요합니다.");
-          await startJob(job.id);
+          if (!(await hasUploadedVideo(created.id))) throw new Error("로컬 자동 시작에는 업로드된 영상 클립이 하나 이상 필요합니다.");
+          await startJob(created.id);
         }
       }
-      return json({ job }, 201);
+      const job = annotateFactoryQueue([await readJob(created.id)])[0];
+      return json({ job, factoryQueue: grokQueue.snapshot() }, 201);
     } catch (error) {
       return errorResponse(error, 400);
     }
@@ -884,7 +944,7 @@ async function handleApi(request, url) {
       const current = await readJob(jobId);
       if (activeJobs.has(jobId) || isFreshRunningJob(current)) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);
       if (!(await startJob(jobId))) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);
-      return json({ started: true, job: await readJob(jobId) });
+      return json({ started: true, job: annotateFactoryQueue([await readJob(jobId)])[0], factoryQueue: grokQueue.snapshot() });
     }
     if (request.method === "POST" && suffix === "clips") {
       if (activeJobs.has(jobId)) return errorResponse(new Error("실행 중에는 클립을 업로드할 수 없습니다."), 409);
