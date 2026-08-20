@@ -59,6 +59,16 @@ curl -s -X POST http://localhost:3000/api/jobs \
 
 `provider`는 작업 JSON에 그대로 남습니다. grok가 없으면 작업은 만들어지지만 실행이 위 한국어 오류로 실패합니다.
 
+프롬프트 템플릿:
+
+```bash
+curl -s http://localhost:3000/api/grok-imagine/template
+curl -s -X POST http://localhost:3000/api/grok-imagine/template/preview \
+  -H 'content-type: application/json' \
+  -d '{"topic":"한강 갑문이 물을 나누는 이유","facts":["지붕 면적 2만 m²"]}'
+curl -s http://localhost:3000/api/jobs/JOB_ID/prompts
+```
+
 ## 네트워크 없는 검사
 
 ```bash
