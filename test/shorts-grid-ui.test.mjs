@@ -50,6 +50,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.ok(benchmarkIndex > gridIndex);
   assert.equal(html.includes('id="jobs-list"'), false);
   assert.match(html, /id="create-tile"/);
+  assert.match(html, /id="template-overlay"/);
+  assert.match(html, /href="#template"/);
   assert.match(html, /option value="grok-imagine" selected/);
   assert.match(html, /<details class="advanced-create"/);
   assert.match(html, /고급 · Gemini · 로컬 업로드/);

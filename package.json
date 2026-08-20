@@ -12,6 +12,6 @@
     "monitor:gemini": "bun scripts/monitor-gemini-production.mjs",
     "dev": "bun --watch src/server.mjs",
     "start": "bun src/server.mjs",
-    "test": "node --test test/grok-imagine-factory.test.mjs test/shorts-grid-ui.test.mjs"
+    "test": "node --test test/grok-imagine-factory.test.mjs test/shorts-grid-ui.test.mjs test/grok-imagine-template.test.mjs"
   }
 }

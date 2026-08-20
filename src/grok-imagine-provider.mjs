@@ -187,7 +187,8 @@ async function generateStillWithQa({ segment, stillPath, reference, legalQuantit
     const visualPrompt = stillPromptFor(segment, {
       legalQuantities,
       emptier,
-      siblingPath: reference
+      siblingPath: reference,
+      worldSlots: segment.worldSlots || null
     });
     const prompt = buildImaginePrompt({
       tool: segment.tool,
@@ -236,7 +237,7 @@ async function generateStillWithQa({ segment, stillPath, reference, legalQuantit
 
 async function animateWithQa({ segment, stillPath, clipPath, runGrok, inspectClip, animateStill, freezeStill }) {
   for (const emptier of [false, true]) {
-    const visualPrompt = animatePromptFor(segment, { emptier });
+    const visualPrompt = animatePromptFor(segment, { emptier, worldSlots: segment.worldSlots || null });
     await animateStill({
       stillPath,
       clipPath,

@@ -20,7 +20,8 @@ import { geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
 import { evaluateJob, runQualityLoop, saveCommitteeReview } from "./quality.mjs";
 import { ytDlpInfo } from "./yt-dlp.mjs";
 import { resolveGrokBinary } from "./grok-imagine-cli.mjs";
-import { PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
+import { inspectJobPrompts, previewFactoryPrompts, PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
+import { getLockedTemplate } from "./grok-imagine-template.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -705,6 +706,15 @@ async function handleApi(request, url) {
     const start = (page - 1) * limit;
     return json({ total: videos.length, page, limit, videos: videos.slice(start, start + limit) });
   }
+  if (path === "/api/grok-imagine/template" && request.method === "GET") return json(getLockedTemplate());
+  if (path === "/api/grok-imagine/template/preview" && request.method === "POST") {
+    try {
+      const body = await readJson(request);
+      return json(previewFactoryPrompts(body));
+    } catch (error) {
+      return errorResponse(error, 400);
+    }
+  }
   if (path === "/api/jobs" && request.method === "GET") return json({ jobs: await recoverStaleJobs(await listJobs()) });
   if (path === "/api/jobs" && request.method === "POST") {
     try {
@@ -734,6 +744,14 @@ async function handleApi(request, url) {
     const jobId = decodeURIComponent(jobMatch[1]);
     const suffix = jobMatch[2] || "";
     if (!JOB_ID_PATTERN.test(jobId)) return errorResponse(new Error("잘못된 작업 ID입니다."), 400);
+    if (request.method === "GET" && suffix === "prompts") {
+      const current = await readJob(jobId);
+      if (current.provider !== GROK_IMAGINE_PROVIDER) {
+        return errorResponse(new Error("프롬프트 템플릿은 Grok Imagine 공장 작업에서만 볼 수 있습니다."), 409);
+      }
+      const script = await readOptionalJson(join(JOBS_DIR, jobId, "script.json"));
+      return json(inspectJobPrompts(current, script));
+    }
     if (request.method === "GET" && suffix === "quality") {
       const current = await readJob(jobId);
       if (!current.runId) return errorResponse(new Error("현재 실행 산출물이 없어 품질 검사를 시작할 수 없습니다."), 409);

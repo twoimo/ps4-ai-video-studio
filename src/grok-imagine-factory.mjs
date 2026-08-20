@@ -1,3 +1,11 @@
+import {
+  fillShotAnimatePrompt,
+  fillShotStillPrompt,
+  fillWorldSlots,
+  inspectScriptPrompts,
+  sanitizeWorldSlotOverrides
+} from "./grok-imagine-template.mjs";
+
 export const PROVIDER_ID = "grok-imagine";
 export const PROVIDER_POLICY = "official-grok-cli-imagine-factory-no-fallback";
 export const FACTORY_CLIP_COUNT = 7;
@@ -204,44 +212,12 @@ export function dialogueForShot(shot, legalQuantities) {
   return numberizeLegalQuantities(clause, legalQuantities);
 }
 
-export function stillPromptFor(shot, { legalQuantities = [], emptier = false, siblingPath = null } = {}) {
-  const nouns = (shot.topicNouns || []).join(", ");
-  const legal = legalQuantities.map((item) => item.display).join(", ");
-  const areaRule = shot.areaAllowed
-    ? "Area m² may appear once, only as a short label on a roof plane."
-    : "Do not show any area m² or leftover SI.";
-  const labelRule = shot.label
-    ? `One fact, one label, one shot. The only on-image label is: ${shot.label}. No sentences in pixels.`
-    : "No on-image text, no sentences in pixels, no leftover SI.";
-  const lockRule = shot.tool === "image_gen"
-    ? "This is the canonical hook still and world lock. Use image_gen once. 9:16."
-    : `Use image_edit only. Edit from ${siblingPath || "the hook lock or a passed sibling"}. Never call image_gen.`;
-  const empty = emptier
-    ? "Even emptier: no figures, no silhouettes, no numerals except the single sourced label, more vacant site."
-    : "Empty site. No people, no silhouettes, no body in water.";
-  return [
-    lockRule,
-    `Topic nouns only: ${nouns || "site"}.`,
-    `Camera: ${shot.camera}.`,
-    "Real Korean urban/infrastructure scale. Same site as the world lock.",
-    empty,
-    labelRule,
-    areaRule,
-    legal ? `Legal quantities only: ${legal}. Do not invent SI.` : "No SI. Do not invent measurements.",
-    "Do not clone another channel's footage. Original still of this topic only."
-  ].join(" ");
+export function stillPromptFor(shot, { legalQuantities = [], emptier = false, siblingPath = null, worldSlots = null } = {}) {
+  return fillShotStillPrompt(shot, { legalQuantities, emptier, siblingPath, worldSlots });
 }
 
-export function animatePromptFor(shot, { emptier = false } = {}) {
-  const empty = emptier
-    ? "Even emptier motion: no spawned person, no drifted numerals, no new objects."
-    : "Keep the still's empty site. Do not spawn a person or silhouette. Do not drift or add SI.";
-  return [
-    "Use image_to_video only. Animate this still for 10 seconds at 720p 9:16.",
-    empty,
-    `Camera: slow ${shot.role === "hold" ? "hold / slight settle" : "documentary move"} on the same site.`,
-    "No Ken Burns zoom on a failed retry. No new labels."
-  ].join(" ");
+export function animatePromptFor(shot, { emptier = false, worldSlots = null } = {}) {
+  return fillShotAnimatePrompt(shot, { emptier, worldSlots });
 }
 
 export function toolAllowedForShot(shot, tool) {
@@ -287,18 +263,26 @@ export function buildGrokImagineScript(job) {
   const sources = Array.isArray(job.sources) ? job.sources : [];
   const shotList = buildShotList({ topic: job.topic, facts, sources });
   const legalQuantities = shotList.legalQuantities;
-  const slots = topicAgnosticSlots(topicNouns(job.topic));
+  const nouns = topicNouns(job.topic);
+  const worldSlotOverrides = sanitizeWorldSlotOverrides(job.worldSlots || job.worldSlotOverrides);
+  const worldSlots = fillWorldSlots({ nouns, legalQuantities, worldSlots: worldSlotOverrides });
+  const inventedSlots = inventedSiIn(Object.values(worldSlots).join("\n"), legalQuantities);
+  if (inventedSlots.length) {
+    throw new Error(`월드 슬롯에 출처에 없는 SI가 들어 있습니다: ${inventedSlots.join(", ")}`);
+  }
+  const slots = topicAgnosticSlots(nouns);
   const segments = shotList.shots.map((shot) => {
     const dialogue = dialogueForShot(shot, legalQuantities);
     return {
       ...shot,
       caption: dialogue,
       narration: dialogue,
-      visualPrompt: stillPromptFor(shot, { legalQuantities }),
-      animatePrompt: animatePromptFor(shot),
+      visualPrompt: stillPromptFor(shot, { legalQuantities, worldSlots }),
+      animatePrompt: animatePromptFor(shot, { worldSlots }),
       durationHint: SHOT_DURATION_SEC,
       sourceIds: shot.sourceIds,
-      claimId: `claim-${shot.index}`
+      claimId: `claim-${shot.index}`,
+      worldSlots
     };
   });
   const invented = inventedSiIn(segments.map((segment) => `${segment.visualPrompt} ${segment.caption}`).join("\n"), legalQuantities);
@@ -312,6 +296,9 @@ export function buildGrokImagineScript(job) {
     sources,
     facts,
     legalQuantities,
+    topicNouns: nouns,
+    worldSlots,
+    worldSlotOverrides,
     slots,
     shotList: shotList.shots,
     researchStatus: sources.length || facts.length ? "provided" : "missing",
@@ -322,6 +309,15 @@ export function buildGrokImagineScript(job) {
     targetDurationSec: FACTORY_CLIP_COUNT * SHOT_DURATION_SEC,
     segments
   };
+}
+
+export function previewFactoryPrompts(input = {}) {
+  return inspectScriptPrompts(buildGrokImagineScript(input), { source: "preview" });
+}
+
+export function inspectJobPrompts(job, script = null) {
+  if (script?.segments?.length) return inspectScriptPrompts(script, { source: "script" });
+  return previewFactoryPrompts(job || {});
 }
 
 export function expectedGrokImagineRequest(job, script, runId, scriptHash) {

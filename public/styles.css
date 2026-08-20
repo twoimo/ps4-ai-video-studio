@@ -252,6 +252,39 @@ body.overlay-open { overflow: hidden; }
 .advanced-create summary { cursor: pointer; color: var(--muted); font: 400 10px var(--mono); letter-spacing: .08em; }
 .advanced-create summary:hover { color: var(--accent); }
 .create-overlay-panel .create-panel { padding: 0; }
+.library-actions { display: flex; align-items: center; gap: 10px; }
+.template-overlay-panel { width: min(920px, 100%); }
+.template-root, .prompt-inspect { display: grid; gap: 14px; }
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.slot-card { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.slot-card.locked { opacity: .92; }
+.slot-card span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.slot-card b { color: var(--text); font-size: 11px; }
+.slot-card code { color: var(--accent-2); font: 400 8px var(--mono); }
+.slot-card small { color: var(--dim); font-size: 9px; line-height: 1.45; }
+.slot-value, .shot-prompt pre { margin: 0; color: var(--muted); font: 400 10px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.lock-table, .skeleton-block { display: grid; gap: 7px; }
+.lock-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid rgba(240,189,104,.22); border-radius: 6px; background: rgba(240,189,104,.05); }
+.lock-row b, .lock-row small, .lock-row code { display: block; }
+.lock-row b { color: var(--amber); font-size: 11px; }
+.lock-row code { color: var(--dim); font: 400 8px var(--mono); margin: 3px 0; }
+.lock-row small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.lock-flag { color: var(--amber); font: 400 8px var(--mono); white-space: nowrap; }
+.skeleton-block ul { margin: 0; padding-left: 18px; color: var(--muted); font: 400 10px/1.6 var(--mono); }
+.skeleton-meta { color: var(--dim); font: 400 9px var(--mono); margin: 0; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid rgba(255,120,109,.35); color: #ffb4ad; border-radius: 4px; padding: 3px 6px; font: 400 9px var(--mono); }
+.shot-prompt-list { display: grid; gap: 8px; }
+.shot-prompt { padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.shot-prompt-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.shot-prompt-head b { font-size: 11px; }
+.shot-prompt-head span, .shot-prompt small { color: var(--dim); font: 400 9px var(--mono); }
+.shot-prompt details { margin-top: 8px; }
+.shot-prompt summary { cursor: pointer; color: var(--accent-2); font: 400 9px var(--mono); }
+.prompt-subhead { margin: 12px 0 6px; font-size: 12px; }
+.world-slots-create { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.world-slots-create summary { cursor: pointer; color: var(--muted); font: 400 10px var(--mono); }
+.prompt-preview { margin-top: 12px; display: grid; gap: 10px; }
 #benchmark .stats-grid { margin-bottom: 18px; }
 .health-title { display: flex; justify-content: space-between; color: var(--dim); font: 400 8px var(--mono); }
 .health-title small { color: var(--accent); }

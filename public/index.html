@@ -14,7 +14,8 @@
         <nav class="nav-list" aria-label="제작 단계">
           <a class="nav-item active" aria-current="page" href="#shorts"><span class="nav-index">01</span><span><b>쇼츠 라이브러리</b><small>9:16 카드 그리드</small></span></a>
           <a class="nav-item" href="#create"><span class="nav-index">02</span><span><b>새 쇼츠</b><small>Grok Imagine 공장</small></span></a>
-          <a class="nav-item" href="#benchmark"><span class="nav-index">03</span><span><b>벤치마크</b><small>채널 분석·RLM receipts</small></span></a>
+          <a class="nav-item" href="#template"><span class="nav-index">03</span><span><b>프롬프트 템플릿</b><small>잠금 슬롯·스켈레톤</small></span></a>
+          <a class="nav-item" href="#benchmark"><span class="nav-index">04</span><span><b>벤치마크</b><small>채널 분석·RLM receipts</small></span></a>
         </nav>
         <div class="sidebar-bottom"><div class="system-chip"><span class="dot" id="system-dot"></span><span id="system-label">시스템 확인 중</span></div><p>로컬 우선 · 오픈소스 기반<br />모든 산출물은 workspace에 저장</p></div>
       </aside>
@@ -28,7 +29,7 @@
               <h2>쇼츠</h2>
               <p class="library-lead">Grok Imagine 공장으로 만든 9:16 공학 쇼츠가 여기에 쌓입니다. 카드를 누르면 훅 잠금·스틸·클립·마스터가 열립니다.</p>
             </div>
-            <span class="section-note" id="shorts-count">0편</span>
+            <div class="library-actions"><button type="button" class="ghost-button" id="open-template">프롬프트 템플릿</button><span class="section-note" id="shorts-count">0편</span></div>
           </div>
           <div class="shorts-grid" id="shorts-grid" aria-live="polite" aria-label="쇼츠 라이브러리">
             <button type="button" class="short-card short-create-tile" id="create-tile">
@@ -63,6 +64,12 @@
           </div>
           <label class="field-label" for="sources">검증 출처 URL <span class="muted">(의미론 심사에 필요한 공식 근거 · 줄바꿈 구분)</span></label>
           <textarea id="sources" rows="2" placeholder="주제에 맞는 공식 출처 URL을 입력하세요.&#10;예: https://www.gov.kr/"></textarea>
+          <details class="world-slots-create" id="world-slots-create">
+            <summary>월드 슬롯 값 · 초안에서 채워진 프롬프트 미리보기</summary>
+            <p class="form-footnote">슬롯 값만 고칠 수 있습니다. FORBIDDEN·자막 Y·사람 없음 잠금은 읽기 전용입니다.</p>
+            <div id="create-world-slots" class="slot-grid"></div>
+            <div id="create-prompt-preview" class="prompt-preview" aria-live="polite"></div>
+          </details>
           <button class="primary-button" type="submit"><span>자동 제작 시작</span><span class="arrow">↗</span></button>
           <p class="form-footnote">Grok Imagine 공장은 이미 로그인된 공식 grok CLI만 사용합니다. CAPTCHA·login·API 키는 우회하거나 넣지 않습니다.</p>
           <details class="advanced-create" id="advanced-create">
@@ -79,6 +86,14 @@
             <div class="toggle-row"><label class="toggle-label"><input id="captions" type="checkbox" checked /><span class="toggle"></span><span>한국어 자막 번인 <b class="toggle-state" data-toggle-state="captions">ON</b></span></label><label class="toggle-label"><input id="voiceover" type="checkbox" /><span class="toggle"></span><span>macOS 음성 내레이션 <b class="toggle-state" data-toggle-state="voiceover">OFF</b></span></label></div>
           </details>
         </form>
+      </div>
+    </div>
+
+    <div class="studio-overlay" id="template-overlay" hidden>
+      <div class="overlay-backdrop" data-close-view="grid"></div>
+      <div class="overlay-panel template-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="template-title">
+        <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-template">← 라이브러리</button><span class="live-badge">LOCKED 2026-08-21</span></div>
+        <div id="template-root" class="template-root"><div class="empty-detail"><span>◌</span><p id="template-title">잠긴 Imagine 프롬프트 템플릿을 불러오는 중</p></div></div>
       </div>
     </div>
 

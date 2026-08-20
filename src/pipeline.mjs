@@ -9,6 +9,7 @@ import { isIP } from "node:net";
 import { generateGeminiClips } from "./gemini-browser.mjs";
 import { generateLocalVideoClips } from "./local-video-provider.mjs";
 import { buildGrokImagineScript, FACTORY_CLIP_COUNT, PROVIDER_ID as GROK_IMAGINE_PROVIDER, SHOT_DURATION_SEC, unsupportedProviderMessage, normalizeFacts } from "./grok-imagine-factory.mjs";
+import { sanitizeWorldSlotOverrides } from "./grok-imagine-template.mjs";
 import { generateGrokImagineFactory } from "./grok-imagine-provider.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
 
@@ -121,6 +122,7 @@ export async function createJob(input) {
     captions: factory ? true : input.captions !== false,
     voiceover: factory ? false : input.voiceover !== false,
     facts: normalizeFacts(input.facts),
+    worldSlots: factory ? sanitizeWorldSlotOverrides(input.worldSlots) : {},
     sources,
     targetDurationSec: factory ? FACTORY_CLIP_COUNT * SHOT_DURATION_SEC : targetDurationSec,
     targetDurationRangeSec: benchmarkDuration.recommendedRangeSec || [benchmarkDuration.p10Sec || 43, benchmarkDuration.p90Sec || 104],

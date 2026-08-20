@@ -2,7 +2,7 @@ import { formatClock, shortDurationSeconds, shortPreview, shortStatus, shortThum
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const state = { analysis: null, jobs: [], selectedJobId: null, highlightJobId: null, view: "grid", page: 1, query: "", sort: "views", category: "", poll: null, qualityHistory: {}, qualityDetails: {} };
+const state = { analysis: null, jobs: [], selectedJobId: null, highlightJobId: null, view: "grid", template: null, createPreview: null, jobPrompts: {}, page: 1, query: "", sort: "views", category: "", poll: null, qualityHistory: {}, qualityDetails: {} };
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -202,15 +202,18 @@ function statusLabel(status, job) {
 }
 
 function setView(view, options = {}) {
-  state.view = view === "create" || view === "detail" ? view : "grid";
+  state.view = ["create", "detail", "template"].includes(view) ? view : "grid";
   const createOverlay = $("#create-overlay");
   const shortOverlay = $("#short-overlay");
+  const templateOverlay = $("#template-overlay");
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
+  if (templateOverlay) templateOverlay.hidden = state.view !== "template";
   document.body.classList.toggle("overlay-open", state.view !== "grid");
   $$(".nav-item").forEach((item) => {
     const target = item.getAttribute("href");
     const active = (state.view === "create" && target === "#create")
+      || (state.view === "template" && target === "#template")
       || (state.view === "grid" && target === "#shorts")
       || (state.view === "detail" && target === "#shorts");
     item.classList.toggle("active", active);
@@ -218,16 +221,24 @@ function setView(view, options = {}) {
     else item.removeAttribute("aria-current");
   });
   if (!options.skipHash) {
-    const nextHash = state.view === "create" ? "#create" : state.view === "detail" ? "#short" : "#shorts";
+    const nextHash = state.view === "create" ? "#create" : state.view === "detail" ? "#short" : state.view === "template" ? "#template" : "#shorts";
     if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
   }
-  if (state.view === "create") window.requestAnimationFrame(() => $("#topic")?.focus());
+  if (state.view === "create") {
+    window.requestAnimationFrame(() => $("#topic")?.focus());
+    void hydrateCreateSlots();
+  }
+  if (state.view === "template") void loadTemplateSurface();
 }
 
 function applyHash() {
   const hash = location.hash.replace("#", "");
   if (hash === "create") {
     setView("create", { skipHash: true });
+    return;
+  }
+  if (hash === "template") {
+    setView("template", { skipHash: true });
     return;
   }
   if (hash === "benchmark") {
@@ -348,6 +359,120 @@ function renderPipeline(job) {
   if (statusNode) statusNode.textContent = job ? `${copy.status} · ${statusLabel(job.status, job)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
 }
 
+function renderLockTable(locks = []) {
+  if (!locks.length) return "";
+  return `<div class="lock-table" aria-label="공장 잠금"><span class="panel-kicker">LOCKED FACTORY RULES</span>${locks.map((lock) => `<div class="lock-row"><div><b>${escapeHtml(lock.label)}</b><code>${escapeHtml(lock.id)}</code><small>${escapeHtml(lock.rule)}</small></div><span class="lock-flag">읽기 전용</span></div>`).join("")}</div>`;
+}
+
+function renderSkeleton(skeleton) {
+  if (!skeleton) return "";
+  const lines = (skeleton.lines || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+  const graphics = (skeleton.redGraphics || []).map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join("");
+  return `<div class="skeleton-block"><span class="panel-kicker">SHOT SKELETON · ${escapeHtml(skeleton.aspect || "9:16")}</span><p class="skeleton-meta">type ${escapeHtml(skeleton.type || "{{type}}")} · camera ${escapeHtml(skeleton.camera || "{{camera}}")}</p><div class="chip-row">${graphics}</div><ul>${lines}</ul></div>`;
+}
+
+function renderWorldSlotFields(slots = [], { namePrefix = "world-slot", editable = false } = {}) {
+  return slots.map((slot) => {
+    const canEdit = editable && slot.editable !== false && !slot.locked;
+    const value = slot.value || "";
+    const field = canEdit
+      ? `<textarea id="${escapeHtml(namePrefix)}-${escapeHtml(slot.id)}" name="${escapeHtml(slot.id)}" data-world-slot="${escapeHtml(slot.id)}" rows="2">${escapeHtml(value)}</textarea>`
+      : `<p class="slot-value">${escapeHtml(value || slot.placeholder || `{{${slot.id}}}`)}</p>`;
+    return `<label class="slot-card ${canEdit ? "editable" : "locked"}"><span><b>${escapeHtml(slot.label)}</b><code>${escapeHtml(slot.id)}</code></span><small>${escapeHtml(slot.hint || "")}${canEdit ? "" : " · 읽기 전용"}</small>${field}</label>`;
+  }).join("");
+}
+
+function renderShotPromptList(shots = []) {
+  if (!shots.length) return `<div class="pending-evidence">채워진 샷 프롬프트가 아직 없습니다. 주제와 사실을 넣으면 스켈레톤이 채워집니다.</div>`;
+  return `<div class="shot-prompt-list">${shots.map((shot) => `<article class="shot-prompt"><div class="shot-prompt-head"><b>${String(shot.index).padStart(2, "0")} · ${escapeHtml(shot.slotId || shot.role || "shot")}</b><span>${escapeHtml(shot.aspect || "9:16")} · ${escapeHtml(shot.tool || "")} · ${escapeHtml(shot.camera || "")}</span></div>${shot.fact ? `<small>사실 ${escapeHtml(shot.fact)}${shot.label ? ` · 라벨 ${escapeHtml(shot.label)}` : ""}</small>` : ""}<pre>${escapeHtml(shot.prompt || "")}</pre>${shot.animatePrompt ? `<details><summary>10초 애니메이션 프롬프트</summary><pre>${escapeHtml(shot.animatePrompt)}</pre></details>` : ""}</article>`).join("")}</div>`;
+}
+
+function renderPromptInspect(payload, { title = "프롬프트 템플릿", filled = false } = {}) {
+  if (!payload) return "";
+  return `<section class="prompt-inspect"><div class="panel-head"><div><span class="panel-kicker">${filled ? "FILLED SLOTS + SHOT PROMPTS" : "LOCKED IMAGINE TEMPLATE"}</span><h3>${escapeHtml(title)}</h3></div><span class="live-badge">${escapeHtml(payload.date || "2026-08-21")}</span></div>${renderWorldSlotFields(payload.worldSlots || payload.slots || [], { editable: false })}${renderSkeleton(payload.skeleton)}${filled ? renderShotPromptList(payload.shots || []) : ""}${renderLockTable(payload.locks || [])}</section>`;
+}
+
+async function loadTemplateSurface() {
+  const root = $("#template-root");
+  if (!root) return;
+  try {
+    if (!state.template) state.template = await api("/api/grok-imagine/template");
+    const template = state.template;
+    root.innerHTML = `<div class="panel-head"><div><span class="panel-kicker">GROK IMAGINE · ${escapeHtml(template.id)}</span><h3 id="template-title">${escapeHtml(template.title)}</h3></div><span class="live-badge">읽기 전용 잠금</span></div><p class="library-lead">빈 스켈레톤과 공장 잠금입니다. 슬롯 값은 새 쇼츠 초안에서만 채울 수 있고, FORBIDDEN·자막 Y·사람 없음은 바꾸지 않습니다.</p><div class="slot-grid">${renderWorldSlotFields(template.slots)}</div>${renderSkeleton(template.skeleton)}${renderLockTable(template.locks)}`;
+  } catch (error) {
+    root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><pre>${escapeHtml(error.message)}</pre></div>`;
+  }
+}
+
+function collectWorldSlots() {
+  const slots = {};
+  $$("[data-world-slot]").forEach((input) => {
+    const value = String(input.value || "").trim();
+    if (value) slots[input.dataset.worldSlot] = value;
+  });
+  return slots;
+}
+
+async function refreshCreatePreview() {
+  if ($("#provider")?.value !== "grok-imagine") {
+    const preview = $("#create-prompt-preview");
+    if (preview) preview.innerHTML = "";
+    return;
+  }
+  const topic = $("#topic")?.value || "";
+  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const worldSlots = collectWorldSlots();
+  if (topic.trim().length < 4 && !facts.length) {
+    const preview = $("#create-prompt-preview");
+    if (preview && state.template) preview.innerHTML = renderSkeleton(state.template.skeleton) + renderLockTable(state.template.locks);
+    return;
+  }
+  try {
+    state.createPreview = await api("/api/grok-imagine/template/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ topic: topic.trim() || "빈 현장의 숨은 원리", facts, worldSlots })
+    });
+    const preview = $("#create-prompt-preview");
+    if (preview) preview.innerHTML = `${renderWorldSlotFields(state.createPreview.worldSlots)}<h4 class="prompt-subhead">채워진 샷 프롬프트</h4>${renderShotPromptList(state.createPreview.shots)}${renderLockTable(state.createPreview.locks)}`;
+  } catch (error) {
+    const preview = $("#create-prompt-preview");
+    if (preview) preview.innerHTML = `<div class="warning-box"><b>미리보기 실패</b><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+async function hydrateCreateSlots() {
+  try {
+    if (!state.template) state.template = await api("/api/grok-imagine/template");
+    const mount = $("#create-world-slots");
+    if (mount && !mount.dataset.ready) {
+      mount.innerHTML = renderWorldSlotFields(state.template.slots, { editable: true, namePrefix: "create-slot" });
+      mount.dataset.ready = "1";
+      mount.querySelectorAll("[data-world-slot]").forEach((input) => input.addEventListener("input", () => {
+        window.clearTimeout(state.previewTimer);
+        state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+      }));
+    }
+    await refreshCreatePreview();
+  } catch (error) {
+    showToast(`템플릿을 불러오지 못했습니다: ${error.message}`, "error");
+  }
+}
+
+async function loadJobPrompts(job) {
+  if (!job || job.provider !== "grok-imagine") return null;
+  const cached = state.jobPrompts[job.id];
+  if (cached && cached.updatedAt === job.updatedAt) return cached.payload;
+  try {
+    const payload = await api(`/api/jobs/${encodeURIComponent(job.id)}/prompts`);
+    state.jobPrompts[job.id] = { updatedAt: job.updatedAt, payload };
+    return payload;
+  } catch (error) {
+    state.jobPrompts[job.id] = { updatedAt: job.updatedAt, error: error.message, payload: null };
+    return null;
+  }
+}
+
 function renderFactoryGallery(artifactRecords = []) {
   const groups = [
     ["훅 잠금", artifactRecords.filter((artifact) => artifact.kind === "hook-lock")],
@@ -380,6 +505,12 @@ function renderJobDetail(job) {
       ? `<div class="pending-evidence">Grok Imagine 공장 · 공식 grok CLI OAuth만 사용합니다. Gemini로 대체하지 않으며, 훅 잠금 이후에는 image_edit만 합니다.</div>`
       : "";
   const factoryGallery = renderFactoryGallery(artifactRecords);
+  const promptState = state.jobPrompts[job.id];
+  const promptPanel = job.provider === "grok-imagine"
+    ? promptState?.payload
+      ? renderPromptInspect(promptState.payload, { title: "이 쇼츠의 채워진 프롬프트", filled: true })
+      : `<div class="pending-evidence">${promptState?.error ? `프롬프트를 읽지 못했습니다 · ${escapeHtml(promptState.error)}` : "채워진 슬롯과 샷 프롬프트를 불러오는 중"}</div>`
+    : "";
   const detailState = state.qualityDetails[job.id];
   const quality = detailState?.quality || job.qualitySummary;
   const history = detailState?.history || [];
@@ -399,10 +530,18 @@ function renderJobDetail(job) {
       ? `<img class="preview-still" src="${escapeHtml(preview.poster)}" alt="훅 잠금" />`
       : previewMarkup;
   const status = shortStatus(job);
-  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED SHORT</span><h3 id="short-detail-title">${escapeHtml(job.topic)}</h3></div><span class="job-status ${status.key} ${job.status}"><i></i>${escapeHtml(status.label)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}<div class="preview-wrap">${previewMedia}<div class="preview-caption"><span>${preview.videoUrl ? "FINAL PREVIEW · RUN-BOUND" : preview.poster ? "HOOK LOCK" : "PREVIEW"}</span><span>${formatTime(shortDurationSeconds(job))} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>${providerNotice}${factoryGallery}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED SHORT</span><h3 id="short-detail-title">${escapeHtml(job.topic)}</h3></div><span class="job-status ${status.key} ${job.status}"><i></i>${escapeHtml(status.label)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}<div class="preview-wrap">${previewMedia}<div class="preview-caption"><span>${preview.videoUrl ? "FINAL PREVIEW · RUN-BOUND" : preview.poster ? "HOOK LOCK" : "PREVIEW"}</span><span>${formatTime(shortDurationSeconds(job))} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>${providerNotice}${factoryGallery}${promptPanel}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
+  if (job.provider === "grok-imagine") {
+    const cached = state.jobPrompts[job.id];
+    if (!cached || cached.updatedAt !== job.updatedAt) {
+      void loadJobPrompts(job).then(() => {
+        if (state.selectedJobId === job.id && state.view === "detail") renderJobDetail(job);
+      });
+    }
+  }
 }
 
 async function uploadLocalClips(event) {
@@ -450,7 +589,8 @@ async function createProduction(event) {
   const provider = $("#provider").value;
   const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
   const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
+  const worldSlots = collectWorldSlots();
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
   if (provider === "gemini-browser" || provider === "grok-imagine") body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;
@@ -566,6 +706,12 @@ function syncProviderForm() {
 function openCreate(event) {
   event?.preventDefault();
   setView("create");
+  void hydrateCreateSlots();
+}
+
+function openTemplate(event) {
+  event?.preventDefault();
+  setView("template");
 }
 
 function closeOverlays(event) {
@@ -582,8 +728,18 @@ function bindEvents() {
   $("#browser-start").addEventListener("click", connectBrowser);
   $("#new-short")?.addEventListener("click", openCreate);
   $("#create-tile")?.addEventListener("click", openCreate);
+  $("#open-template")?.addEventListener("click", openTemplate);
   $("#close-create")?.addEventListener("click", closeOverlays);
   $("#close-short")?.addEventListener("click", closeOverlays);
+  $("#close-template")?.addEventListener("click", closeOverlays);
+  $("#topic")?.addEventListener("input", () => {
+    window.clearTimeout(state.previewTimer);
+    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+  });
+  $("#facts")?.addEventListener("input", () => {
+    window.clearTimeout(state.previewTimer);
+    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+  });
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
   window.addEventListener("keydown", (event) => {
