@@ -13,7 +13,7 @@ import {
   seedJobRecord
 } from "../src/episode-import.mjs";
 import { createGrokFactoryQueue } from "../src/grok-factory-queue.mjs";
-import { shortStatus } from "../public/shorts-ui.mjs";
+import { shortStatus, shortThumbnail } from "../public/shorts-ui.mjs";
 
 test("seed catalog names playground-cistern and refuge-floor", async () => {
   const catalog = await loadSeedCatalog();
@@ -61,6 +61,27 @@ test("empty library gets seed cards; dropped masters attach once", async () => {
   assert.equal(second.jobs.length, 2);
   const drop = await discoverEpisodeDrop("playground-cistern", [drops]);
   assert.match(drop.master, /master\.mp4$/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("imported jpg wins over 1x1 placeholder png on the card", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-thumb-"));
+  const jobsDir = join(root, "jobs");
+  const drops = join(root, "imports");
+  await mkdir(join(drops, "playground-cistern"), { recursive: true });
+  await writeFile(join(drops, "playground-cistern", "thumbnail.jpg"), "real-thumb");
+  const result = await ensureLibraryEpisodes({
+    root,
+    jobsDir,
+    workspaceDir: root,
+    extraRoots: [drops]
+  });
+  const job = findJobForSlug(result.jobs, "playground-cistern");
+  assert.ok(existsSync(join(jobsDir, job.id, "thumbnail.png")));
+  assert.ok(existsSync(join(jobsDir, job.id, "thumbnail.jpg")));
+  assert.equal(job.artifacts.find((item) => item.name === "thumbnail.png")?.placeholder, true);
+  assert.equal(job.artifacts.find((item) => item.name === "thumbnail.png")?.width, 1);
+  assert.match(shortThumbnail(job), /thumbnail\.jpg$/);
   await rm(root, { recursive: true, force: true });
 });
 

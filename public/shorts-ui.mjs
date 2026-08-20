@@ -27,13 +27,42 @@ export function shortStatusLabel(job) {
   return shortStatus(job).label;
 }
 
+export function isPlaceholderThumbnail(artifact = {}) {
+  if (artifact.placeholder === true) return true;
+  const width = Number(artifact.width);
+  const height = Number(artifact.height);
+  if (width === 1 && height === 1) return true;
+  const bytes = Number(artifact.bytes);
+  if (Number.isFinite(bytes) && bytes > 0 && bytes <= 90) return true;
+  return false;
+}
+
+function isRasterName(name = "") {
+  return /\.(png|jpe?g|webp)$/i.test(name);
+}
+
+function rasterRank(artifact = {}) {
+  const name = artifact.name || "";
+  if (/\.(jpe?g|webp)$/i.test(name)) return 0;
+  if (/\.png$/i.test(name)) return 1;
+  return 2;
+}
+
+function pickRaster(artifacts, predicate) {
+  const matches = artifacts.filter((artifact) => artifact?.url && predicate(artifact));
+  if (!matches.length) return "";
+  const real = matches.filter((artifact) => !isPlaceholderThumbnail(artifact));
+  const pool = real.length ? real : [];
+  if (!pool.length) return "";
+  return [...pool].sort((left, right) => rasterRank(left) - rasterRank(right))[0].url;
+}
+
 export function shortThumbnail(job = {}) {
   const artifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
-  const pick = (predicate) => artifacts.find((artifact) => artifact?.url && predicate(artifact))?.url || "";
-  return pick((artifact) => artifact.kind === "hook-lock")
-    || pick((artifact) => artifact.kind === "still")
-    || pick((artifact) => artifact.kind === "thumbnail" || /thumbnail/i.test(artifact.kind || "") || /thumbnail\.(jpe?g|png|webp)$/i.test(artifact.name || ""))
-    || pick((artifact) => /\.(png|jpe?g|webp)$/i.test(artifact.name || ""));
+  return pickRaster(artifacts, (artifact) => artifact.kind === "hook-lock")
+    || pickRaster(artifacts, (artifact) => artifact.kind === "still")
+    || pickRaster(artifacts, (artifact) => artifact.kind === "thumbnail" || /thumbnail/i.test(artifact.kind || "") || /thumbnail\.(jpe?g|png|webp)$/i.test(artifact.name || ""))
+    || pickRaster(artifacts, (artifact) => isRasterName(artifact.name || ""));
 }
 
 export function shortDurationSeconds(job = {}) {

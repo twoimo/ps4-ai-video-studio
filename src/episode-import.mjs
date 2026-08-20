@@ -30,9 +30,11 @@ export function matchesEpisodeSlug(name = "", slug = "") {
   return normalized === key || normalized.startsWith(`${key}.`) || normalized.startsWith(`${key}-`) || normalized.startsWith(`${key}_`);
 }
 
-function artifact(jobId, name, kind) {
-  return { name, kind, url: mediaUrl(jobId, name) };
+function artifact(jobId, name, kind, extra = {}) {
+  return { name, kind, url: mediaUrl(jobId, name), ...extra };
 }
+
+const PLACEHOLDER_THUMB = { placeholder: true, width: 1, height: 1, bytes: PLACEHOLDER_PNG.length };
 
 export function findJobForSlug(jobs, slug) {
   return (jobs || []).find((job) => job.slug === slug || job.id === slug || job.id === `seed-${slug}` || job.id?.endsWith(`-${slug}`));
@@ -86,7 +88,7 @@ export async function discoverEpisodeDrop(slug, roots = []) {
 export function seedJobRecord(episode, { hasMaster = false } = {}) {
   const id = episodeJobId(episode);
   const now = new Date().toISOString();
-  const artifacts = [artifact(id, "thumbnail.png", "thumbnail")];
+  const artifacts = [artifact(id, "thumbnail.png", "thumbnail", PLACEHOLDER_THUMB)];
   if (hasMaster) {
     artifacts.unshift(
       artifact(id, "master.mp4", "master-video"),
@@ -132,8 +134,10 @@ async function attachDropFiles(job, drop, jobsDir) {
   const jobDir = join(jobsDir, job.id);
   await mkdir(jobDir, { recursive: true });
   const artifacts = [...(job.artifacts || [])];
-  const add = (name, kind) => {
-    if (!artifacts.some((item) => item.name === name)) artifacts.push(artifact(job.id, name, kind));
+  const add = (name, kind, extra = {}) => {
+    const existing = artifacts.find((item) => item.name === name);
+    if (existing) Object.assign(existing, extra);
+    else artifacts.push(artifact(job.id, name, kind, extra));
   };
   if (drop.master && existsSync(drop.master)) {
     await copyFile(drop.master, join(jobDir, "master.mp4"));
@@ -149,10 +153,18 @@ async function attachDropFiles(job, drop, jobsDir) {
   if (drop.thumbnail && existsSync(drop.thumbnail)) {
     const extension = extname(drop.thumbnail).toLowerCase() === ".png" ? "thumbnail.png" : "thumbnail.jpg";
     await copyFile(drop.thumbnail, join(jobDir, extension));
-    add(extension, "thumbnail");
+    if (extension === "thumbnail.png") {
+      const index = artifacts.findIndex((item) => item.name === "thumbnail.png");
+      const real = artifact(job.id, "thumbnail.png", "thumbnail");
+      if (index >= 0) artifacts[index] = real;
+      else artifacts.push(real);
+    } else {
+      add(extension, "thumbnail");
+      add("thumbnail.png", "thumbnail", PLACEHOLDER_THUMB);
+    }
   } else {
     await writePlaceholderThumbnail(jobDir);
-    add("thumbnail.png", "thumbnail");
+    add("thumbnail.png", "thumbnail", PLACEHOLDER_THUMB);
   }
   if (drop.captions && existsSync(drop.captions)) {
     const name = basename(drop.captions);

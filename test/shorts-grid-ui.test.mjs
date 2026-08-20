@@ -6,6 +6,7 @@ import {
   channelOneLiner,
   DEFAULT_CREATE_PROVIDER,
   formatClock,
+  isPlaceholderThumbnail,
   shortDurationSeconds,
   shortPreview,
   shortStatus,
@@ -72,4 +73,23 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /grid-template-columns:\s*repeat\(2,/);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
+});
+
+test("grid cards skip 1x1 placeholder png and use real jpg", () => {
+  const job = {
+    artifacts: [
+      { name: "thumbnail.png", kind: "thumbnail", url: "/thumb.png", width: 1, height: 1, placeholder: true },
+      { name: "thumbnail.jpg", kind: "thumbnail", url: "/thumb.jpg" }
+    ]
+  };
+  assert.equal(isPlaceholderThumbnail(job.artifacts[0]), true);
+  assert.equal(isPlaceholderThumbnail(job.artifacts[1]), false);
+  assert.equal(shortThumbnail(job), "/thumb.jpg");
+  assert.equal(shortPreview(job).poster, "/thumb.jpg");
+  assert.equal(
+    shortThumbnail({
+      artifacts: [{ name: "thumbnail.png", kind: "thumbnail", url: "/thumb.png", width: 1, height: 1 }]
+    }),
+    ""
+  );
 });
