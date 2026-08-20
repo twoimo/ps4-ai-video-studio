@@ -12,6 +12,7 @@ import { buildGrokImagineScript, FACTORY_CLIP_COUNT, PROVIDER_ID as GROK_IMAGINE
 import { sanitizeWorldSlotOverrides } from "./grok-imagine-template.mjs";
 import { generateGrokImagineFactory } from "./grok-imagine-provider.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
+import { factoryStageEvent, mergeLiveArtifacts } from "./grok-imagine-live.mjs";
 
 export const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = join(ROOT, "data");
@@ -1126,11 +1127,26 @@ export async function runJob(jobId, options = {}) {
     job = await updateJob(jobId, { sources: sourceBundle.records, sourceBundle: { status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 } });
     await record({ type: "sources_captured", status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 });
 
+    if (job.provider === GROK_IMAGINE_PROVIDER) {
+      await record(factoryStageEvent({
+        stageId: "plan",
+        status: "RUN",
+        message: "주제 비의존 슬롯과 6고유·1홀드 샷 목록을 짜는 중"
+      }));
+    }
     const script = job.provider === GROK_IMAGINE_PROVIDER ? buildGrokImagineScript(job) : await buildScript(job);
     await writeJsonAtomic(join(jobDir, "script.json"), script);
     await progress(18, "기획", job.provider === GROK_IMAGINE_PROVIDER
       ? `공장 슬롯과 6고유·1홀드 샷 목록 ${script.segments.length}개를 준비했습니다.`
       : `${script.generatedBy === "gemini-api" ? "Gemini" : "로컬 템플릿"} 대본과 ${script.segments.length}개 장면을 준비했습니다.`);
+    if (job.provider === GROK_IMAGINE_PROVIDER) {
+      await record(factoryStageEvent({
+        stageId: "plan",
+        status: "PASS",
+        message: `슬롯 ${script.slots?.length || 6}개 · 샷 ${script.segments.length}개 준비`,
+        prompt: script.segments[0]?.visualPrompt || ""
+      }));
+    }
 
     if (job.provider === "gemini-browser") {
       await progress(24, "Gemini 영상", "Chrome의 Gemini 동영상 만들기 화면을 제어하는 중입니다.");
@@ -1170,8 +1186,26 @@ export async function runJob(jobId, options = {}) {
       await writeRunManifest(runDir, runManifest);
       await captureRunInputs(localVideoGeneration.outputNames.map((name) => name.replace(/^clips\//, "")), script.segments.length);
     } else if (job.provider === GROK_IMAGINE_PROVIDER) {
-      await progress(24, "Grok Imagine 공장", "공식 grok CLI로 훅 잠금·image_edit·10초 애니메이션을 실행합니다. Gemini로 대체하지 않습니다.");
-      grokImagineGeneration = await generateGrokImagineFactory(job, script, runId, async (value, message) => progress(24 + Math.round(value * 0.30), "Grok Imagine 공장", message));
+      await progress(24, "훅 스틸 잠금", "공식 grok CLI로 훅 잠금·image_edit·10초 애니메이션을 실행합니다. Gemini로 대체하지 않습니다.");
+      grokImagineGeneration = await generateGrokImagineFactory(job, script, runId, async (value, message) => progress(24 + Math.round(value * 0.30), message || "Grok Imagine 공장", message), {
+        onEvent: async (event) => {
+          await record(event);
+          const artifacts = mergeLiveArtifacts(job.artifacts, event.artifacts);
+          job = await updateJob(jobId, {
+            stage: event.label || event.message || job.stage,
+            message: event.message || job.message,
+            artifacts,
+            live: {
+              stageId: event.stageId,
+              status: event.status,
+              shotIndex: event.shotIndex,
+              message: event.message,
+              prompt: event.prompt || event.animatePrompt || null,
+              frozen: Boolean(event.frozen)
+            }
+          });
+        }
+      });
       if (!grokImagineGeneration || grokImagineGeneration.status !== "completed" || grokImagineGeneration.runId !== runId) {
         throw new Error("Grok Imagine 공장 provenance가 현재 runId에 결속되지 않았습니다.");
       }

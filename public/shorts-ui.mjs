@@ -60,4 +60,12 @@ export function shortPreview(job = {}) {
   };
 }
 
+export function channelOneLiner(job = {}, editorial = null) {
+  const fact = Array.isArray(job.facts) ? job.facts.find(Boolean) : "";
+  if (fact) return String(fact).replace(/\s+/g, " ").trim();
+  if (job.live?.message) return job.live.message;
+  if (job.message && !["queued", "대기"].includes(job.status) && job.status !== "queued") return job.message;
+  return editorial?.titleFormula || "익숙한 대상 + 상식과 반대되는 사실";
+}
+
 export const DEFAULT_CREATE_PROVIDER = "grok-imagine";

@@ -15,13 +15,14 @@ import {
   runJob,
   updateJob
 } from "./pipeline.mjs";
-import { appendRunEvent, hashFile, readRunManifest, writeRunManifest } from "./run-ledger.mjs";
+import { appendRunEvent, hashFile, readRunEvents, readRunManifest, writeRunManifest } from "./run-ledger.mjs";
 import { geminiBrowserStatus, startGeminiBrowser } from "./gemini-browser.mjs";
 import { evaluateJob, runQualityLoop, saveCommitteeReview } from "./quality.mjs";
 import { ytDlpInfo } from "./yt-dlp.mjs";
 import { resolveGrokBinary } from "./grok-imagine-cli.mjs";
 import { inspectJobPrompts, previewFactoryPrompts, PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
 import { getLockedTemplate } from "./grok-imagine-template.mjs";
+import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -744,6 +745,61 @@ async function handleApi(request, url) {
     const jobId = decodeURIComponent(jobMatch[1]);
     const suffix = jobMatch[2] || "";
     if (!JOB_ID_PATTERN.test(jobId)) return errorResponse(new Error("잘못된 작업 ID입니다."), 400);
+    if (request.method === "GET" && (suffix === "events" || suffix === "live")) {
+      const current = await readJob(jobId);
+      const events = current.runId ? await readRunEvents(join(JOBS_DIR, jobId, "runs", current.runId)) : [];
+      const snapshot = {
+        job: liveJobView(current),
+        events,
+        timeline: reduceFactoryStages(events),
+        shots: reduceLiveShots(events, current.artifacts || []),
+        proofs: reduceLiveProofs(events, current.artifacts || [])
+      };
+      const wantsSse = suffix === "events" && (url.searchParams.has("sse") || String(request.headers.get("accept") || "").includes("text/event-stream"));
+      if (!wantsSse) return json(snapshot);
+      const encoder = new TextEncoder();
+      let closed = false;
+      const stream = new ReadableStream({
+        async start(controller) {
+          let cursor = 0;
+          let lastUpdated = "";
+          const send = (event, id) => {
+            try {
+              controller.enqueue(encoder.encode(encodeSse(event, id)));
+            } catch {
+              closed = true;
+            }
+          };
+          send({ type: "hello", jobId }, "hello");
+          while (!closed) {
+            const job = await readJob(jobId).catch(() => null);
+            if (!job) break;
+            const nextEvents = job.runId ? await readRunEvents(join(JOBS_DIR, jobId, "runs", job.runId)) : [];
+            if (job.runId) {
+              for (; cursor < nextEvents.length; cursor += 1) send(nextEvents[cursor], cursor + 1);
+            }
+            if (job.updatedAt !== lastUpdated) {
+              lastUpdated = job.updatedAt;
+              send({ type: "job", job: liveJobView(job), timeline: reduceFactoryStages(nextEvents), shots: reduceLiveShots(nextEvents, job.artifacts || []), proofs: reduceLiveProofs(nextEvents, job.artifacts || []) }, `job-${job.updatedAt}`);
+            }
+            if (["completed", "failed"].includes(job.status) && (cursor > 0 || job.progress >= 100 || job.status === "failed")) {
+              send({ type: "done", status: job.status }, "done");
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          }
+          try { controller.close(); } catch { /* already closed */ }
+        },
+        cancel() { closed = true; }
+      });
+      return new Response(stream, {
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-store",
+          connection: "keep-alive"
+        }
+      });
+    }
     if (request.method === "GET" && suffix === "prompts") {
       const current = await readJob(jobId);
       if (current.provider !== GROK_IMAGINE_PROVIDER) {

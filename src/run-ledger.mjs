@@ -23,6 +23,15 @@ export async function appendRunEvent(runDir, event) {
   return record;
 }
 
+export async function readRunEvents(runDir) {
+  try {
+    const text = await readFile(join(runDir, "events.jsonl"), "utf8");
+    return text.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
 export async function readRunManifest(runDir) {
   try {
     return JSON.parse(await readFile(join(runDir, "manifest.json"), "utf8"));

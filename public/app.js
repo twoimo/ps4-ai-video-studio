@@ -1,8 +1,8 @@
-import { formatClock, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail } from "./shorts-ui.mjs";
+import { channelOneLiner, formatClock, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail } from "./shorts-ui.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const state = { analysis: null, jobs: [], selectedJobId: null, highlightJobId: null, view: "grid", template: null, createPreview: null, jobPrompts: {}, page: 1, query: "", sort: "views", category: "", poll: null, qualityHistory: {}, qualityDetails: {} };
+const state = { analysis: null, jobs: [], selectedJobId: null, highlightJobId: null, view: "grid", template: null, createPreview: null, jobPrompts: {}, live: {}, sse: null, livePoll: null, page: 1, query: "", sort: "views", category: "", poll: null, qualityHistory: {}, qualityDetails: {} };
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -177,6 +177,32 @@ function renderBenchmark() {
   const bucketHeight = (index) => Math.max(8, Math.round(Number(buckets[index]?.count || 0) / Math.max(1, totalShorts) * 100));
   const range = duration?.recommendedRangeSec || [duration?.p10Sec || 0, duration?.p90Sec || 0];
   $("#duration-profile").innerHTML = duration ? `<div class="duration-profile-head"><span>RLM · yt-dlp DURATION PROFILE</span><b>${duration.recommendedTargetSec}s target</b></div><div class="duration-bars"><i style="height:${bucketHeight(0)}%"></i><i style="height:${bucketHeight(1)}%"></i><i style="height:${bucketHeight(2)}%"></i><i style="height:${bucketHeight(3)}%"></i></div><small>${duration.minSec}–${duration.maxSec}초 · 권장 범위 ${range[0]}–${range[1]}초 · p90 ${duration.p90Sec}초 · frame/audio/caption sample ${sampleCount}개 · RLM ${rlmLevels}</small>` : "";
+  renderChannelDna();
+}
+
+function renderChannelDna() {
+  const editorial = state.analysis?.editorialModel || {};
+  const promise = editorial.promise || "평범한 공간·시설에서 의외의 설계 원리를 발견하게 한다.";
+  const formula = editorial.titleFormula || "[익숙한 대상] + [상식과 반대되는 사실] + [이유/방법/숨은 구조]";
+  const hook = editorial.narrative?.[0]?.detail || "제목은 설명문보다 질문·반전. 사실마다 출처를 적습니다.";
+  if ($("#channel-promise")) $("#channel-promise").textContent = promise;
+  if ($("#channel-formula")) $("#channel-formula").textContent = formula;
+  if ($("#create-formula")) $("#create-formula").textContent = formula;
+  if ($("#create-promise")) $("#create-promise").textContent = `${promise} ${hook}`;
+  const weights = state.analysis?.ahp?.weights || AHP_CRITERIA;
+  if ($("#create-ahp")) {
+    $("#create-ahp").textContent = `AHP ${weights.map((item) => `${item.label} ${item.weight || item.targetWeight}%`).join(" · ")}`;
+  }
+  const hooks = Array.isArray(state.analysis?.hooks) ? state.analysis.hooks.slice(0, 3) : [];
+  const suggestions = document.querySelector(".suggestions");
+  if (suggestions && hooks.length) {
+    suggestions.innerHTML = hooks.map((item) => `<button type="button" data-topic="${escapeHtml(item.label)}">${escapeHtml(item.label)}</button>`).join("");
+    suggestions.querySelectorAll("[data-topic]").forEach((button) => button.addEventListener("click", () => {
+      $("#topic").value = button.dataset.topic;
+      $("#topic").focus();
+      void refreshCreatePreview();
+    }));
+  }
 }
 
 async function renderVideos() {
@@ -259,21 +285,44 @@ function createTileMarkup() {
   return `<button type="button" class="short-card short-create-tile" id="create-tile"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div><div class="short-card-body"><h3>새 쇼츠</h3><div class="short-card-meta"><span>Grok Imagine 공장</span><strong>—</strong></div></div></button>`;
 }
 
+function bust(url, token) {
+  if (!url) return "";
+  return `${url}${url.includes("?") ? "&" : "?"}t=${encodeURIComponent(token || "")}`;
+}
+
 function renderShortCard(job) {
   const status = shortStatus(job);
-  const thumb = shortThumbnail(job);
+  const thumb = bust(shortThumbnail(job), job.updatedAt);
   const duration = formatClock(shortDurationSeconds(job));
   const highlight = job.id === state.highlightJobId ? " just-created" : "";
   const selected = job.id === state.selectedJobId && state.view === "detail" ? " selected" : "";
   const progress = Number(job.progress || 0);
   const fallback = escapeHtml((job.topic || "P4").slice(0, 2));
+  const oneLiner = channelOneLiner(job, state.analysis?.editorialModel);
   const media = thumb
     ? `<img src="${escapeHtml(thumb)}" alt="" />`
     : `<div class="thumb-fallback" aria-hidden="true"><span>${fallback}</span></div>`;
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<button type="button" class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && state.view === "detail"}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3><div class="short-card-meta"><span>${escapeHtml(providerCopy(job.provider).short)}</span><strong>${status.key === "running" ? `${progress}%` : duration}</strong></div></div></button>`;
+  const liveLine = liveLineFor(job);
+  return `<button type="button" class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && state.view === "detail"}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3><p class="short-oneliner">${escapeHtml(oneLiner)}</p>${liveLine ? `<p class="short-card-live">${escapeHtml(liveLine)}</p>` : ""}</div></button>`;
+}
+
+function liveLineFor(job = {}) {
+  if (!["queued", "running", "verifying"].includes(job.status)) return "";
+  return job.live?.message || job.message || "생성중";
+}
+
+function upsertJob(partial) {
+  if (!partial?.id) return null;
+  const index = state.jobs.findIndex((item) => item.id === partial.id);
+  if (index >= 0) {
+    state.jobs[index] = { ...state.jobs[index], ...partial };
+    return state.jobs[index];
+  }
+  state.jobs.unshift(partial);
+  return state.jobs[0];
 }
 async function loadQualityEvidence(job) {
   if (!job?.runId || job.status !== "completed") return;
@@ -291,6 +340,53 @@ async function loadQualityEvidence(job) {
   if (state.selectedJobId === job.id) renderJobDetail(job);
 }
 
+function bindShortCard(button) {
+  button.addEventListener("click", () => {
+    state.selectedJobId = button.dataset.jobId;
+    setView("detail");
+    renderJobs();
+  });
+}
+
+function patchGridCard(job) {
+  if (!job?.id) return;
+  const grid = $("#shorts-grid");
+  if (!grid) return;
+  const card = grid.querySelector(`.short-card[data-job-id="${CSS.escape(job.id)}"]`);
+  if (!card) {
+    renderJobs();
+    return;
+  }
+  const next = document.createElement("template");
+  next.innerHTML = renderShortCard(job);
+  const fresh = next.content.firstElementChild;
+  card.replaceWith(fresh);
+  bindShortCard(fresh);
+}
+
+function patchDetailProgress(job) {
+  if (!job || state.selectedJobId !== job.id || state.view !== "detail") return;
+  const message = document.querySelector("#job-detail .detail-progress span");
+  const percent = document.querySelector("#job-detail .detail-progress b");
+  const bar = document.querySelector("#job-detail .progress-track i");
+  if (message) message.textContent = job.live?.message || job.message || "";
+  if (percent) percent.textContent = `${job.progress || 0}%`;
+  if (bar) bar.style.width = `${job.progress || 0}%`;
+  const still = document.querySelector("#job-detail .preview-still");
+  const next = bust(shortThumbnail(job), job.updatedAt);
+  if (still && next) still.src = next;
+  else if (!still && next && !document.querySelector("#job-detail video")) {
+    const wrap = document.querySelector("#job-detail .preview-wrap");
+    if (wrap) {
+      const img = document.createElement("img");
+      img.className = "preview-still";
+      img.alt = "훅 잠금";
+      img.src = next;
+      wrap.prepend(img);
+    }
+  }
+}
+
 function renderJobs() {
   const grid = $("#shorts-grid");
   const count = $("#shorts-count");
@@ -298,11 +394,7 @@ function renderJobs() {
   if (grid) {
     grid.innerHTML = `${createTileMarkup()}${state.jobs.map(renderShortCard).join("")}`;
     $("#create-tile")?.addEventListener("click", openCreate);
-    $$(".short-card[data-job-id]").forEach((button) => button.addEventListener("click", () => {
-      state.selectedJobId = button.dataset.jobId;
-      setView("detail");
-      renderJobs();
-    }));
+    $$(".short-card[data-job-id]").forEach(bindShortCard);
   }
   if (state.view === "detail") {
     const selected = state.jobs.find((job) => job.id === state.selectedJobId);
@@ -310,10 +402,13 @@ function renderJobs() {
       state.selectedJobId = null;
       setView("grid");
       renderPipeline(null);
+      renderLiveFactory(null);
       return;
     }
     renderJobDetail(selected);
     renderPipeline(selected);
+    renderLiveFactory(selected);
+    watchJobLive(selected);
     if (selected.status === "completed" && selected.runId) void loadQualityEvidence(selected);
     return;
   }
@@ -357,6 +452,164 @@ function renderPipeline(job) {
   });
   const statusNode = $("#pipeline-status");
   if (statusNode) statusNode.textContent = job ? `${copy.status} · ${statusLabel(job.status, job)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
+  const pipeline = $("#generation");
+  if (pipeline) pipeline.hidden = job?.provider === "grok-imagine";
+}
+
+function defaultFactoryStages() {
+  return [
+    ["plan", "기획/슬롯"],
+    ["hook-lock", "훅 스틸 잠금"],
+    ["image-edit", "샷별 image_edit"],
+    ["still-qa", "스틸 QA"],
+    ["animate", "10초 영상"],
+    ["clip-qa", "클립 QA 0.3/5/9.5"],
+    ["tts-mix", "TTS/믹스"],
+    ["captions", "대화 자막"],
+    ["compose", "fill 720×1280 합성"],
+    ["parts", "채팅 파트"]
+  ].map(([id, label]) => ({ id, label, status: "WAIT", message: "" }));
+}
+
+function renderLiveFactory(job) {
+  const root = $("#live-factory");
+  if (!root) return;
+  if (!job || job.provider !== "grok-imagine") {
+    root.hidden = true;
+    root.innerHTML = "";
+    return;
+  }
+  root.hidden = false;
+  const live = state.live[job.id] || {};
+  const timeline = live.timeline?.length ? live.timeline : defaultFactoryStages();
+  const shots = live.shots?.length ? live.shots : Array.from({ length: 7 }, (_, index) => ({ index: index + 1, status: "WAIT" }));
+  const proofs = live.proofs || [];
+  const current = job.live || {};
+  const currentPrompt = current.prompt || live.events?.slice().reverse().find((event) => event.prompt)?.prompt || "";
+  const stamp = job.updatedAt || Date.now();
+  const proofStrip = proofs.length
+    ? `<div class="live-proofs"><span class="panel-kicker">AUTO-EDIT PROOF</span><div>${proofs.map((frame) => `<img src="${escapeHtml(bust(frame.url, stamp))}" alt="${escapeHtml(frame.name)}" />`).join("")}</div></div>`
+    : "";
+  root.innerHTML = `<div class="panel-head"><div><span class="panel-kicker">LIVE FACTORY</span><h3>실시간 제작</h3></div><span class="live-badge">${escapeHtml(current.status || statusLabel(job.status, job))}</span></div><p class="live-now">${escapeHtml(current.message || job.message || "대기 중")}</p><div class="live-stages">${timeline.map((stage) => `<div class="live-stage ${escapeHtml((stage.status || "WAIT").toLowerCase())}"><span>${escapeHtml(stage.label)}</span><b>${escapeHtml(stage.status || "WAIT")}</b><small>${escapeHtml(stage.message || "")}</small></div>`).join("")}</div><div class="live-shot-grid">${shots.map((shot) => {
+    const src = bust(shot.stillUrl || shot.clipUrl, stamp);
+    return `<div class="live-shot ${escapeHtml((shot.status || "WAIT").toLowerCase())}"><div class="live-shot-thumb">${src ? `<img src="${escapeHtml(src)}" alt="" />` : `<span>${String(shot.index).padStart(2, "0")}</span>`}</div><small>${escapeHtml(shot.roleKo || shot.message || `${shot.index}번`)}</small></div>`;
+  }).join("")}</div>${proofStrip}${currentPrompt ? `<div class="live-prompt"><span class="panel-kicker">NOW FILLING</span><pre>${escapeHtml(currentPrompt)}</pre></div>` : `<p class="form-footnote">채워진 슬롯·샷 프롬프트가 단계가 시작되면 여기에 뜹니다.</p>`}`;
+}
+
+function applyLiveSnapshot(jobId, payload) {
+  if (!payload || !jobId) return;
+  const previous = state.live[jobId] || {};
+  state.live[jobId] = {
+    events: payload.events || previous.events || [],
+    timeline: payload.timeline || previous.timeline || [],
+    shots: payload.shots || previous.shots || [],
+    proofs: payload.proofs || previous.proofs || []
+  };
+  const job = upsertJob(payload.job || state.jobs.find((item) => item.id === jobId));
+  if (job && payload.job) {
+    job.artifacts = payload.job.artifacts || job.artifacts;
+    job.live = payload.job.live || job.live;
+    job.stage = payload.job.stage || job.stage;
+    job.message = payload.job.message || job.message;
+    job.progress = payload.job.progress ?? job.progress;
+    job.status = payload.job.status || job.status;
+    job.updatedAt = payload.job.updatedAt || job.updatedAt;
+  }
+  const selected = state.jobs.find((item) => item.id === jobId);
+  renderLiveFactory(selected);
+  patchDetailProgress(selected);
+  patchGridCard(selected);
+}
+
+function applyFactoryStage(jobId, event) {
+  if (!event) return;
+  const live = state.live[jobId] || { events: [], timeline: defaultFactoryStages(), shots: Array.from({ length: 7 }, (_, index) => ({ index: index + 1, status: "WAIT" })), proofs: [] };
+  live.events = [...(live.events || []), event];
+  live.timeline = (live.timeline?.length ? live.timeline : defaultFactoryStages()).map((stage) => (
+    stage.id === event.stageId
+      ? { ...stage, status: event.status || stage.status, message: event.message || stage.message, prompt: event.prompt || stage.prompt, frozen: Boolean(event.frozen) }
+      : stage
+  ));
+  if (event.shotIndex) {
+    live.shots = (live.shots?.length ? live.shots : Array.from({ length: 7 }, (_, index) => ({ index: index + 1, status: "WAIT" }))).map((shot) => {
+      if (shot.index !== event.shotIndex) return shot;
+      const still = event.artifacts?.find((item) => /\.png$/i.test(item.name || ""))?.url;
+      const clip = event.artifacts?.find((item) => /\.mp4$/i.test(item.name || ""))?.url;
+      return {
+        ...shot,
+        status: event.status || shot.status,
+        message: event.message || shot.message,
+        roleKo: event.roleKo || shot.roleKo,
+        prompt: event.prompt || shot.prompt,
+        stillUrl: still || shot.stillUrl,
+        clipUrl: clip || shot.clipUrl,
+        frozen: shot.frozen || Boolean(event.frozen)
+      };
+    });
+  }
+  const proofs = (event.artifacts || []).filter((item) => item.kind === "proof-frame" || /factory\/proof\//.test(item.name || ""));
+  if (proofs.length) live.proofs = [...(live.proofs || []).filter((item) => !proofs.some((next) => next.name === item.name)), ...proofs];
+  state.live[jobId] = live;
+  const job = upsertJob({
+    id: jobId,
+    live: { stageId: event.stageId, status: event.status, message: event.message, prompt: event.prompt || event.animatePrompt || null, frozen: Boolean(event.frozen), shotIndex: event.shotIndex },
+    message: event.message,
+    artifacts: [...(state.jobs.find((item) => item.id === jobId)?.artifacts || []), ...(event.artifacts || [])]
+  });
+  renderLiveFactory(job);
+  patchDetailProgress(job);
+  patchGridCard(job);
+}
+
+function watchJobLive(job) {
+  if (!job || job.provider !== "grok-imagine") return;
+  const active = ["queued", "running", "verifying"].includes(job.status);
+  if (!active) {
+    if (state.livePoll) { window.clearInterval(state.livePoll); state.livePoll = null; }
+    if (!state.live[job.id]?.timeline?.length) void loadLiveSnapshot(job.id);
+    return;
+  }
+  if (state.sse && state.sse.jobId === job.id) return;
+  if (state.sse) {
+    state.sse.close();
+    state.sse = null;
+  }
+  if (state.livePoll) { window.clearInterval(state.livePoll); state.livePoll = null; }
+  try {
+    const source = new EventSource(`/api/jobs/${encodeURIComponent(job.id)}/events?sse=1`);
+    source.jobId = job.id;
+    source.addEventListener("factory_stage", (event) => {
+      try { applyFactoryStage(job.id, JSON.parse(event.data)); } catch { void loadLiveSnapshot(job.id); }
+    });
+    source.addEventListener("job", (event) => {
+      try { applyLiveSnapshot(job.id, JSON.parse(event.data)); } catch { void loadLiveSnapshot(job.id); }
+    });
+    source.addEventListener("done", () => {
+      source.close();
+      if (state.sse === source) state.sse = null;
+      void loadLiveSnapshot(job.id);
+      void refreshJobs();
+    });
+    source.onerror = () => {
+      source.close();
+      if (state.sse === source) state.sse = null;
+      if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
+    };
+    state.sse = source;
+    void loadLiveSnapshot(job.id);
+  } catch {
+    if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
+    void loadLiveSnapshot(job.id);
+  }
+}
+
+async function loadLiveSnapshot(jobId) {
+  try {
+    const payload = await api(`/api/jobs/${encodeURIComponent(jobId)}/live`);
+    applyLiveSnapshot(jobId, payload);
+  } catch {
+    // Keep the last live frame if the snapshot is briefly unavailable.
+  }
 }
 
 function renderLockTable(locks = []) {
@@ -575,13 +828,36 @@ async function pollJobs() {
   }
 }
 
+function syncPollTimer() {
+  const active = state.jobs.some((job) => ["queued", "running", "verifying"].includes(job.status));
+  if (state.poll) { window.clearInterval(state.poll); state.poll = null; }
+  if (active) state.poll = window.setInterval(pollJobs, 900);
+}
+
 async function refreshJobs() {
   const payload = await api("/api/jobs");
-  state.jobs = payload.jobs;
-  renderJobs();
-  const active = state.jobs.some((job) => ["queued", "running", "verifying"].includes(job.status));
-  if (active && !state.poll) state.poll = window.setInterval(pollJobs, 1800);
-  if (!active && state.poll) { window.clearInterval(state.poll); state.poll = null; }
+  const previousIds = state.jobs.map((job) => job.id).join("\n");
+  const nextIds = payload.jobs.map((job) => job.id).join("\n");
+  const selectedId = state.selectedJobId;
+  const selectedLive = selectedId ? state.jobs.find((job) => job.id === selectedId) : null;
+  state.jobs = payload.jobs.map((job) => {
+    if (job.id === selectedId && selectedLive?.live && ["queued", "running", "verifying"].includes(job.status)) {
+      return { ...job, live: job.live || selectedLive.live, artifacts: job.artifacts?.length ? job.artifacts : selectedLive.artifacts };
+    }
+    return job;
+  });
+  const structural = previousIds !== nextIds || !document.querySelector("#create-tile");
+  if (structural) renderJobs();
+  else {
+    state.jobs.forEach(patchGridCard);
+    const selected = state.jobs.find((job) => job.id === selectedId);
+    if (state.view === "detail" && selected) {
+      patchDetailProgress(selected);
+      renderLiveFactory(selected);
+      watchJobLive(selected);
+    }
+  }
+  syncPollTimer();
 }
 
 async function createProduction(event) {
@@ -599,18 +875,25 @@ async function createProduction(event) {
     const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     state.selectedJobId = payload.job.id;
     state.highlightJobId = payload.job.id;
+    upsertJob(payload.job);
     window.setTimeout(() => {
       if (state.highlightJobId === payload.job.id) state.highlightJobId = null;
       const card = document.querySelector(`[data-job-id="${CSS.escape(payload.job.id)}"]`);
       card?.classList.remove("just-created");
     }, 4200);
-    setView("grid");
+    if (provider === "grok-imagine") {
+      setView("detail");
+      renderJobs();
+      watchJobLive(payload.job);
+    } else {
+      setView("grid");
+    }
     await refreshJobs();
-    $("#shorts")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (provider !== "grok-imagine") $("#shorts")?.scrollIntoView({ behavior: "smooth", block: "start" });
     const message = provider === "gemini-browser"
       ? "Gemini Chrome 자동 생성 작업을 시작했습니다."
       : provider === "grok-imagine"
-        ? "Grok Imagine 공장 작업을 시작했습니다. 공식 grok CLI OAuth가 있는 기기에서만 진행됩니다."
+        ? "Grok Imagine 공장 작업을 시작했습니다. 실시간 단계가 이 쇼츠에 표시됩니다."
       : provider === "local-video"
         ? "로컬 영상 모델 명령 어댑터 작업을 만들었습니다. 설정된 생성기 명령이 필요합니다."
         : "로컬 클립 편집 작업을 만들었습니다. 클립을 업로드하세요.";

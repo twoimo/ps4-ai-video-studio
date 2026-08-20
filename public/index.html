@@ -23,11 +23,16 @@
         <header class="topbar"><div class="breadcrumb">WORKSPACE <span>/</span> SHORTS LIBRARY</div><div class="top-actions"><button class="ghost-button" id="new-short" type="button">+ 새 쇼츠</button><button class="ghost-button" id="browser-start"><span class="button-dot"></span> Gemini Chrome 연결</button><button class="icon-button" id="refresh-all" aria-label="새로고침">↻</button></div></header>
         <div id="health-capabilities" class="health-strip panel" role="status" aria-live="polite" aria-label="서버 기능 상태"></div>
         <section class="section-block shorts-library" id="shorts">
+          <div class="channel-dna" id="channel-dna">
+            <p class="eyebrow">신비한 건축사전 · @신비한_건축사전_1</p>
+            <h2>Shorts</h2>
+            <p class="library-lead" id="channel-promise">평범한 공간·시설에서 의외의 설계 원리를 발견하게 한다.</p>
+            <p class="channel-formula" id="channel-formula">[익숙한 대상] + [상식과 반대되는 사실] + [이유/방법/숨은 구조]</p>
+          </div>
           <div class="section-heading">
             <div>
-              <p class="eyebrow">01 / SHORTS LIBRARY</p>
-              <h2>쇼츠</h2>
-              <p class="library-lead">Grok Imagine 공장으로 만든 9:16 공학 쇼츠가 여기에 쌓입니다. 카드를 누르면 훅 잠금·스틸·클립·마스터가 열립니다.</p>
+              <p class="eyebrow">01 / SHORTS</p>
+              <h2 class="sr-only">쇼츠 라이브러리</h2>
             </div>
             <div class="library-actions"><button type="button" class="ghost-button" id="open-template">프롬프트 템플릿</button><span class="section-note" id="shorts-count">0편</span></div>
           </div>
@@ -55,6 +60,11 @@
         <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-create">← 라이브러리</button><span class="live-badge">GROK IMAGINE</span></div>
         <form class="create-panel" id="create-form">
           <div class="panel-head"><div><span class="panel-kicker">EDITORIAL INPUT</span><h3 id="create-title">새 쇼츠</h3></div><span class="live-badge">● READY</span></div>
+          <div class="create-dna" id="create-dna">
+            <p class="channel-formula" id="create-formula">[익숙한 대상] + [상식과 반대되는 사실] + [이유/방법/숨은 구조]</p>
+            <small id="create-promise">제목은 설명문보다 질문·반전. 사실마다 출처를 적습니다.</small>
+            <p class="create-ahp" id="create-ahp"></p>
+          </div>
           <label class="field-label" for="topic">영상 주제</label>
           <div class="topic-input-wrap"><input id="topic" name="topic" placeholder="예: 오래된 도시 시설의 숨은 원리를 설명하는 이야기" required minlength="4" /><span class="input-hint">HOOK</span></div>
           <div class="suggestions" aria-label="독창적인 주제 예시"><button type="button" data-topic="비 오는 날 도시의 물은 어디로 사라질까">도시 물순환</button><button type="button" data-topic="엘리베이터가 멈출 때 안전장치는 어떻게 작동할까">생활 안전장치</button><button type="button" data-topic="낡은 다리가 수십 년을 버티는 구조적 이유">교량 구조</button></div>
@@ -100,9 +110,11 @@
     <div class="studio-overlay" id="short-overlay" hidden>
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel short-detail-panel" role="dialog" aria-modal="true" aria-labelledby="short-detail-title">
-        <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-short">← 라이브러리</button><span class="muted">PLAYER · HOOK LOCK · PARTS</span></div>
+          <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-short">← 라이브러리</button><span class="muted">LIVE · 훅 잠금 · 합성 · 파트</span></div>
         <div class="short-detail-layout">
           <aside class="job-detail panel" id="job-detail" aria-live="polite"><div class="empty-detail"><span>◌</span><p id="short-detail-title">쇼츠를 선택하면<br />플레이어와 산출물이 표시됩니다.</p></div></aside>
+          <div class="live-column">
+          <section class="panel live-factory" id="live-factory" aria-live="polite" hidden></section>
           <div class="panel pipeline-panel" id="generation">
             <div class="panel-head"><div><span class="panel-kicker">PIPELINE MONITOR</span><h3>제작 흐름</h3></div><span id="pipeline-status" class="muted" role="status" aria-live="polite">대기 중</span></div>
             <div class="pipeline-steps" id="pipeline-steps">
@@ -115,6 +127,7 @@
               <div class="pipeline-step" data-stage="완료"><span class="step-icon">✓</span><div><b>Delivery</b><small>MP4·SRT·스크립트·썸네일</small></div><span class="step-state">WAIT</span></div>
             </div>
             <div class="pipeline-footer"><span>OPEN SOURCE STACK</span><span>FFmpeg · official grok CLI · CDP</span></div>
+          </div>
           </div>
         </div>
       </div>

@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { FACTORY_HEIGHT, FACTORY_WIDTH, SHOT_DURATION_SEC } from "./grok-imagine-factory.mjs";
+import { factoryStageEvent, liveArtifact } from "./grok-imagine-live.mjs";
 
 export const FILL_SCALE_CROP = `scale=${FACTORY_WIDTH}:${FACTORY_HEIGHT}:force_original_aspect_ratio=increase,crop=${FACTORY_WIDTH}:${FACTORY_HEIGHT}`;
 export const ASS_ALIGNMENT = 2;
@@ -157,14 +158,32 @@ export async function freezeStillToClip(stillPath, outputPath, { durationSec = S
   return { path: outputPath, frozen: true, kenBurns: false };
 }
 
-export async function composeGrokImagine({ jobDir, script, clipPaths, spawnImpl = spawn } = {}) {
+async function extractProofFrame(input, output, spawnImpl = spawn) {
+  await mkdir(dirname(output), { recursive: true });
+  await runCommand("ffmpeg", ["-y", "-ss", "00:00:00.3", "-i", input, "-frames:v", "1", "-q:v", "2", output], spawnImpl);
+}
+
+function proofArtifact(jobId, name) {
+  return jobId ? [liveArtifact(jobId, name, "proof-frame")] : [];
+}
+
+export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = "", spawnImpl = spawn, onEvent = async () => {} } = {}) {
   if (!clipPaths?.length) throw new Error("합성할 공장 클립이 없습니다.");
+  const emit = onEvent;
   const vf = composeVideoFilter();
   assertNoSpecPills(vf);
   const normalizedDir = join(jobDir, "factory", "normalized");
+  const proofDir = join(jobDir, "factory", "proof");
   await mkdir(normalizedDir, { recursive: true });
+  await mkdir(proofDir, { recursive: true });
   const normalized = [];
   for (const [index, clipPath] of clipPaths.entries()) {
+    await emit(factoryStageEvent({
+      stageId: "compose",
+      status: "RUN",
+      shotIndex: index + 1,
+      message: `${index + 1}번 클립 fill 720×1280 정규화 중`
+    }));
     const output = join(normalizedDir, `${String(index + 1).padStart(2, "0")}.mp4`);
     await runCommand("ffmpeg", [
       "-y", "-i", clipPath,
@@ -181,7 +200,18 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, spawnImpl 
   const listPath = join(jobDir, "factory", "concat.txt");
   await writeFile(listPath, normalized.map((path) => `file '${path.replaceAll("'", "'\\''")}'`).join("\n"));
   const assembled = join(jobDir, "assembled.mp4");
+  await emit(factoryStageEvent({ stageId: "compose", status: "RUN", message: "하드 컷 concat 중" }));
   await runCommand("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", assembled], spawnImpl);
+  const concatFrame = join(proofDir, "concat.jpg");
+  try { await extractProofFrame(assembled, concatFrame, spawnImpl); } catch { /* proof frames are live UX only */ }
+  if (existsSync(concatFrame)) {
+    await emit(factoryStageEvent({
+      stageId: "compose",
+      status: "RUN",
+      message: "하드 컷 concat 증명 프레임",
+      artifacts: proofArtifact(jobId, "factory/proof/concat.jpg")
+    }));
+  }
 
   const cues = dialogueCuesFromScript(script);
   const assPath = join(jobDir, "captions.ass");
@@ -195,6 +225,7 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, spawnImpl 
 
   const master = join(jobDir, "master.mp4");
   const burn = composeVideoFilter({ burnAssPath: assPath });
+  await emit(factoryStageEvent({ stageId: "captions", status: "RUN", message: "대화 자막 번인 중 · MarginV=450" }));
   await runCommand("ffmpeg", [
     "-y", "-i", assembled,
     "-vf", burn,
@@ -202,6 +233,16 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, spawnImpl 
     "-c:a", "copy",
     master
   ], spawnImpl);
+  const captionFrame = join(proofDir, "captions.jpg");
+  try { await extractProofFrame(master, captionFrame, spawnImpl); } catch { /* proof frames are live UX only */ }
+  if (existsSync(captionFrame)) {
+    await emit(factoryStageEvent({
+      stageId: "captions",
+      status: "RUN",
+      message: "자막 번인 증명 프레임 · MarginV=450",
+      artifacts: proofArtifact(jobId, "factory/proof/captions.jpg")
+    }));
+  }
   const finalPath = join(jobDir, "final.mp4");
   const chatPath = join(jobDir, "chat.mp4");
   await runCommand("ffmpeg", ["-y", "-i", master, "-c", "copy", finalPath], spawnImpl);
@@ -211,6 +252,7 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, spawnImpl 
   const partsDir = join(jobDir, "parts");
   await mkdir(partsDir, { recursive: true });
   const parts = [];
+  await emit(factoryStageEvent({ stageId: "parts", status: "RUN", message: "채팅 파트 분할 중" }));
   for (const part of splitPartPlan(duration)) {
     const partPath = join(partsDir, part.name);
     await runCommand("ffmpeg", [
@@ -219,6 +261,16 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, spawnImpl 
       partPath
     ], spawnImpl);
     parts.push({ ...part, path: `parts/${part.name}` });
+    const partFrame = join(proofDir, `part-${String(part.index).padStart(2, "0")}.jpg`);
+    try { await extractProofFrame(partPath, partFrame, spawnImpl); } catch { /* proof frames are live UX only */ }
+    if (existsSync(partFrame)) {
+      await emit(factoryStageEvent({
+        stageId: "parts",
+        status: "RUN",
+        message: `${part.name} 분할 증명 프레임`,
+        artifacts: proofArtifact(jobId, `factory/proof/part-${String(part.index).padStart(2, "0")}.jpg`)
+      }));
+    }
   }
   const thumbnail = join(jobDir, "thumbnail.jpg");
   await runCommand("ffmpeg", ["-y", "-ss", "00:00:01", "-i", finalPath, "-frames:v", "1", "-q:v", "2", thumbnail], spawnImpl);

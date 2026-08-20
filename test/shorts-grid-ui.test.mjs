@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  channelOneLiner,
   DEFAULT_CREATE_PROVIDER,
   formatClock,
   shortDurationSeconds,
@@ -35,6 +36,14 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(shortDurationSeconds(job), 70);
   assert.equal(formatClock(70), "1:10");
   assert.deepEqual(shortPreview(job), { videoUrl: "/chat.mp4", poster: "/hook.png" });
+  assert.equal(
+    channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
+    "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
+  );
+  assert.equal(
+    channelOneLiner({ status: "queued" }, { titleFormula: "[익숙한 대상] + [상식과 반대되는 사실]" }),
+    "[익숙한 대상] + [상식과 반대되는 사실]"
+  );
 });
 
 test("studio HTML is a shorts grid first with factory default create", async () => {
@@ -51,6 +60,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(html.includes('id="jobs-list"'), false);
   assert.match(html, /id="create-tile"/);
   assert.match(html, /id="template-overlay"/);
+  assert.match(html, /id="live-factory"/);
+  assert.match(html, /id="channel-dna"/);
   assert.match(html, /href="#template"/);
   assert.match(html, /option value="grok-imagine" selected/);
   assert.match(html, /<details class="advanced-create"/);
