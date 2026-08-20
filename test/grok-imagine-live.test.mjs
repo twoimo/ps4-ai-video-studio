@@ -154,11 +154,10 @@ test("studio keeps shorts grid, live factory, and template viewer", async () => 
   assert.match(html, /id="shorts-grid"/);
   assert.match(html, /id="live-factory"/);
   assert.match(html, /id="template-overlay"/);
-  assert.match(html, /id="channel-dna"/);
-  assert.match(html, /신비한 건축사전/);
+  assert.equal(html.includes("id=\"channel-dna\""), false);
   assert.match(app, /EventSource\(`\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/events\?sse=1`\)/);
   assert.match(app, /setInterval\(pollJobs, 900\)/);
   assert.match(app, /setView\("detail"\)/);
-  assert.match(app, /renderChannelDna/);
-  assert.match(app, /NOW FILLING/);
+  assert.match(app, /currentStageText/);
+  assert.match(app, /live-now/);
 });

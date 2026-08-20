@@ -52,27 +52,49 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const home = html.slice(html.indexOf('id="shorts"'), html.indexOf('id="create-overlay"'));
   const shortsIndex = html.indexOf('id="shorts"');
   const gridIndex = html.indexOf('id="shorts-grid"');
   const createIndex = html.indexOf('id="create-overlay"');
-  const benchmarkIndex = html.indexOf('id="benchmark"');
   assert.ok(shortsIndex > 0 && gridIndex > shortsIndex);
   assert.ok(createIndex > gridIndex);
-  assert.ok(benchmarkIndex > gridIndex);
   assert.equal(html.includes('id="jobs-list"'), false);
   assert.match(html, /id="create-tile"/);
   assert.match(html, /id="template-overlay"/);
   assert.match(html, /id="live-factory"/);
   assert.match(html, /id="import-library"/);
-  assert.match(html, /id="channel-dna"/);
-  assert.match(html, /href="#template"/);
+  assert.match(html, /id="open-template"/);
   assert.match(html, /option value="grok-imagine" selected/);
   assert.match(html, /<details class="advanced-create"/);
-  assert.match(html, /고급 · Gemini · 로컬 업로드/);
+  assert.match(html, /<summary>고급<\/summary>/);
+  assert.equal((home.match(/새 쇼츠/g) || []).length, 1);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /grid-template-columns:\s*repeat\(2,/);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
+});
+
+test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const homeEnd = html.indexOf('id="create-overlay"');
+  const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
+  assert.match(home, /id="shorts-grid"/);
+  assert.match(home, /<h1>쇼츠<\/h1>/);
+  assert.match(home, /id="create-tile"/);
+  assert.equal(home.includes("class=\"sidebar\""), false);
+  assert.equal(home.includes("WORKSPACE"), false);
+  assert.equal(home.includes("id=\"health-capabilities\""), false);
+  assert.equal(home.includes("LOCAL CAPABILITIES"), false);
+  assert.equal(home.includes("Gemini Chrome"), false);
+  assert.equal(home.includes("id=\"benchmark\""), false);
+  assert.equal(home.includes("id=\"channel-dna\""), false);
+  assert.equal(home.includes("품질 심사 위원회"), false);
+  assert.equal(home.includes("AHP"), false);
+  assert.equal(home.includes("가져온 편"), false);
+  assert.equal(home.includes("workspace/imports"), false);
+  assert.equal(html.includes("EDITORIAL INPUT"), false);
+  assert.equal(html.includes("PIPELINE MONITOR"), false);
+  assert.equal(html.includes("id=\"generation\""), false);
 });
 
 test("grid cards skip 1x1 placeholder png and use real jpg", () => {
