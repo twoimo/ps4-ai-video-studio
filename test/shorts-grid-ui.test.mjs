@@ -104,7 +104,10 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   const homeEnd = html.indexOf('id="create-overlay"');
   const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
   assert.match(home, /id="shorts-grid"/);
-  assert.match(home, /<h1>쇼츠<\/h1>/);
+  assert.match(home, /<h1 class="sr-only">쇼츠<\/h1>/);
+  assert.equal(home.includes("<h1>쇼츠</h1>"), false);
+  assert.match(home, /id="library-more"/);
+  assert.match(home, /더보기/);
   assert.match(home, /id="create-tile"/);
   assert.equal(home.includes("class=\"sidebar\""), false);
   assert.equal(home.includes("WORKSPACE"), false);
