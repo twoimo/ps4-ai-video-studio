@@ -42,11 +42,17 @@ h1, h2, h3, p { margin-top: 0; }
 .library-menu button:hover { background: var(--surface-2); }
 
 .shorts-grid {
-  --col: clamp(150px, calc((100dvh - 72px) * 9 / 16), 420px);
+  --header: 52px;
+  --title: 44px;
+  --pad: 18px;
+  --gap: 8px;
+  --poster-h: calc(100dvh - var(--header) - var(--title) - var(--pad));
+  --col: min(calc(var(--poster-h) * 9 / 16), 100%);
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--col), 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--col)), var(--col)));
+  gap: var(--gap);
   align-content: start;
+  justify-content: start;
   width: 100%;
   min-height: 0;
 }
@@ -69,7 +75,7 @@ h1, h2, h3, p { margin-top: 0; }
 .short-duration { position: absolute; right: 8px; top: 8px; border-radius: 4px; padding: 4px 6px; background: rgba(8,10,15,.78); color: var(--text); font-size: 11px; }
 .thumb-progress { position: absolute; left: 8px; right: 8px; bottom: 8px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
 .thumb-progress i { display: block; height: 100%; background: var(--accent); }
-.short-card-body { padding: 6px 1px 0; }
+.short-card-body { padding: 6px 1px 0; min-height: var(--title); }
 .short-card-body h3 { font-size: 13px; line-height: 1.35; font-weight: 500; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .short-create-tile .create-thumb { display: grid; place-items: center; border-style: dashed; border-color: rgba(183,243,107,.28); background: rgba(183,243,107,.04); }
 .short-create-tile:hover .create-thumb { border-color: rgba(183,243,107,.55); background: rgba(183,243,107,.08); }
@@ -107,7 +113,7 @@ body.overlay-open { overflow: hidden; }
 .short-detail-panel, .template-overlay-panel, .create-overlay-panel { width: 100%; height: 100%; }
 .overlay-chrome { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; min-height: 36px; }
 .overlay-back { color: var(--text); }
-.create-panel { width: 100%; min-height: calc(100dvh - 52px); display: flex; flex-direction: column; }
+.create-panel { width: min(36rem, 100%); max-width: 36rem; margin: 0; min-height: calc(100dvh - 52px); display: flex; flex-direction: column; }
 .create-panel h2, .job-detail h2 { margin: 0 0 8px; font-size: 22px; letter-spacing: -.04em; }
 .create-panel #facts-field { flex: 1; display: flex; flex-direction: column; min-height: 36vh; }
 .create-panel #facts { flex: 1; min-height: 36vh; }

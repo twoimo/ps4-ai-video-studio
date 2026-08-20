@@ -70,7 +70,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /<summary>고급<\/summary>/);
   assert.equal((home.match(/새 쇼츠/g) || []).length, 1);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
-  assert.match(css, /repeat\(auto-fill,\s*minmax\(var\(--col\),\s*1fr\)\)/);
+  assert.match(css, /--poster-h:\s*calc\(100dvh - var\(--header\) - var\(--title\)/);
+  assert.match(css, /repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*var\(--col\)\)\)/);
+  assert.equal(css.includes("minmax(var(--col), 1fr)"), false);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
   assert.match(app, /status\.key === "draft" \? "—"/);
@@ -87,6 +89,8 @@ test("library and overlays fill the viewport instead of a phone column", async (
   assert.equal(css.includes("min(440px"), false);
   assert.equal(/\.library\s*\{[^}]*max-width:/.test(css), false);
   assert.match(css, /--player-h:\s*calc\(100dvh/);
+  assert.match(css, /\.create-panel\s*\{[^}]*max-width:\s*36rem/);
+  assert.match(css, /\.create-panel\s*\{[^}]*margin:\s*0/);
 });
 
 test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
