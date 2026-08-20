@@ -62,6 +62,7 @@ export async function ensureWorkspace() {
   await mkdir(join(WORKSPACE_DIR, "imports"), { recursive: true });
   await mkdir(join(WORKSPACE_DIR, "masters"), { recursive: true });
   await mkdir(join(WORKSPACE_DIR, "episodes"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "songs"), { recursive: true });
 }
 
 export async function readAnalysis() {
@@ -126,14 +127,17 @@ export async function createJob(input) {
     captions: factory ? true : input.captions !== false,
     voiceover: factory ? false : input.voiceover !== false,
     facts: normalizeFacts(input.facts),
+    scriptDraft: typeof input.scriptDraft === "string" ? input.scriptDraft : "",
     worldSlots: factory ? sanitizeWorldSlotOverrides(input.worldSlots) : {},
     sources,
     targetDurationSec: factory ? FACTORY_CLIP_COUNT * SHOT_DURATION_SEC : targetDurationSec,
     targetDurationRangeSec: benchmarkDuration.recommendedRangeSec || [benchmarkDuration.p10Sec || 43, benchmarkDuration.p90Sec || 104],
-    status: "queued",
-    stage: "대기",
+    status: input.draftOnly || input.startImagine === false ? "draft" : "queued",
+    stage: input.draftOnly || input.startImagine === false ? "초안" : "대기",
     progress: 0,
-    message: "제작 요청을 받았습니다.",
+    message: input.draftOnly || input.startImagine === false
+      ? "대본 초안만 저장했습니다. Imagine은 시작하지 않았습니다."
+      : "제작 요청을 받았습니다.",
     warnings: [],
     artifacts: [],
     createdAt: new Date().toISOString(),
@@ -142,6 +146,11 @@ export async function createJob(input) {
   const dir = join(JOBS_DIR, id);
   await mkdir(join(dir, "clips"), { recursive: true });
   await mkdir(join(dir, "normalized"), { recursive: true });
+  if (factory) {
+    const script = buildGrokImagineScript(job);
+    await writeJsonAtomic(join(dir, "script.json"), script);
+    job.artifacts = [{ name: "script.json", kind: "script", url: `/api/jobs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent("script.json")}` }];
+  }
   await writeJob(job);
   return job;
 }

@@ -99,3 +99,38 @@ export function channelOneLiner(job = {}, editorial = null) {
 }
 
 export const DEFAULT_CREATE_PROVIDER = "grok-imagine";
+
+export function downloadLabel(artifact = {}) {
+  const name = String(artifact.name || "");
+  if (/(?:^|\/)master\.mp4$/i.test(name)) return "마스터";
+  if (/(?:^|\/)chat\.mp4$/i.test(name)) return "채팅용";
+  if (/(?:^|\/)final\.mp4$/i.test(name)) return "최종";
+  if (/(?:^|\/)captions\.ass$/i.test(name)) return "자막 ASS";
+  if (/(?:^|\/)captions\.srt$/i.test(name)) return "자막 SRT";
+  const part = name.match(/part-(\d+)\.mp4$/i);
+  if (part) return `파트 ${Number(part[1])}`;
+  return name.split("/").pop() || name;
+}
+
+export function shortDownloads(job = {}) {
+  const artifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+  const seen = new Set();
+  const picks = [];
+  const take = (predicate) => {
+    for (const artifact of artifacts) {
+      if (!artifact?.url || seen.has(artifact.name)) continue;
+      if (!predicate(artifact)) continue;
+      seen.add(artifact.name);
+      picks.push({
+        ...artifact,
+        label: downloadLabel(artifact),
+        href: `${artifact.url}${artifact.url.includes("?") ? "&" : "?"}download=1`
+      });
+    }
+  };
+  take((artifact) => /(?:^|\/)master\.mp4$/i.test(artifact.name || ""));
+  take((artifact) => /(?:^|\/)chat\.mp4$/i.test(artifact.name || ""));
+  take((artifact) => /parts\/part-\d+\.mp4$/i.test(artifact.name || "") || artifact.kind === "part");
+  take((artifact) => /(?:^|\/)captions\.ass$/i.test(artifact.name || ""));
+  return picks;
+}

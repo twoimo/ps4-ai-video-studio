@@ -1,4 +1,4 @@
-import { formatClock, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail } from "./shorts-ui.mjs";
+import { formatClock, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail } from "./shorts-ui.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -31,23 +31,27 @@ function showToast(message, type = "") {
 }
 
 function setView(view, options = {}) {
-  state.view = ["create", "detail", "template"].includes(view) ? view : "grid";
+  state.view = ["create", "detail", "template", "settings"].includes(view) ? view : "grid";
   const createOverlay = $("#create-overlay");
   const shortOverlay = $("#short-overlay");
   const templateOverlay = $("#template-overlay");
+  const settingsOverlay = $("#settings-overlay");
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
+  if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   document.body.classList.toggle("overlay-open", state.view !== "grid");
   if (!options.skipHash) {
-    const nextHash = state.view === "create" ? "#create" : state.view === "detail" ? "#short" : state.view === "template" ? "#template" : "#shorts";
+    const nextHash = state.view === "create" ? "#create" : state.view === "detail" ? "#short" : state.view === "template" ? "#template" : state.view === "settings" ? "#settings" : "#shorts";
     if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
   }
   if (state.view === "create") {
     window.requestAnimationFrame(() => $("#topic")?.focus());
     void hydrateCreateSlots();
+    void hydrateStudioSettings();
   }
   if (state.view === "template") void loadTemplateSurface();
+  if (state.view === "settings") void hydrateStudioSettings();
 }
 
 function applyHash() {
@@ -58,6 +62,10 @@ function applyHash() {
   }
   if (hash === "template") {
     setView("template", { skipHash: true });
+    return;
+  }
+  if (hash === "settings") {
+    setView("settings", { skipHash: true });
     return;
   }
   if (hash === "short" || hash === "generation" || hash === "rendering") {
@@ -432,9 +440,9 @@ function renderJobDetail(job) {
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status)
     ? `<div class="upload-box"><label for="detail-upload"><span>클립을 올리세요</span><small>MP4, MOV, WebM</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local" type="button">업로드한 클립으로 편집</button></div>`
     : "";
-  const artifacts = (job.artifacts || []).filter((artifact) => artifact.url && /\.(mp4|ass|srt)$/i.test(artifact.name || "")).map((artifact) => `<a class="artifact-link" href="${escapeHtml(artifact.url)}" target="_blank" rel="noreferrer">${escapeHtml(artifact.name)}<b>↗</b></a>`).join("");
+  const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list">${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}<p class="download-note">업로드는 나중에</p></div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
@@ -514,7 +522,8 @@ async function createProduction(event) {
   const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
   const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
   const worldSlots = collectWorldSlots();
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
+  const scriptDraft = $("#script-draft")?.value.trim() || "";
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
   if (provider === "gemini-browser" || provider === "grok-imagine") body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;
@@ -603,6 +612,130 @@ function openTemplate(event) {
   setView("template");
 }
 
+function openSettings(event) {
+  event?.preventDefault();
+  $("#library-more")?.removeAttribute("open");
+  setView("settings");
+}
+
+function applySettingsToForm(settings) {
+  const chirp = Boolean(settings?.chirpAvailable);
+  ["settings-chirp-option", "create-chirp-option"].forEach((id) => {
+    const option = document.getElementById(id);
+    if (option) option.hidden = !chirp;
+  });
+  const provider = settings?.ttsProvider === "chirp" && chirp ? "chirp" : "edge";
+  if ($("#settings-tts-provider")) $("#settings-tts-provider").value = provider;
+  if ($("#create-tts-provider")) $("#create-tts-provider").value = provider;
+  if (settings?.ttsVoice) {
+    if ($("#settings-tts-voice")) $("#settings-tts-voice").value = settings.ttsVoice;
+    if ($("#create-tts-voice")) $("#create-tts-voice").value = settings.ttsVoice;
+  }
+  if ($("#settings-bgm-enabled")) $("#settings-bgm-enabled").checked = settings?.bgmEnabled === true;
+  if ($("#settings-bgm-volume")) $("#settings-bgm-volume").value = String(settings?.bgmVolume ?? 0.08);
+  if ($("#settings-ffmpeg")) $("#settings-ffmpeg").value = settings?.ffmpegPath || "";
+  syncToggleLabels();
+}
+
+async function hydrateStudioSettings() {
+  try {
+    const payload = await api("/api/settings");
+    state.settings = payload.settings;
+    applySettingsToForm(payload.settings);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function saveSettings(event) {
+  event?.preventDefault();
+  try {
+    const payload = await api("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ttsProvider: $("#settings-tts-provider")?.value,
+        ttsVoice: $("#settings-tts-voice")?.value,
+        bgmEnabled: $("#settings-bgm-enabled")?.checked === true,
+        bgmVolume: Number($("#settings-bgm-volume")?.value || 0),
+        ffmpegPath: $("#settings-ffmpeg")?.value || ""
+      })
+    });
+    state.settings = payload.settings;
+    applySettingsToForm(payload.settings);
+    showToast("설정을 저장했습니다.");
+    setView("grid");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function previewVoice(buttonId, audioId, providerId, voiceId) {
+  const button = $(buttonId);
+  if (button) button.disabled = true;
+  try {
+    const text = $("#script-draft")?.value.trim() || $("#topic")?.value.trim() || "이렇게 설계된 겁니다.";
+    const response = await fetch("/api/tts/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        text,
+        provider: $(providerId)?.value || "edge",
+        voice: $(voiceId)?.value
+      })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || "미리 듣기에 실패했습니다.");
+    }
+    const blob = await response.blob();
+    const audio = $(audioId);
+    if (audio) {
+      audio.src = URL.createObjectURL(blob);
+      audio.hidden = false;
+      await audio.play().catch(() => {});
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function draftScriptFromTopic() {
+  const button = $("#draft-script");
+  const errorBox = $("#script-draft-error");
+  const area = $("#script-draft");
+  const label = $("#script-draft-label");
+  if (button) button.disabled = true;
+  if (errorBox) {
+    errorBox.hidden = true;
+    errorBox.textContent = "";
+  }
+  try {
+    const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+    const payload = await api("/api/script/draft", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ topic: $("#topic")?.value, facts })
+    });
+    if (area) {
+      area.hidden = false;
+      area.value = payload.draft;
+    }
+    if (label) label.hidden = false;
+    showToast("대본 초안을 넣었습니다.");
+  } catch (error) {
+    if (errorBox) {
+      errorBox.hidden = false;
+      errorBox.textContent = error.message;
+    }
+    showToast(error.message, "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function importLibrary(event) {
   event?.preventDefault();
   $("#library-more")?.removeAttribute("open");
@@ -641,10 +774,17 @@ function bindEvents() {
   $("#browser-start")?.addEventListener("click", connectBrowser);
   $("#create-tile")?.addEventListener("click", openCreate);
   $("#open-template")?.addEventListener("click", openTemplate);
+  $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);
   $("#close-short")?.addEventListener("click", closeOverlays);
   $("#close-template")?.addEventListener("click", closeOverlays);
+  $("#close-settings")?.addEventListener("click", closeOverlays);
+  $("#settings-form")?.addEventListener("submit", saveSettings);
+  $("#draft-script")?.addEventListener("click", () => { void draftScriptFromTopic(); });
+  $("#preview-voice")?.addEventListener("click", () => { void previewVoice("#preview-voice", "#voice-preview-audio", "#create-tts-provider", "#create-tts-voice"); });
+  $("#settings-preview-voice")?.addEventListener("click", () => { void previewVoice("#settings-preview-voice", "#settings-preview-audio", "#settings-tts-provider", "#settings-tts-voice"); });
+  $("#settings-bgm-enabled")?.addEventListener("change", syncToggleLabels);
   $("#topic")?.addEventListener("input", () => {
     window.clearTimeout(state.previewTimer);
     state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);

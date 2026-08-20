@@ -4,6 +4,9 @@ import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { FACTORY_HEIGHT, FACTORY_WIDTH, SHOT_DURATION_SEC, numberizeCaptionText } from "./grok-imagine-factory.mjs";
 import { factoryStageEvent, liveArtifact } from "./grok-imagine-live.mjs";
+import { pickBgmFile, shouldMixBgm } from "./studio-bgm.mjs";
+import { defaultStudioSettings } from "./studio-settings.mjs";
+import { narrationTextFromScript, synthesizeStudioTts, ttsTimingFromWords, writeTtsSidecar } from "./studio-tts.mjs";
 
 export const FILL_SCALE_CROP = `scale=${FACTORY_WIDTH}:${FACTORY_HEIGHT}:force_original_aspect_ratio=increase,crop=${FACTORY_WIDTH}:${FACTORY_HEIGHT}`;
 export const ASS_ALIGNMENT = 2;
@@ -290,15 +293,40 @@ export function chatSafeEncodeArgs(output) {
   return args;
 }
 
-function commandPath(command) {
+export function voiceBgmMixFilter({ bgm = false, bgmVolume = 0.08 } = {}) {
+  const volume = Math.min(1, Math.max(0, Number(bgmVolume) || 0));
+  const filterComplex = !bgm || volume <= 0
+    ? "[1:a]aresample=44100,aformat=channel_layouts=stereo[aout]"
+    : `[1:a]aresample=44100,aformat=channel_layouts=stereo,volume=1[vo];[2:a]aresample=44100,aformat=channel_layouts=stereo,volume=${volume},aloop=loop=-1:size=2e+09[bg];[vo][bg]amix=inputs=2:duration=first:dropout_transition=0[aout]`;
+  assertNoSpecPills(filterComplex);
+  if (/drawtext|drawbox/i.test(filterComplex)) throw new Error("BGM 믹스에 drawtext/drawbox를 쓰지 않습니다.");
+  return {
+    filterComplex,
+    mapAudio: "[aout]",
+    extraInputs: bgm && volume > 0 ? 1 : 0
+  };
+}
+
+export function mixAudioArgs({ video, voice, bgm = null, bgmVolume = 0.08, output }) {
+  const mix = voiceBgmMixFilter({ bgm: Boolean(bgm), bgmVolume });
+  const args = ["-y", "-i", video, "-i", voice];
+  if (mix.extraInputs && bgm) args.push("-i", bgm);
+  args.push("-filter_complex", mix.filterComplex, "-map", "0:v:0", "-map", mix.mapAudio);
+  assertNoSpecPills(args.join(" "));
+  args.push(output);
+  return args;
+}
+
+function commandPath(command, settings = {}) {
+  if (command === "ffmpeg" && settings.ffmpegPath && existsSync(settings.ffmpegPath)) return settings.ffmpegPath;
   const override = command === "ffmpeg" ? process.env.FFMPEG_BINARY : command === "ffprobe" ? process.env.FFPROBE_BINARY : null;
   if (override && existsSync(override)) return override;
   if (typeof globalThis.Bun?.which === "function") return globalThis.Bun.which(command);
   return command;
 }
 
-async function runCommand(command, args, spawnImpl = spawn) {
-  const binary = commandPath(command);
+async function runCommand(command, args, spawnImpl = spawn, settings = {}) {
+  const binary = commandPath(command, settings);
   if (!binary) throw new Error(`${command} 명령을 찾을 수 없습니다.`);
   return new Promise((resolve, reject) => {
     const child = spawnImpl(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -339,9 +367,20 @@ function proofArtifact(jobId, name) {
   return jobId ? [liveArtifact(jobId, name, "proof-frame")] : [];
 }
 
-export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = "", spawnImpl = spawn, onEvent = async () => {} } = {}) {
+export async function composeGrokImagine({
+  jobDir,
+  script,
+  clipPaths,
+  jobId = "",
+  spawnImpl = spawn,
+  onEvent = async () => {},
+  settings = defaultStudioSettings(),
+  synthesizeTts = synthesizeStudioTts,
+  resolveBgm = pickBgmFile
+} = {}) {
   if (!clipPaths?.length) throw new Error("합성할 공장 클립이 없습니다.");
   const emit = onEvent;
+  const ff = (args) => runCommand("ffmpeg", args, spawnImpl, settings);
   const vf = composeVideoFilter();
   assertNoSpecPills(vf);
   const normalizedDir = join(jobDir, "factory", "normalized");
@@ -357,7 +396,7 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
       message: `${index + 1}번 클립 fill 720×1280 정규화 중`
     }));
     const output = join(normalizedDir, `${String(index + 1).padStart(2, "0")}.mp4`);
-    await runCommand("ffmpeg", [
+    await ff([
       "-y", "-i", clipPath,
       "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
       "-vf", `${vf},fps=30`,
@@ -366,14 +405,14 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
       ...CHAT_SAFE_ACODEC,
       "-shortest",
       output
-    ], spawnImpl);
+    ]);
     normalized.push(output);
   }
   const listPath = join(jobDir, "factory", "concat.txt");
   await writeFile(listPath, normalized.map((path) => `file '${path.replaceAll("'", "'\\''")}'`).join("\n"));
   const assembled = join(jobDir, "assembled.mp4");
   await emit(factoryStageEvent({ stageId: "compose", status: "RUN", message: "하드 컷 concat 중" }));
-  await runCommand("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", assembled], spawnImpl);
+  await ff(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", assembled]);
   const concatFrame = join(proofDir, "concat.jpg");
   try { await extractProofFrame(assembled, concatFrame, spawnImpl); } catch { /* proof frames are live UX only */ }
   if (existsSync(concatFrame)) {
@@ -383,6 +422,37 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
       message: "하드 컷 concat 증명 프레임",
       artifacts: proofArtifact(jobId, "factory/proof/concat.jpg")
     }));
+  }
+
+  let voiced = assembled;
+  const narration = narrationTextFromScript(script);
+  if (narration && typeof synthesizeTts === "function") {
+    await emit(factoryStageEvent({ stageId: "tts-mix", status: "RUN", message: "Edge TTS 나레이션 중" }));
+    let tts;
+    try {
+      tts = await synthesizeTts(narration, { voice: settings.ttsVoice, provider: settings.ttsProvider });
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Gemini로 대체하지 않습니다.`);
+    }
+    const sidecar = await writeTtsSidecar(jobDir, tts);
+    const timingSidecar = sidecar.timing?.wordTimestamps?.length ? sidecar.timing : ttsTimingFromWords(tts.words || tts.wordTimestamps || []);
+    await writeFile(join(jobDir, "word-timestamps.json"), JSON.stringify(timingSidecar, null, 2));
+    const bgmPath = shouldMixBgm(settings) ? await resolveBgm({ settings, preferred: settings.bgmFile }) : null;
+    const mixed = join(jobDir, "voiced.mp4");
+    const mix = voiceBgmMixFilter({ bgm: Boolean(bgmPath), bgmVolume: settings.bgmVolume });
+    const mixArgs = ["-y", "-i", assembled, "-i", sidecar.audioPath];
+    if (mix.extraInputs && bgmPath) mixArgs.push("-i", bgmPath);
+    mixArgs.push("-filter_complex", mix.filterComplex, "-map", "0:v:0", "-map", mix.mapAudio, ...CHAT_SAFE_VCODEC, ...CHAT_SAFE_ACODEC, mixed);
+    assertNoSpecPills(mixArgs.join(" "));
+    await ff(mixArgs);
+    voiced = mixed;
+    await writeFile(join(jobDir, "mix.json"), JSON.stringify({
+      schemaVersion: 1,
+      ...timingSidecar,
+      bgm: Boolean(bgmPath),
+      bgmVolume: bgmPath ? settings.bgmVolume : 0,
+      filter: voiceBgmMixFilter({ bgm: Boolean(bgmPath), bgmVolume: settings.bgmVolume }).filterComplex
+    }, null, 2));
   }
 
   const timing = await loadCaptionTiming(script, jobDir);
@@ -396,6 +466,7 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
     source: built.source,
     alignment: built.pauseTimed ? CAPTION_TIMING_PAUSE : CAPTION_TIMING_FALLBACK,
     estimated: !built.pauseTimed,
+    marginV: ASS_MARGIN_V,
     cues
   }, null, 2));
   await writeFile(assPath, buildAssDocument(cues));
@@ -408,13 +479,13 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
   const master = join(jobDir, "master.mp4");
   const burn = composeVideoFilter({ burnAssPath: assPath });
   await emit(factoryStageEvent({ stageId: "captions", status: "RUN", message: "대화 자막 번인 중 · MarginV=450" }));
-  await runCommand("ffmpeg", [
-    "-y", "-i", assembled,
+  await ff([
+    "-y", "-i", voiced,
     "-vf", burn,
     ...CHAT_SAFE_VCODEC,
     "-c:a", "copy",
     master
-  ], spawnImpl);
+  ]);
   const captionFrame = join(proofDir, "captions.jpg");
   try { await extractProofFrame(master, captionFrame, spawnImpl); } catch { /* proof frames are live UX only */ }
   if (existsSync(captionFrame)) {
@@ -427,8 +498,8 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
   }
   const finalPath = join(jobDir, "final.mp4");
   const chatPath = join(jobDir, "chat.mp4");
-  await runCommand("ffmpeg", ["-y", "-i", master, "-c", "copy", finalPath], spawnImpl);
-  await runCommand("ffmpeg", ["-y", "-i", master, "-c", "copy", chatPath], spawnImpl);
+  await ff(["-y", "-i", master, "-c", "copy", finalPath]);
+  await ff(["-y", "-i", master, "-c", "copy", chatPath]);
 
   const duration = cues.at(-1)?.end || clipPaths.length * SHOT_DURATION_SEC;
   const partsDir = join(jobDir, "parts");
@@ -437,11 +508,11 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
   await emit(factoryStageEvent({ stageId: "parts", status: "RUN", message: "채팅 파트 분할 중" }));
   for (const part of splitPartPlan(duration)) {
     const partPath = join(partsDir, part.name);
-    await runCommand("ffmpeg", [
+    await ff([
       "-y", "-ss", String(part.start), "-i", chatPath, "-t", String(part.duration),
       "-c", "copy",
       partPath
-    ], spawnImpl);
+    ]);
     parts.push({ ...part, path: `parts/${part.name}` });
     const partFrame = join(proofDir, `part-${String(part.index).padStart(2, "0")}.jpg`);
     try { await extractProofFrame(partPath, partFrame, spawnImpl); } catch { /* proof frames are live UX only */ }
@@ -455,13 +526,14 @@ export async function composeGrokImagine({ jobDir, script, clipPaths, jobId = ""
     }
   }
   const thumbnail = join(jobDir, "thumbnail.jpg");
-  await runCommand("ffmpeg", ["-y", "-ss", "00:00:01", "-i", finalPath, "-frames:v", "1", "-q:v", "2", thumbnail], spawnImpl);
+  await ff(["-y", "-ss", "00:00:01", "-i", finalPath, "-frames:v", "1", "-q:v", "2", thumbnail]);
   return {
     master: "master.mp4",
     chat: "chat.mp4",
     final: "final.mp4",
     captionsAss: "captions.ass",
     captionsSrt: "captions.srt",
+    voiceover: existsSync(join(jobDir, "voiceover.mp3")) ? "voiceover.mp3" : null,
     parts,
     duration,
     vf: FILL_SCALE_CROP,

@@ -8,6 +8,7 @@ import {
   formatClock,
   isPlaceholderThumbnail,
   shortDurationSeconds,
+  shortDownloads,
   shortPreview,
   shortStatus,
   shortStatusLabel,
@@ -65,6 +66,11 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /id="live-factory"/);
   assert.match(html, /id="import-library"/);
   assert.match(html, /id="open-template"/);
+  assert.match(html, /id="open-settings"/);
+  assert.match(html, /대본 만들기/);
+  assert.match(html, /id="settings-overlay"/);
+  assert.match(html, /목소리 미리 듣기/);
+  assert.equal(html.includes("완벽"), false);
   assert.match(html, /option value="grok-imagine" selected/);
   assert.match(html, /<details class="advanced-create"/);
   assert.match(html, /<summary>고급<\/summary>/);
@@ -114,6 +120,20 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(html.includes("EDITORIAL INPUT"), false);
   assert.equal(html.includes("PIPELINE MONITOR"), false);
   assert.equal(html.includes("id=\"generation\""), false);
+  assert.equal(home.includes("id=\"health-capabilities\""), false);
+});
+
+test("completed short lists master chat parts and ASS downloads", () => {
+  const downloads = shortDownloads({
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/a/artifacts/master.mp4" },
+      { name: "chat.mp4", kind: "chat-video", url: "/api/jobs/a/artifacts/chat.mp4" },
+      { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-01.mp4" },
+      { name: "captions.ass", kind: "captions-ass", url: "/api/jobs/a/artifacts/captions.ass" }
+    ]
+  });
+  assert.deepEqual(downloads.map((item) => item.label), ["마스터", "채팅용", "파트 1", "자막 ASS"]);
+  assert.ok(downloads.every((item) => item.href.includes("download=1")));
 });
 
 test("grid cards skip 1x1 placeholder png and use real jpg", () => {

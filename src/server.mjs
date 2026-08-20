@@ -25,6 +25,11 @@ import { getLockedTemplate } from "./grok-imagine-template.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
 import { compareLibraryJobs, ensureLibraryEpisodes } from "./episode-import.mjs";
+import { studioDocsHtml, studioOpenApi } from "./openapi.mjs";
+import { draftScriptFromTopic } from "./studio-script.mjs";
+import { EDGE_VOICES, chirpConfigured, readStudioSettings, settingsPublicView, writeStudioSettings } from "./studio-settings.mjs";
+import { synthesizeStudioTts } from "./studio-tts.mjs";
+import { ensureSongDirectories, listBgmFiles } from "./studio-bgm.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -232,7 +237,9 @@ function contentType(path) {
     ".ass": "text/plain; charset=utf-8",
     ".json": "application/json; charset=utf-8",
     ".srt": "text/plain; charset=utf-8",
-    ".vtt": "text/vtt; charset=utf-8"
+    ".vtt": "text/vtt; charset=utf-8",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav"
   }[ext] || "application/octet-stream";
 }
 
@@ -726,6 +733,55 @@ async function health() {
 
 async function handleApi(request, url) {
   const path = url.pathname;
+  if ((path === "/api/openapi.json" || path === "/api/docs.json") && request.method === "GET") return json(studioOpenApi());
+  if (path === "/api/docs" && request.method === "GET") {
+    return new Response(studioDocsHtml(), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+  }
+  if (path === "/api/settings" && request.method === "GET") {
+    await ensureSongDirectories();
+    return json({ settings: settingsPublicView(await readStudioSettings()), songs: await listBgmFiles() });
+  }
+  if (path === "/api/settings" && request.method === "PUT") {
+    try {
+      const body = await readJson(request);
+      const settings = await writeStudioSettings(body);
+      return json({ settings: settingsPublicView(settings) });
+    } catch (error) {
+      return errorResponse(error, 400);
+    }
+  }
+  if (path === "/api/tts/voices" && request.method === "GET") {
+    return json({ voices: EDGE_VOICES, chirpAvailable: chirpConfigured(), defaultProvider: "edge" });
+  }
+  if (path === "/api/tts/preview" && request.method === "POST") {
+    try {
+      const body = await readJson(request);
+      const settings = await readStudioSettings();
+      const text = String(body.text || "").trim() || "이렇게 설계된 겁니다.";
+      const result = await synthesizeStudioTts(text, {
+        voice: body.voice || settings.ttsVoice,
+        provider: body.provider || settings.ttsProvider
+      });
+      return new Response(result.audio, {
+        headers: {
+          "content-type": result.mime || "audio/mpeg",
+          "cache-control": "no-store",
+          "x-tts-provider": result.provider || "edge",
+          "x-tts-voice": result.voice || settings.ttsVoice
+        }
+      });
+    } catch (error) {
+      return errorResponse(error, 400);
+    }
+  }
+  if (path === "/api/script/draft" && request.method === "POST") {
+    try {
+      const body = await readJson(request);
+      return json(await draftScriptFromTopic({ topic: body.topic, facts: body.facts }));
+    } catch (error) {
+      return errorResponse(error, 400);
+    }
+  }
   if (path === "/api/health" && request.method === "GET") return json(await health());
   if (path === "/api/gemini/monitor" && request.method === "GET") return json(await readOptionalJson(join(ROOT, "workspace", "gemini-monitor.json")) || { schemaVersion: 2, status: "not-running", profiles: [] });
   if (path === "/api/channel" && request.method === "GET") return json(await readAnalysis());
@@ -781,7 +837,8 @@ async function handleApi(request, url) {
       const body = await readJson(request);
       if (!body.topic || String(body.topic).trim().length < 4) throw new Error("영상 주제를 4자 이상 입력하세요.");
       const created = await createJob(body);
-      if (created.provider === "gemini-browser" || created.provider === GROK_IMAGINE_PROVIDER) {
+      const skipImagine = body.draftOnly === true || body.startImagine === false || created.status === "draft";
+      if (!skipImagine && (created.provider === "gemini-browser" || created.provider === GROK_IMAGINE_PROVIDER)) {
         await startJob(created.id);
       } else if (body.autoStart === true) {
         if (created.provider === "local-video") {
@@ -1066,7 +1123,9 @@ async function handleApi(request, url) {
       const file = Bun.file(artifact);
       if (!(await file.exists())) return errorResponse(new Error("파일을 찾지 못했습니다."), 404);
       const headers = { "content-type": contentType(artifact), "cache-control": "no-store" };
-      if (filename === "final.mp4") headers["content-disposition"] = `inline; filename="${filename}"`;
+      const downloadName = basename(filename);
+      if (url.searchParams.get("download") === "1") headers["content-disposition"] = `attachment; filename="${downloadName}"`;
+      else if (filename === "final.mp4") headers["content-disposition"] = `inline; filename="${downloadName}"`;
       return new Response(file, { headers });
     }
   }

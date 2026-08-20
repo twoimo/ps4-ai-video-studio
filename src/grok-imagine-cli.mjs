@@ -97,6 +97,26 @@ export async function withGrokLock(task) {
   return run;
 }
 
+export function extractGrokText(stdout = "") {
+  const text = String(stdout || "").trim();
+  if (!text) return "";
+  const lines = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of [...lines].reverse()) {
+    try {
+      const payload = JSON.parse(line);
+      const candidate = payload.message || payload.text || payload.content || payload.result || payload.output;
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+      if (candidate && typeof candidate === "object") {
+        const nested = candidate.text || candidate.content || candidate.message;
+        if (typeof nested === "string" && nested.trim()) return nested.trim();
+      }
+    } catch {
+      // Keep scanning JSON lines from the official grok CLI.
+    }
+  }
+  return text;
+}
+
 export async function runGrokImagine(options = {}) {
   const {
     prompt,
@@ -114,6 +134,18 @@ export async function runGrokImagine(options = {}) {
   const args = grokImagineArgs({ prompt, cwd, tools });
   assertSafeGrokInvocation({ binary, args, env });
   return withGrokLock(() => spawnGrok({ binary, args, env, cwd, timeoutMs, spawnImpl }));
+}
+
+export async function runGrokText(options = {}) {
+  const prompt = String(options.prompt || "");
+  if (/Use ONLY the (image_gen|image_edit|image_to_video) tool/i.test(prompt)) {
+    throw new Error("텍스트 대본에는 Imagine 도구를 쓰지 않습니다. Gemini로 대체하지 않습니다.");
+  }
+  return runGrokImagine({
+    ...options,
+    tools: [],
+    timeoutMs: options.timeoutMs || 90_000
+  });
 }
 
 function spawnGrok({ binary, args, env, cwd, timeoutMs, spawnImpl }) {

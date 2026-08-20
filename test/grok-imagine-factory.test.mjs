@@ -299,6 +299,16 @@ test("createJob persists grok-imagine factory fields", async () => {
   await rm(join(process.cwd(), "workspace", "jobs", job.id), { recursive: true, force: true });
 });
 
+test("script draft narration keeps sourced SI and the closer", () => {
+  const script = buildGrokImagineScript({
+    topic: "안방 옆 작은 방은 창고가 아닙니다",
+    facts: ["대피공간은 세대마다 2㎡입니다"],
+    scriptDraft: `대피공간은 세대마다 2㎡입니다\n${"이렇게 설계된 겁니다."}`
+  });
+  assert.equal(script.segments.at(-1).caption.includes("이렇게 설계된 겁니다."), true);
+  assert.deepEqual(inventedSiIn(script.segments.map((segment) => segment.caption).join("\n"), script.legalQuantities), []);
+});
+
 test("mocked factory retries emptier then freezes without Ken Burns", async () => {
   const root = await mkdtemp(join(tmpdir(), "ps4-grok-"));
   const jobDir = join(root, "job");

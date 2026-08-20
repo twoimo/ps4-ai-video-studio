@@ -6,6 +6,8 @@ import {
   sanitizeWorldSlotOverrides
 } from "./grok-imagine-template.mjs";
 
+export const SCRIPT_CLOSER = "이렇게 설계된 겁니다.";
+
 export const PROVIDER_ID = "grok-imagine";
 export const PROVIDER_POLICY = "official-grok-cli-imagine-factory-no-fallback";
 export const FACTORY_CLIP_COUNT = 7;
@@ -209,6 +211,33 @@ function sourceIdsFor(sources) {
   return (sources || []).map((source) => typeof source === "string" ? source : source.url).filter(Boolean);
 }
 
+export function splitScriptDraftLines(draft = "") {
+  return String(draft || "")
+    .replace(/\r/g, "")
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-*•\d.)\s]+/, "").trim())
+    .filter(Boolean);
+}
+
+export function applyNarrationDraft(segments = [], draft = "", legalQuantities = []) {
+  if (!String(draft || "").trim()) return segments;
+  const text = String(draft).replace(/\s+/g, " ").trim();
+  if (!String(draft).includes(SCRIPT_CLOSER)) {
+    throw new Error(`대본은 「${SCRIPT_CLOSER}」로 끝나야 합니다.`);
+  }
+  const inventedDraft = inventedSiIn(text, legalQuantities);
+  if (inventedDraft.length) throw new Error(`대본에 출처에 없는 SI가 있습니다: ${inventedDraft.join(", ")}`);
+  const lines = splitScriptDraftLines(draft);
+  return segments.map((segment, index) => {
+    let line = lines[index] || segment.narration || segment.caption || "";
+    if (index === segments.length - 1 && !lines[index]) line = SCRIPT_CLOSER;
+    const invented = inventedSiIn(line, legalQuantities);
+    if (invented.length) throw new Error(`대본에 출처에 없는 SI가 있습니다: ${invented.join(", ")}`);
+    const caption = numberizeCaptionText(line, legalQuantities);
+    return { ...segment, narration: caption, caption };
+  });
+}
+
 export function dialogueForShot(shot, legalQuantities) {
   const source = shot.hold ? shot.fact || shot.label : shot.fact || shot.label;
   const raw = String(source || "").replace(/\s+/g, " ").trim();
@@ -290,14 +319,16 @@ export function buildGrokImagineScript(job) {
       worldSlots
     };
   });
-  const invented = inventedSiIn(segments.map((segment) => `${segment.visualPrompt} ${segment.caption}`).join("\n"), legalQuantities);
+  const narrated = job.scriptDraft ? applyNarrationDraft(segments, job.scriptDraft, legalQuantities) : segments;
+  const invented = inventedSiIn(narrated.map((segment) => `${segment.visualPrompt} ${segment.caption}`).join("\n"), legalQuantities);
   if (invented.length) {
     throw new Error(`슬롯·샷 목록에 출처에 없는 SI가 들어 있습니다: ${invented.join(", ")}`);
   }
   return {
     title: job.topic,
-    hook: segments[0]?.narration || job.topic,
-    narration: segments.map((segment) => segment.narration).join(" "),
+    hook: narrated[0]?.narration || job.topic,
+    narration: narrated.map((segment) => segment.narration).join(" "),
+    scriptDraft: job.scriptDraft || "",
     sources,
     facts,
     legalQuantities,
@@ -312,7 +343,7 @@ export function buildGrokImagineScript(job) {
     uniqueCount: FACTORY_UNIQUE_COUNT,
     holdCount: 1,
     targetDurationSec: FACTORY_CLIP_COUNT * SHOT_DURATION_SEC,
-    segments
+    segments: narrated
   };
 }
 

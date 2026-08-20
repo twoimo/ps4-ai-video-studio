@@ -16,6 +16,7 @@
           <div class="library-menu">
             <button type="button" id="import-library">이미 만든 편 가져오기</button>
             <button type="button" id="open-template">프롬프트 템플릿</button>
+            <button type="button" id="open-settings">설정</button>
             <button type="button" id="refresh-all">새로고침</button>
           </div>
         </details>
@@ -40,6 +41,12 @@
             <label class="field-label" for="facts">출처에 적힌 사실 <span class="muted">(줄바꿈으로 구분 · 없는 숫자는 만들지 않음)</span></label>
             <textarea id="facts" rows="4" placeholder="출처에서 확인한 사실만 적습니다.&#10;예: 지붕 면적 2만 m²"></textarea>
           </div>
+          <div class="script-draft-row">
+            <button class="secondary-button" id="draft-script" type="button">대본 만들기</button>
+            <p id="script-draft-error" class="form-footnote" hidden></p>
+          </div>
+          <label class="field-label" for="script-draft" hidden id="script-draft-label">대본 초안</label>
+          <textarea id="script-draft" rows="5" hidden placeholder="이렇게 설계된 겁니다."></textarea>
           <button class="primary-button" type="submit"><span>시작</span></button>
           <details class="advanced-create" id="advanced-create">
             <summary>고급</summary>
@@ -80,7 +87,52 @@
               <label class="toggle-label"><input id="captions" type="checkbox" checked /><span class="toggle"></span><span>한국어 자막 <b class="toggle-state" data-toggle-state="captions">켜짐</b></span></label>
               <label class="toggle-label"><input id="voiceover" type="checkbox" /><span class="toggle"></span><span>macOS 음성 <b class="toggle-state" data-toggle-state="voiceover">꺼짐</b></span></label>
             </div>
+            <label class="field-label" for="create-tts-voice">나레이션 목소리</label>
+            <div class="form-row">
+              <select id="create-tts-provider">
+                <option value="edge" selected>Edge TTS · 무료</option>
+                <option value="chirp" id="create-chirp-option" hidden>Google Chirp</option>
+              </select>
+              <select id="create-tts-voice">
+                <option value="ko-KR-SunHiNeural">선희 · 여성</option>
+                <option value="ko-KR-InJoonNeural">인준 · 남성</option>
+                <option value="ko-KR-HyunsuMultilingualNeural">현수 · 남성</option>
+              </select>
+            </div>
+            <button class="ghost-button" id="preview-voice" type="button">목소리 미리 듣기</button>
+            <audio id="voice-preview-audio" hidden controls></audio>
           </details>
+        </form>
+      </div>
+    </div>
+
+    <div class="studio-overlay" id="settings-overlay" hidden>
+      <div class="overlay-backdrop" data-close-view="grid"></div>
+      <div class="overlay-panel settings-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-settings">← 라이브러리</button></div>
+        <form class="create-panel" id="settings-form">
+          <h2 id="settings-title">설정</h2>
+          <label class="field-label" for="settings-tts-provider">나레이션</label>
+          <select id="settings-tts-provider">
+            <option value="edge" selected>Edge TTS · 무료</option>
+            <option value="chirp" id="settings-chirp-option" hidden>Google Chirp</option>
+          </select>
+          <label class="field-label" for="settings-tts-voice">목소리</label>
+          <select id="settings-tts-voice">
+            <option value="ko-KR-SunHiNeural">선희 · 여성</option>
+            <option value="ko-KR-InJoonNeural">인준 · 남성</option>
+            <option value="ko-KR-HyunsuMultilingualNeural">현수 · 남성</option>
+          </select>
+          <button class="ghost-button" id="settings-preview-voice" type="button">목소리 미리 듣기</button>
+          <audio id="settings-preview-audio" hidden controls></audio>
+          <label class="toggle-label settings-bgm"><input id="settings-bgm-enabled" type="checkbox" /><span class="toggle"></span><span>배경 음악 <b class="toggle-state" data-toggle-state="settings-bgm-enabled">꺼짐</b></span></label>
+          <label class="field-label" for="settings-bgm-volume">배경 음량</label>
+          <input id="settings-bgm-volume" type="range" min="0" max="0.4" step="0.01" value="0.08" />
+          <p class="form-footnote">resource/songs 또는 workspace/songs에 오디오를 넣습니다. 없으면 나레이션만 씁니다.</p>
+          <label class="field-label" for="settings-ffmpeg">ffmpeg 경로</label>
+          <input id="settings-ffmpeg" type="text" placeholder="비우면 PATH" />
+          <p class="form-footnote">업로드는 나중에</p>
+          <button class="primary-button" type="submit"><span>저장</span></button>
         </form>
       </div>
     </div>

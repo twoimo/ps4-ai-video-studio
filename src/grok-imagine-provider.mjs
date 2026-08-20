@@ -17,6 +17,7 @@ import { buildImaginePrompt, resolveGrokBinary, runGrokImagine } from "./grok-im
 import { composeGrokImagine, freezeStillToClip } from "./grok-imagine-compose.mjs";
 import { hashFile, writeJsonAtomic } from "./run-ledger.mjs";
 import { factoryStageEvent, liveArtifact, SHOT_ROLE_KO } from "./grok-imagine-live.mjs";
+import { readStudioSettings } from "./studio-settings.mjs";
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -191,21 +192,25 @@ export async function generateGrokImagineFactory(job, script, runId, onProgress 
   }
 
   await emit(factoryStageEvent({ stageId: "tts-mix", status: "RUN", message: "TTS/믹스 중" }));
-  await emit(factoryStageEvent({
-    stageId: "tts-mix",
-    status: "PASS",
-    message: "공장 경로는 내레이션 없이 무음 믹스만 합니다. 대화 자막으로 갑니다."
-  }));
   await emit(factoryStageEvent({ stageId: "captions", status: "RUN", message: "대화 자막 작성 중 · MarginV=450" }));
   await emit(factoryStageEvent({ stageId: "compose", status: "RUN", message: "fill 720×1280 합성 중" }));
+  const settings = deps.settings || await readStudioSettings();
   const composeArgs = {
     jobDir,
     script,
     clipPaths: clips.map((clip) => join(inputClipsDir, clip.output.replace(/^clips\//, ""))),
     jobId: job.id,
-    onEvent: emit
+    onEvent: emit,
+    settings,
+    synthesizeTts: deps.synthesizeTts,
+    resolveBgm: deps.resolveBgm
   };
   const composed = deps.compose ? await deps.compose(composeArgs) : await composeGrokImagine(composeArgs);
+  await emit(factoryStageEvent({
+    stageId: "tts-mix",
+    status: "PASS",
+    message: composed?.voiceover ? "Edge TTS 나레이션과 BGM 침대를 섞었습니다." : "TTS 타임스탬프로 대화 자막을 맞춥니다."
+  }));
   const composeArtifacts = [
     composed?.master ? liveArtifact(job.id, composed.master, "master-video") : null,
     composed?.chat ? liveArtifact(job.id, composed.chat, "chat-video") : null,
