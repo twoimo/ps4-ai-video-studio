@@ -118,7 +118,7 @@ export async function decodeTtsSocketData(data) {
   const header = headerEnd >= 0 ? raw.subarray(0, headerEnd).toString("utf8") : "";
   const body = headerEnd >= 0 ? raw.subarray(headerEnd + 4) : raw;
   if (/Path:audio\.metadata/i.test(header)) {
-    try { return { metadata: JSON.parse(body.toString("utf8")); } } catch { return { metadata: null }; }
+    try { return { metadata: JSON.parse(body.toString("utf8")) }; } catch { return { metadata: null }; }
   }
   if (/Path:turn\.end/i.test(header) || /Path:turn\.end/i.test(raw.toString("utf8"))) return { turnEnd: true };
   if (/Path:audio/i.test(header)) return { audio: body };
