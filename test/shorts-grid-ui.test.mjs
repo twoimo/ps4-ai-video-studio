@@ -24,6 +24,7 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(shortStatus({ status: "running" }).label, "생성중");
   assert.equal(shortStatus({ status: "verifying" }).label, "생성중");
   assert.equal(shortStatus({ status: "completed" }).label, "완료");
+  assert.equal(shortStatus({ status: "draft", duration: 50 }).label, "초안");
   assert.equal(shortStatus({ status: "failed" }).label, "실패·프리즈");
   assert.equal(shortStatus({ status: "completed", warnings: ["3번 클립을 고정했습니다"] }).label, "실패·프리즈");
   assert.equal(shortStatus({ status: "completed", clips: [{ frozen: true }] }).key, "frozen");
@@ -72,6 +73,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /repeat\(auto-fill,\s*minmax\(var\(--col\),\s*1fr\)\)/);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
+  assert.match(app, /status\.key === "draft" \? "—"/);
 });
 
 test("library and overlays fill the viewport instead of a phone column", async () => {

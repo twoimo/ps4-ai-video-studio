@@ -85,10 +85,22 @@ export async function discoverEpisodeDrop(slug, roots = []) {
   return found;
 }
 
-export function seedJobRecord(episode, { hasMaster = false } = {}) {
+export function compareLibraryJobs(left = {}, right = {}) {
+  const leftIndex = Number(left.libraryIndex);
+  const rightIndex = Number(right.libraryIndex);
+  const leftSeed = Number.isFinite(leftIndex);
+  const rightSeed = Number.isFinite(rightIndex);
+  if (leftSeed && rightSeed) return leftIndex - rightIndex;
+  if (leftSeed) return 1;
+  if (rightSeed) return -1;
+  return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+}
+
+export function seedJobRecord(episode, { hasMaster = false, libraryIndex } = {}) {
   const id = episodeJobId(episode);
   const now = new Date().toISOString();
-  const artifacts = [artifact(id, "thumbnail.png", "thumbnail", PLACEHOLDER_THUMB)];
+  const draft = Boolean(episode.draft) && !hasMaster;
+  const artifacts = draft ? [] : [artifact(id, "thumbnail.png", "thumbnail", PLACEHOLDER_THUMB)];
   if (hasMaster) {
     artifacts.unshift(
       artifact(id, "master.mp4", "master-video"),
@@ -101,6 +113,7 @@ export function seedJobRecord(episode, { hasMaster = false } = {}) {
     slug: episode.slug,
     topic: episode.topic,
     facts: episode.facts || [],
+    referenceTitle: episode.referenceTitle || episode.topic,
     format: "vertical",
     provider: GROK_IMAGINE_PROVIDER,
     clipCount: 7,
@@ -108,17 +121,23 @@ export function seedJobRecord(episode, { hasMaster = false } = {}) {
     voiceover: false,
     worldSlots: {},
     sources: [],
-    targetDurationSec: episode.duration || 70,
-    duration: episode.duration || 70,
-    status: "completed",
-    stage: "완료",
-    progress: 100,
-    message: hasMaster ? "가져온 마스터를 라이브러리에 올렸습니다." : "시드 카드 · 마스터를 workspace/imports에 두면 이 칸에 붙습니다.",
+    targetDurationSec: episode.duration || (draft ? 50 : 70),
+    duration: episode.duration || (draft ? 50 : 70),
+    status: draft ? "draft" : "completed",
+    stage: draft ? "초안" : "완료",
+    progress: draft ? 0 : 100,
+    message: hasMaster
+      ? "가져온 마스터를 라이브러리에 올렸습니다."
+      : draft
+        ? "대본만 있는 초안입니다."
+        : "시드 카드 · 마스터를 workspace/imports에 두면 이 칸에 붙습니다.",
     warnings: [],
     artifacts,
     seed: true,
+    draft,
     imported: hasMaster,
     origin: hasMaster ? "import" : "seed",
+    libraryIndex: libraryIndex ?? episode.libraryIndex,
     createdAt: now,
     updatedAt: now
   };
@@ -199,28 +218,45 @@ export async function ensureLibraryEpisodes({
   const seeded = [];
   const imported = [];
   const jobs = [];
+  (catalog.episodes || []).forEach((episode, index) => {
+    episode.libraryIndex = index + 1;
+  });
   for (const episode of catalog.episodes || []) {
     const drop = await discoverEpisodeDrop(episode.slug, roots);
     let job = findJobForSlug(existing, episode.slug);
     let dirty = false;
+    const draft = Boolean(episode.draft) && !drop.master;
     if (!job) {
-      job = seedJobRecord(episode, { hasMaster: Boolean(drop.master) });
+      job = seedJobRecord(episode, { hasMaster: Boolean(drop.master), libraryIndex: episode.libraryIndex });
       const jobDir = join(jobsDir, job.id);
       await mkdir(jobDir, { recursive: true });
-      await writePlaceholderThumbnail(jobDir);
+      if (!draft) await writePlaceholderThumbnail(jobDir);
       seeded.push(job.id);
       dirty = true;
     }
-    if (drop.master || drop.thumbnail) {
+    if (drop.master || (drop.thumbnail && !episode.draft)) {
       const hadMasterFile = existsSync(join(jobsDir, job.id, "master.mp4"));
       job = await attachDropFiles(job, drop, jobsDir);
       if (drop.master && !hadMasterFile) imported.push(job.id);
       dirty = true;
-    } else if (!existsSync(join(jobsDir, job.id, "thumbnail.png")) && !existsSync(join(jobsDir, job.id, "thumbnail.jpg"))) {
+    } else if (!draft && !existsSync(join(jobsDir, job.id, "thumbnail.png")) && !existsSync(join(jobsDir, job.id, "thumbnail.jpg"))) {
       await writePlaceholderThumbnail(join(jobsDir, job.id));
       dirty = true;
     }
+    if (job.libraryIndex !== episode.libraryIndex || job.topic !== episode.topic) dirty = true;
     job.slug = episode.slug;
+    job.topic = episode.topic;
+    job.facts = episode.facts || job.facts || [];
+    job.referenceTitle = episode.referenceTitle || episode.topic;
+    job.libraryIndex = episode.libraryIndex;
+    if (draft && !job.imported && job.status !== "completed") {
+      job.status = "draft";
+      job.stage = "초안";
+      job.draft = true;
+      job.duration = episode.duration || 50;
+      job.targetDurationSec = episode.duration || 50;
+      job.artifacts = (job.artifacts || []).filter((item) => !isPlaceholderThumb(item));
+    }
     if (dirty) {
       if (jobsDir === JOBS_DIR) await write(job);
       else await writeJobTo(jobsDir, job);
@@ -228,6 +264,10 @@ export async function ensureLibraryEpisodes({
     jobs.push(job);
   }
   return { jobs, seeded, imported, catalog };
+}
+
+function isPlaceholderThumb(item = {}) {
+  return item.placeholder === true || item.name === "thumbnail.png" && (item.width === 1 || item.bytes <= 90);
 }
 
 async function listJobsFrom(jobsDir) {

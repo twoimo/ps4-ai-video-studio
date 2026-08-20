@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import {
+  compareLibraryJobs,
   discoverEpisodeDrop,
   ensureLibraryEpisodes,
   findJobForSlug,
@@ -15,9 +16,24 @@ import {
 import { createGrokFactoryQueue } from "../src/grok-factory-queue.mjs";
 import { shortStatus, shortThumbnail } from "../public/shorts-ui.mjs";
 
+const DRAFT_SLUGS = [
+  "balcony-refuge",
+  "floor-slab",
+  "daylight-gap",
+  "parking-stall",
+  "parking-height",
+  "fire-truck-road",
+  "indoor-hydrant",
+  "emergency-elevator",
+  "fire-compartment",
+  "lightning-rod",
+  "access-ramp"
+];
+
 test("seed catalog names playground-cistern and refuge-floor", async () => {
   const catalog = await loadSeedCatalog();
-  assert.deepEqual(catalog.episodes.map((item) => item.slug), ["playground-cistern", "refuge-floor"]);
+  assert.deepEqual(catalog.episodes.map((item) => item.slug), ["playground-cistern", "refuge-floor", ...DRAFT_SLUGS]);
+  assert.equal(catalog.episodes.length, 13);
   assert.match(catalog.episodes[0].topic, /놀이터/);
   assert.match(catalog.episodes[1].topic, /중간층|피난|아파트/);
   assert.equal(seedJobRecord(catalog.episodes[0]).id, "seed-playground-cistern");
@@ -28,6 +44,35 @@ test("seed catalog names playground-cistern and refuge-floor", async () => {
   assert.equal(seedJobRecord(catalog.episodes[1]).provider, "grok-imagine");
   assert.ok(matchesEpisodeSlug("playground-cistern.mp4", "playground-cistern"));
   assert.ok(matchesEpisodeSlug("refuge-floor", "refuge-floor"));
+});
+
+test("episodes 3-13 seed as script-only drafts", async () => {
+  const catalog = await loadSeedCatalog();
+  const drafts = catalog.episodes.slice(2);
+  assert.equal(drafts.length, 11);
+  assert.deepEqual(drafts.map((item) => item.slug), DRAFT_SLUGS);
+  assert.equal(drafts[0].id, "seed-balcony-refuge");
+  assert.equal(drafts[0].topic, "안방 옆 작은 방은 창고가 아닙니다");
+  assert.deepEqual(drafts[0].facts, ["대피공간은 세대마다 2㎡입니다", "공용 대피공간은 3㎡입니다", "계단이 하나인 4층부터 생깁니다"]);
+  for (const episode of drafts) {
+    assert.equal(episode.draft, true);
+    assert.equal(episode.duration, 50);
+    assert.equal(episode.referenceTitle, episode.topic);
+    const job = seedJobRecord(episode, { libraryIndex: 3 });
+    assert.equal(job.status, "draft");
+    assert.equal(job.stage, "초안");
+    assert.equal(job.imported, false);
+    assert.equal(job.duration, 50);
+    assert.equal(job.artifacts.length, 0);
+    assert.equal(shortStatus(job).label, "초안");
+    assert.equal(shortThumbnail(job), "");
+  }
+  const ordered = [
+    { id: "new", createdAt: "2026-08-21T00:00:00.000Z" },
+    { id: "seed-access-ramp", libraryIndex: 13, createdAt: "2026-08-22T00:00:00.000Z" },
+    { id: "seed-playground-cistern", libraryIndex: 1, createdAt: "2026-08-22T00:00:00.000Z" }
+  ].sort(compareLibraryJobs);
+  assert.deepEqual(ordered.map((item) => item.id), ["new", "seed-playground-cistern", "seed-access-ramp"]);
 });
 
 test("empty library gets seed cards; dropped masters attach once", async () => {
@@ -43,13 +88,21 @@ test("empty library gets seed cards; dropped masters attach once", async () => {
     workspaceDir: root,
     extraRoots: [drops]
   });
-  assert.deepEqual(first.jobs.map((job) => job.slug).sort(), ["playground-cistern", "refuge-floor"]);
+  assert.deepEqual(first.jobs.map((job) => job.slug), ["playground-cistern", "refuge-floor", ...DRAFT_SLUGS]);
   assert.ok(first.seeded.includes("seed-playground-cistern"));
   assert.ok(first.imported.includes("seed-playground-cistern"));
   assert.ok(first.imported.includes("seed-refuge-floor"));
   assert.equal(findJobForSlug(first.jobs, "playground-cistern").imported, true);
+  assert.equal(findJobForSlug(first.jobs, "playground-cistern").status, "completed");
   assert.ok(existsSync(join(jobsDir, "seed-playground-cistern", "master.mp4")));
   assert.equal(await readFile(join(jobsDir, "seed-refuge-floor", "final.mp4"), "utf8"), "refuge-master");
+  const draft = findJobForSlug(first.jobs, "balcony-refuge");
+  assert.equal(draft.status, "draft");
+  assert.equal(draft.imported, false);
+  assert.equal(shortStatus(draft).label, "초안");
+  assert.equal(shortThumbnail(draft), "");
+  assert.equal(existsSync(join(jobsDir, "seed-balcony-refuge", "thumbnail.png")), false);
+  assert.equal(first.imported.includes("seed-balcony-refuge"), false);
 
   const second = await ensureLibraryEpisodes({
     root,
@@ -58,7 +111,7 @@ test("empty library gets seed cards; dropped masters attach once", async () => {
     extraRoots: [drops]
   });
   assert.equal(second.seeded.length, 0);
-  assert.equal(second.jobs.length, 2);
+  assert.equal(second.jobs.length, 13);
   const drop = await discoverEpisodeDrop("playground-cistern", [drops]);
   assert.match(drop.master, /master\.mp4$/);
   await rm(root, { recursive: true, force: true });
@@ -144,4 +197,5 @@ test("studio keeps import control and seed episode copy", async () => {
   assert.equal(html.includes("workspace/imports"), false);
   assert.match(app, /\/api\/library\/import/);
   assert.match(app, /queuePosition/);
+  assert.match(app, /libraryIndex/);
 });

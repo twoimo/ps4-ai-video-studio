@@ -24,7 +24,7 @@ import { inspectJobPrompts, previewFactoryPrompts, PROVIDER_ID as GROK_IMAGINE_P
 import { getLockedTemplate } from "./grok-imagine-template.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
-import { ensureLibraryEpisodes } from "./episode-import.mjs";
+import { compareLibraryJobs, ensureLibraryEpisodes } from "./episode-import.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -765,14 +765,14 @@ async function handleApi(request, url) {
     const result = await ensureLibraryEpisodes();
     return json({
       ...result,
-      jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())),
+      jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())).sort(compareLibraryJobs),
       factoryQueue: grokQueue.snapshot()
     });
   }
   if (path === "/api/jobs" && request.method === "GET") {
     await ensureLibraryEpisodes();
     return json({
-      jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())),
+      jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())).sort(compareLibraryJobs),
       factoryQueue: grokQueue.snapshot()
     });
   }

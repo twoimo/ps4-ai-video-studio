@@ -81,7 +81,7 @@ function bust(url, token) {
 function renderShortCard(job) {
   const status = shortStatus(job);
   const thumb = bust(shortThumbnail(job), job.updatedAt);
-  const duration = formatClock(shortDurationSeconds(job));
+  const duration = status.key === "draft" ? "—" : formatClock(shortDurationSeconds(job));
   const highlight = job.id === state.highlightJobId ? " just-created" : "";
   const selected = job.id === state.selectedJobId && state.view === "detail" ? " selected" : "";
   const progress = Number(job.progress || 0);
@@ -481,7 +481,14 @@ async function refreshJobs() {
   const nextIds = payload.jobs.map((job) => job.id).join("\n");
   const selectedId = state.selectedJobId;
   const selectedLive = selectedId ? state.jobs.find((job) => job.id === selectedId) : null;
-  state.jobs = payload.jobs.map((job) => {
+  state.jobs = [...payload.jobs].sort((left, right) => {
+    const leftIndex = Number(left.libraryIndex);
+    const rightIndex = Number(right.libraryIndex);
+    if (Number.isFinite(leftIndex) && Number.isFinite(rightIndex)) return leftIndex - rightIndex;
+    if (Number.isFinite(leftIndex)) return 1;
+    if (Number.isFinite(rightIndex)) return -1;
+    return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+  }).map((job) => {
     if (job.id === selectedId && selectedLive?.live && ["queued", "running", "verifying"].includes(job.status)) {
       return { ...job, live: job.live || selectedLive.live, artifacts: job.artifacts?.length ? job.artifacts : selectedLive.artifacts };
     }
