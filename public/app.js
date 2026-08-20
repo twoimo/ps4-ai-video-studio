@@ -1,6 +1,8 @@
+import { formatClock, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail } from "./shorts-ui.mjs";
+
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const state = { analysis: null, jobs: [], selectedJobId: null, page: 1, query: "", sort: "views", category: "", poll: null, qualityHistory: {}, qualityDetails: {} };
+const state = { analysis: null, jobs: [], selectedJobId: null, highlightJobId: null, view: "grid", page: 1, query: "", sort: "views", category: "", poll: null, qualityHistory: {}, qualityDetails: {} };
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -18,10 +20,7 @@ function formatViews(value) {
 }
 
 function formatTime(seconds) {
-  if (!seconds) return "—";
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
+  return formatClock(seconds);
 }
 
 const AHP_CRITERIA = [
@@ -197,8 +196,73 @@ async function renderVideos() {
   }).join("") : `<div class="empty-state">검색 조건에 맞는 영상이 없습니다.</div>`;
 }
 
-function statusLabel(status) {
-  return status === "completed" ? "완료" : status === "failed" ? "오류" : status === "verifying" ? "검수 중" : status === "running" ? "제작 중" : status === "queued" ? "대기열" : "상태 확인 중";
+function statusLabel(status, job) {
+  if (job) return shortStatus(job).label;
+  return status === "completed" ? "완료" : status === "failed" ? "실패·프리즈" : status === "verifying" || status === "running" || status === "queued" ? "생성중" : "초안";
+}
+
+function setView(view, options = {}) {
+  state.view = view === "create" || view === "detail" ? view : "grid";
+  const createOverlay = $("#create-overlay");
+  const shortOverlay = $("#short-overlay");
+  if (createOverlay) createOverlay.hidden = state.view !== "create";
+  if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
+  document.body.classList.toggle("overlay-open", state.view !== "grid");
+  $$(".nav-item").forEach((item) => {
+    const target = item.getAttribute("href");
+    const active = (state.view === "create" && target === "#create")
+      || (state.view === "grid" && target === "#shorts")
+      || (state.view === "detail" && target === "#shorts");
+    item.classList.toggle("active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  });
+  if (!options.skipHash) {
+    const nextHash = state.view === "create" ? "#create" : state.view === "detail" ? "#short" : "#shorts";
+    if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
+  }
+  if (state.view === "create") window.requestAnimationFrame(() => $("#topic")?.focus());
+}
+
+function applyHash() {
+  const hash = location.hash.replace("#", "");
+  if (hash === "create") {
+    setView("create", { skipHash: true });
+    return;
+  }
+  if (hash === "benchmark") {
+    setView("grid", { skipHash: true });
+    $("#benchmark")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (hash === "short" || hash === "generation" || hash === "rendering") {
+    if (state.selectedJobId && state.jobs.some((job) => job.id === state.selectedJobId)) {
+      setView("detail", { skipHash: true });
+      return;
+    }
+  }
+  setView("grid", { skipHash: true });
+}
+
+function createTileMarkup() {
+  return `<button type="button" class="short-card short-create-tile" id="create-tile"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div><div class="short-card-body"><h3>새 쇼츠</h3><div class="short-card-meta"><span>Grok Imagine 공장</span><strong>—</strong></div></div></button>`;
+}
+
+function renderShortCard(job) {
+  const status = shortStatus(job);
+  const thumb = shortThumbnail(job);
+  const duration = formatClock(shortDurationSeconds(job));
+  const highlight = job.id === state.highlightJobId ? " just-created" : "";
+  const selected = job.id === state.selectedJobId && state.view === "detail" ? " selected" : "";
+  const progress = Number(job.progress || 0);
+  const fallback = escapeHtml((job.topic || "P4").slice(0, 2));
+  const media = thumb
+    ? `<img src="${escapeHtml(thumb)}" alt="" />`
+    : `<div class="thumb-fallback" aria-hidden="true"><span>${fallback}</span></div>`;
+  const generating = status.key === "running"
+    ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
+    : "";
+  return `<button type="button" class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && state.view === "detail"}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3><div class="short-card-meta"><span>${escapeHtml(providerCopy(job.provider).short)}</span><strong>${status.key === "running" ? `${progress}%` : duration}</strong></div></div></button>`;
 }
 async function loadQualityEvidence(job) {
   if (!job?.runId || job.status !== "completed") return;
@@ -217,20 +281,32 @@ async function loadQualityEvidence(job) {
 }
 
 function renderJobs() {
-  const list = $("#jobs-list");
-  if (!state.jobs.length) {
-    list.innerHTML = `<div class="empty-state">아직 제작 작업이 없습니다.<br />위에서 주제를 입력하면 파이프라인이 시작됩니다.</div>`;
-    $("#job-detail").innerHTML = `<div class="empty-detail"><span>◌</span><p>작업을 선택하면<br />실시간 산출물이 표시됩니다.</p></div>`;
-    renderPipeline(null);
+  const grid = $("#shorts-grid");
+  const count = $("#shorts-count");
+  if (count) count.textContent = `${state.jobs.length}편`;
+  if (grid) {
+    grid.innerHTML = `${createTileMarkup()}${state.jobs.map(renderShortCard).join("")}`;
+    $("#create-tile")?.addEventListener("click", openCreate);
+    $$(".short-card[data-job-id]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedJobId = button.dataset.jobId;
+      setView("detail");
+      renderJobs();
+    }));
+  }
+  if (state.view === "detail") {
+    const selected = state.jobs.find((job) => job.id === state.selectedJobId);
+    if (!selected) {
+      state.selectedJobId = null;
+      setView("grid");
+      renderPipeline(null);
+      return;
+    }
+    renderJobDetail(selected);
+    renderPipeline(selected);
+    if (selected.status === "completed" && selected.runId) void loadQualityEvidence(selected);
     return;
   }
-  if (!state.selectedJobId || !state.jobs.some((job) => job.id === state.selectedJobId)) state.selectedJobId = state.jobs[0].id;
-  list.innerHTML = state.jobs.map((job) => `<button class="job-card ${job.id === state.selectedJobId ? "selected" : ""}" aria-pressed="${job.id === state.selectedJobId}" data-job-id="${escapeHtml(job.id)}"><div class="job-card-top"><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span><time>${new Date(job.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time></div><h3>${escapeHtml(job.topic)}</h3><div class="job-card-bottom"><span>${escapeHtml(job.stage)} · ${escapeHtml(providerCopy(job.provider).short)}</span><strong>${job.progress || 0}%</strong></div><div class="mini-progress"><i style="width:${job.progress || 0}%"></i></div></button>`).join("");
-  $$(".job-card").forEach((button) => button.addEventListener("click", () => { state.selectedJobId = button.dataset.jobId; renderJobs(); }));
-  const selected = state.jobs.find((job) => job.id === state.selectedJobId);
-  renderJobDetail(selected);
-  renderPipeline(selected);
-  if (selected?.status === "completed" && selected.runId) void loadQualityEvidence(selected);
+  if (state.view !== "create") renderPipeline(null);
 }
 
 function renderPipeline(job) {
@@ -268,7 +344,8 @@ function renderPipeline(job) {
       ? "FAIL"
       : done ? "DONE" : active ? (job.status === "verifying" ? "VERIFY" : "RUN") : "WAIT";
   });
-  $("#pipeline-status").textContent = job ? `${copy.status} · ${statusLabel(job.status)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
+  const statusNode = $("#pipeline-status");
+  if (statusNode) statusNode.textContent = job ? `${copy.status} · ${statusLabel(job.status, job)} · ${job.progress || 0}% · ${job.message || ""}` : "대기 중";
 }
 
 function renderFactoryGallery(artifactRecords = []) {
@@ -314,8 +391,15 @@ function renderJobDetail(job) {
     : `<div class="preview-unavailable">현재 실행의 불변 미리보기 산출물이 없습니다.</div>`;
   const qualityPanel = quality
     ? `<div class="ahp-summary ${quality.semanticGate ? "passed" : "needs-improvement"}"><div><span class="panel-kicker">${quality.semanticGate ? "AHP QUALITY SCORE" : "MECHANICAL CHECK · SEMANTIC GATE CLOSED"}</span><strong>${scoreText(quality.totalScore)}<small>/ 100</small></strong></div><span>${quality.semanticGate ? (job.provider === "gemini-browser" ? "위원회·Gemini 근거 검토 가능" : job.provider === "grok-imagine" ? "위원회·Imagine 근거 검토 가능" : "위원회 근거 검토 가능") : "기계 점수만 표시 · 의미론 판정 보류"}</span></div>${renderAHPPanel(quality, history)}${quality.blockers?.length ? `<div class="warning-box"><b>차단·개선 항목</b><ul>${quality.blockers.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}`
-    : `<div class="pending-evidence">품질 검수 대기 · 현재 상태 ${escapeHtml(statusLabel(job.status))}${detailState?.error ? ` · ${escapeHtml(detailState.error)}` : ""}</div>`;
-  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED JOB</span><h3>${escapeHtml(job.topic)}</h3></div><span class="job-status ${job.status}"><i></i>${statusLabel(job.status)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}${job.status === "completed" ? `<div class="preview-wrap">${previewMarkup}<div class="preview-caption"><span>FINAL PREVIEW · RUN-BOUND</span><span>${formatTime(job.duration)} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>` : ""}${providerNotice}${factoryGallery}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
+    : `<div class="pending-evidence">품질 검수 대기 · 현재 상태 ${escapeHtml(statusLabel(job.status, job))}${detailState?.error ? ` · ${escapeHtml(detailState.error)}` : ""}</div>`;
+  const preview = shortPreview(job);
+  const previewMedia = preview.videoUrl
+    ? `<video controls playsinline preload="metadata" poster="${escapeHtml(preview.poster || previewThumbnail.url || "")}" src="${escapeHtml(preview.videoUrl)}"></video>`
+    : preview.poster
+      ? `<img class="preview-still" src="${escapeHtml(preview.poster)}" alt="훅 잠금" />`
+      : previewMarkup;
+  const status = shortStatus(job);
+  detail.innerHTML = `<div class="detail-head"><div><span class="panel-kicker">SELECTED SHORT</span><h3 id="short-detail-title">${escapeHtml(job.topic)}</h3></div><span class="job-status ${status.key} ${job.status}"><i></i>${escapeHtml(status.label)}</span></div><div class="detail-progress"><div><span>${escapeHtml(job.message || "")}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>${qualityPanel}<div class="preview-wrap">${previewMedia}<div class="preview-caption"><span>${preview.videoUrl ? "FINAL PREVIEW · RUN-BOUND" : preview.poster ? "HOOK LOCK" : "PREVIEW"}</span><span>${formatTime(shortDurationSeconds(job))} · ${job.format === "vertical" ? "9:16" : "16:9"}</span></div></div>${providerNotice}${factoryGallery}${localControls}<div class="detail-meta"><span>생성 모드 <b>${escapeHtml(copy.detail)}</b></span><span>자막 <b>${job.captions ? "ON" : "OFF"}</b></span><span>내레이션 <b>${job.voiceover ? "ON" : "OFF"}</b></span><span>RUN <b>${escapeHtml(job.runId || "—")}</b></span><span>RUN STATUS <b>${escapeHtml(job.runStatus || "—")}</b></span></div>${warnings ? `<div class="warning-box"><b>확인 필요</b><ul>${warnings}</ul></div>` : ""}${artifacts ? `<div class="artifact-list"><span class="panel-kicker">RUN-BOUND DELIVERABLES</span>${artifacts}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
@@ -374,8 +458,15 @@ async function createProduction(event) {
   try {
     const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     state.selectedJobId = payload.job.id;
+    state.highlightJobId = payload.job.id;
+    window.setTimeout(() => {
+      if (state.highlightJobId === payload.job.id) state.highlightJobId = null;
+      const card = document.querySelector(`[data-job-id="${CSS.escape(payload.job.id)}"]`);
+      card?.classList.remove("just-created");
+    }, 4200);
+    setView("grid");
     await refreshJobs();
-    document.querySelector("#rendering").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#shorts")?.scrollIntoView({ behavior: "smooth", block: "start" });
     const message = provider === "gemini-browser"
       ? "Gemini Chrome 자동 생성 작업을 시작했습니다."
       : provider === "grok-imagine"
@@ -472,11 +563,32 @@ function syncProviderForm() {
   syncToggleLabels();
 }
 
+function openCreate(event) {
+  event?.preventDefault();
+  setView("create");
+}
+
+function closeOverlays(event) {
+  event?.preventDefault();
+  state.selectedJobId = state.view === "detail" ? null : state.selectedJobId;
+  setView("grid");
+  renderJobs();
+}
+
 function bindEvents() {
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
   $("#browser-start").addEventListener("click", connectBrowser);
+  $("#new-short")?.addEventListener("click", openCreate);
+  $("#create-tile")?.addEventListener("click", openCreate);
+  $("#close-create")?.addEventListener("click", closeOverlays);
+  $("#close-short")?.addEventListener("click", closeOverlays);
+  $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
+  window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.view !== "grid") closeOverlays();
+  });
   $("#refresh-all").addEventListener("click", async () => { await Promise.all([refreshJobs(), renderVideos(), refreshHealth()]); showToast("데이터를 갱신했습니다."); });
   $$('[data-topic]').forEach((button) => button.addEventListener("click", () => { $("#topic").value = button.dataset.topic; $("#topic").focus(); }));
   $$(".toggle-label input").forEach((input) => input.addEventListener("change", syncToggleLabels));
@@ -490,6 +602,7 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  applyHash();
   try {
     const [analysis, benchmarkProfile] = await Promise.all([api("/api/channel"), api("/api/benchmark/profile")]);
     state.analysis = { ...analysis, benchmarkProfile };
