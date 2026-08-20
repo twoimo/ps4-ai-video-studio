@@ -87,15 +87,49 @@ function ssmlMessage(ssml) {
   return `X-RequestId:${randomUUID().replace(/-/g, "")}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml}`;
 }
 
-function parseSocketMessage(payload) {
-  if (typeof payload !== "string") return { binary: payload };
-  const split = payload.indexOf("\r\n\r\n");
-  const header = split >= 0 ? payload.slice(0, split) : payload;
-  const body = split >= 0 ? payload.slice(split + 4) : "";
-  if (/Path:audio\.metadata/i.test(header)) {
-    try { return { metadata: JSON.parse(body) }; } catch { return { metadata: null }; }
+function parseTextFrame(payload) {
+  const text = String(payload || "");
+  const split = text.indexOf("\r\n\r\n");
+  const header = split >= 0 ? text.slice(0, split) : text;
+  const body = split >= 0 ? text.slice(split + 4) : "";
+  if (/Path:audio\.metadata/i.test(header) || /Path:audio\.metadata/i.test(text)) {
+    try { return { metadata: JSON.parse(body || text.replace(/^[\s\S]*\r\n\r\n/, "")) }; } catch { return { metadata: null }; }
   }
-  return { text: payload };
+  if (/Path:turn\.end/i.test(header) || /Path:turn\.end/i.test(text)) return { turnEnd: true };
+  return { text };
+}
+
+async function socketBytes(data) {
+  if (typeof data === "string") return data;
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  if (typeof Blob !== "undefined" && data instanceof Blob) return Buffer.from(await data.arrayBuffer());
+  if (data && typeof data.arrayBuffer === "function") return Buffer.from(await data.arrayBuffer());
+  return data;
+}
+
+export async function decodeTtsSocketData(data) {
+  const payload = await socketBytes(data);
+  if (typeof payload === "string") return parseTextFrame(payload);
+  if (!payload || typeof payload !== "object") return parseTextFrame(String(payload ?? ""));
+  const raw = Buffer.from(payload);
+  const headerEnd = raw.indexOf("\r\n\r\n");
+  const header = headerEnd >= 0 ? raw.subarray(0, headerEnd).toString("utf8") : "";
+  const body = headerEnd >= 0 ? raw.subarray(headerEnd + 4) : raw;
+  if (/Path:audio\.metadata/i.test(header)) {
+    try { return { metadata: JSON.parse(body.toString("utf8")); } } catch { return { metadata: null }; }
+  }
+  if (/Path:turn\.end/i.test(header) || /Path:turn\.end/i.test(raw.toString("utf8"))) return { turnEnd: true };
+  if (/Path:audio/i.test(header)) return { audio: body };
+  if (headerEnd < 0) return { audio: raw };
+  return parseTextFrame(raw.toString("utf8"));
+}
+
+function listenSocket(socket, name, fn) {
+  if (typeof socket.addEventListener === "function") socket.addEventListener(name, fn);
+  else if (typeof socket.on === "function") socket.on(name, fn);
+  else socket[`on${name}`] = fn;
 }
 
 export async function synthesizeEdgeTts(text, {
@@ -125,7 +159,8 @@ export async function synthesizeEdgeTts(text, {
       else resolve(value);
     };
     const timer = setTimeout(() => finish(new Error("Edge TTS 시간이 초과되었습니다. Gemini로 대체하지 않습니다.")), 45_000);
-    socket.addEventListener?.("open", () => {
+    let chain = Promise.resolve();
+    listenSocket(socket, "open", () => {
       try {
         socket.send(configMessage());
         socket.send(ssmlMessage(edgeSsml(spoken, voice)));
@@ -134,34 +169,28 @@ export async function synthesizeEdgeTts(text, {
         finish(error);
       }
     });
-    socket.addEventListener?.("message", (event) => {
-      const data = event?.data ?? event;
-      if (typeof Buffer !== "undefined" && (Buffer.isBuffer(data) || data instanceof Uint8Array)) {
-        const raw = Buffer.from(data);
-        const headerEnd = raw.indexOf("\r\n\r\n");
-        chunks.push(headerEnd >= 0 ? raw.subarray(headerEnd + 4) : raw);
-        return;
-      }
-      if (typeof data === "string") {
-        const parsed = parseSocketMessage(data);
+    listenSocket(socket, "message", (event) => {
+      chain = chain.then(async () => {
+        if (settled) return;
+        const parsed = await decodeTtsSocketData(event?.data ?? event);
+        if (parsed.audio?.length) chunks.push(Buffer.from(parsed.audio));
         if (parsed.metadata) events.push(parsed.metadata);
-        if (/Path:turn.end/i.test(data)) {
+        if (parsed.turnEnd || (parsed.text && /Path:turn\.end/i.test(parsed.text))) {
           clearTimeout(timer);
           finish(null);
         }
-      }
+      }).catch((error) => {
+        clearTimeout(timer);
+        finish(error);
+      });
     });
-    socket.addEventListener?.("error", () => {
+    listenSocket(socket, "error", () => {
       clearTimeout(timer);
       finish(new Error("Edge TTS 연결에 실패했습니다. Gemini로 대체하지 않습니다."));
     });
-    socket.addEventListener?.("close", () => {
+    listenSocket(socket, "close", () => {
       clearTimeout(timer);
-      finish(null);
-    });
-    socket.onopen = socket.onopen || (() => {
-      socket.send(configMessage());
-      socket.send(ssmlMessage(edgeSsml(spoken, voice)));
+      void chain.finally(() => finish(null));
     });
   });
   const audio = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));

@@ -523,7 +523,21 @@ async function createProduction(event) {
   const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
   const worldSlots = collectWorldSlots();
   const scriptDraft = $("#script-draft")?.value.trim() || "";
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
+  const ttsProvider = $("#create-tts-provider")?.value || "edge";
+  const ttsVoice = $("#create-tts-voice")?.value || "";
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
+  if (ttsVoice) {
+    void api("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ttsProvider, ttsVoice })
+    }).then((payload) => {
+      if (payload?.settings) {
+        state.settings = payload.settings;
+        applySettingsToForm(payload.settings);
+      }
+    }).catch(() => {});
+  }
   if (provider === "gemini-browser" || provider === "grok-imagine") body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;

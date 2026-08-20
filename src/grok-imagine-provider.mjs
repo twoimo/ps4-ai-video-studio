@@ -194,7 +194,12 @@ export async function generateGrokImagineFactory(job, script, runId, onProgress 
   await emit(factoryStageEvent({ stageId: "tts-mix", status: "RUN", message: "TTS/믹스 중" }));
   await emit(factoryStageEvent({ stageId: "captions", status: "RUN", message: "대화 자막 작성 중 · MarginV=450" }));
   await emit(factoryStageEvent({ stageId: "compose", status: "RUN", message: "fill 720×1280 합성 중" }));
-  const settings = deps.settings || await readStudioSettings();
+  const stored = deps.settings || await readStudioSettings();
+  const settings = {
+    ...stored,
+    ttsVoice: job.ttsVoice || stored.ttsVoice,
+    ttsProvider: job.ttsProvider || stored.ttsProvider
+  };
   const composeArgs = {
     jobDir,
     script,

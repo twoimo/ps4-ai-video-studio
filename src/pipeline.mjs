@@ -128,6 +128,8 @@ export async function createJob(input) {
     voiceover: factory ? false : input.voiceover !== false,
     facts: normalizeFacts(input.facts),
     scriptDraft: typeof input.scriptDraft === "string" ? input.scriptDraft : "",
+    ...(input.ttsProvider === "chirp" || input.ttsProvider === "edge" ? { ttsProvider: input.ttsProvider } : {}),
+    ...(typeof input.ttsVoice === "string" && input.ttsVoice.trim() ? { ttsVoice: input.ttsVoice.trim() } : {}),
     worldSlots: factory ? sanitizeWorldSlotOverrides(input.worldSlots) : {},
     sources,
     targetDurationSec: factory ? FACTORY_CLIP_COUNT * SHOT_DURATION_SEC : targetDurationSec,

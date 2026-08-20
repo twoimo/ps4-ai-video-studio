@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   ASS_MARGIN_V,
   buildAssDocument,
   buildDialogueCues,
   CAPTION_TIMING_PAUSE,
+  composeGrokImagine,
   mixAudioArgs,
   voiceBgmMixFilter
 } from "../src/grok-imagine-compose.mjs";
@@ -17,7 +19,8 @@ import { studioOpenApi } from "../src/openapi.mjs";
 import { parseArgs, printHelp, runCli, IMAGINE_BLOCKED } from "../cli/studio.mjs";
 import { chirpConfigured, defaultStudioSettings, readStudioSettings, writeStudioSettings } from "../src/studio-settings.mjs";
 import { SCRIPT_CLOSER, assertScriptDraft, scriptDraftPrompt } from "../src/studio-script.mjs";
-import { edgeWordTimestamps, ttsTimingFromWords } from "../src/studio-tts.mjs";
+import { decodeTtsSocketData, edgeWordTimestamps, synthesizeEdgeTts, ttsTimingFromWords } from "../src/studio-tts.mjs";
+import { listBgmFiles } from "../src/studio-bgm.mjs";
 
 test("Edge TTS timestamps become pause-timed ASS with MarginV=450", () => {
   const words = edgeWordTimestamps([{
@@ -131,6 +134,21 @@ test("CLI --help and draft job without Imagine", async () => {
   assert.equal(blocked.ok, false);
   assert.match(blocked.message, /402/);
   assert.equal(blocked.message, IMAGINE_BLOCKED);
+  const previewRoot = await mkdtemp(join(tmpdir(), "ps4-cli-preview-"));
+  const previewOut = join(previewRoot, "voice-preview.mp3");
+  const preview = await runCli(["--tts-preview", "--text", "이렇게 설계된 겁니다.", "--voice", "ko-KR-SunHiNeural", "--out", previewOut], {
+    stdout: () => {},
+    stderr: () => {},
+    synthesize: async (text, options) => {
+      assert.match(text, /이렇게 설계된 겁니다/);
+      assert.equal(options.voice, "ko-KR-SunHiNeural");
+      return { provider: "edge", audio: Buffer.from("ID3PREVIEW") };
+    }
+  });
+  assert.equal(preview.ok, true);
+  assert.equal(preview.preview, previewOut);
+  assert.equal(await readFile(previewOut, "utf8"), "ID3PREVIEW");
+  await rm(previewRoot, { recursive: true, force: true });
 });
 
 test("script draft stays sourced-fact SI and ends with the closer", () => {
@@ -143,4 +161,160 @@ test("script draft stays sourced-fact SI and ends with the closer", () => {
   assert.doesNotThrow(() => assertScriptDraft(`대피공간은 세대마다 2㎡입니다\n${SCRIPT_CLOSER}`, facts));
   assert.throws(() => assertScriptDraft(`높이 48m로 올립니다\n${SCRIPT_CLOSER}`, facts), /출처에 없는 SI/);
   assert.equal(extractGrokText('{"message":"이렇게 설계된 겁니다."}'), SCRIPT_CLOSER);
+});
+
+test("Edge TTS decodes Blob, ArrayBuffer, and binary metadata frames", async () => {
+  const mp3 = Buffer.from("ID3FAKEMP3");
+  const audioFrame = Buffer.concat([Buffer.from("Path:audio\r\n\r\n"), mp3]);
+  const fromBlob = await decodeTtsSocketData(new Blob([audioFrame]));
+  assert.deepEqual(Buffer.from(fromBlob.audio), mp3);
+  const meta = { Metadata: [{ Type: "WordBoundary", Data: { Offset: 4_000_000, Duration: 3_000_000, text: { Text: "지붕" } } }] };
+  const metaFrame = Buffer.from(`Path:audio.metadata\r\n\r\n${JSON.stringify(meta)}`, "utf8");
+  const fromAb = await decodeTtsSocketData(metaFrame.buffer.slice(metaFrame.byteOffset, metaFrame.byteOffset + metaFrame.byteLength));
+  assert.equal(fromAb.metadata.Metadata[0].Data.text.Text, "지붕");
+  const ended = await decodeTtsSocketData("Path:turn.end\r\n\r\n");
+  assert.equal(ended.turnEnd, true);
+});
+
+test("Edge TTS mock WebSocket returns Korean preview audio and word timestamps", async () => {
+  class MockEdgeSocket {
+    constructor() {
+      this.listeners = {};
+      queueMicrotask(() => this.emit("open"));
+    }
+    addEventListener(name, fn) {
+      (this.listeners[name] ||= []).push(fn);
+    }
+    close() {}
+    send(payload) {
+      if (!String(payload).includes("Path:ssml")) return;
+      queueMicrotask(() => {
+        const mp3 = Buffer.from("ID3PREVIEW");
+        const audio = Buffer.concat([Buffer.from("X-RequestId:1\r\nPath:audio\r\n\r\n"), mp3]);
+        this.emit("message", { data: new Blob([audio]) });
+        const meta = JSON.stringify({
+          Metadata: [
+            { Type: "WordBoundary", Data: { Offset: 4_000_000, Duration: 3_000_000, text: { Text: "지붕" } } },
+            { Type: "WordBoundary", Data: { Offset: 7_000_000, Duration: 4_000_000, text: { Text: "면적" } } }
+          ]
+        });
+        this.emit("message", { data: Buffer.from(`Path:audio.metadata\r\n\r\n${meta}`, "utf8") });
+        this.emit("message", { data: "Path:turn.end\r\n\r\n" });
+      });
+    }
+    emit(name, event) {
+      for (const fn of this.listeners[name] || []) fn(event);
+    }
+  }
+  const result = await synthesizeEdgeTts("지붕 면적", { WebSocketImpl: MockEdgeSocket, voice: "ko-KR-SunHiNeural" });
+  assert.equal(result.provider, "edge");
+  assert.equal(result.voice, "ko-KR-SunHiNeural");
+  assert.equal(result.audio.toString(), "ID3PREVIEW");
+  assert.equal(result.wordTimestamps[0].text, "지붕");
+  assert.equal(result.wordTimestamps[0].start, 0.4);
+});
+
+test("settings PUT merges TTS without wiping BGM", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-settings-merge-"));
+  await writeStudioSettings({
+    ttsVoice: "ko-KR-SunHiNeural",
+    bgmEnabled: true,
+    bgmVolume: 0.12,
+    ffmpegPath: "/opt/bin/ffmpeg"
+  }, { root, env: {} });
+  const merged = await writeStudioSettings({ ttsVoice: "ko-KR-InJoonNeural", ttsProvider: "edge" }, { root, env: {} });
+  assert.equal(merged.ttsVoice, "ko-KR-InJoonNeural");
+  assert.equal(merged.bgmEnabled, true);
+  assert.equal(merged.bgmVolume, 0.12);
+  assert.equal(merged.ffmpegPath, "/opt/bin/ffmpeg");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("OpenAPI documents ttsVoice on create", () => {
+  const spec = studioOpenApi();
+  assert.equal(spec.paths["/api/jobs"].post.requestBody.content["application/json"].schema.properties.ttsVoice.type, "string");
+  assert.deepEqual(spec.paths["/api/jobs"].post.requestBody.content["application/json"].schema.properties.ttsProvider.enum, ["edge", "chirp"]);
+});
+
+test("resource/songs stays empty of MoneyPrinterTurbo rips", async () => {
+  const names = await readdir(join(process.cwd(), "resource", "songs"));
+  assert.ok(names.includes("README.md"));
+  assert.deepEqual(names.filter((name) => !name.startsWith(".") && name !== "README.md"), []);
+  const listed = await listBgmFiles(join(process.cwd()));
+  assert.equal(listed.every((path) => !path.includes("resource/songs/") || !/\.(mp3|m4a|wav)$/i.test(path)), true);
+});
+
+test("compose injects Edge timestamps into locked ASS and BGM amix", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-compose-"));
+  const jobDir = join(root, "job");
+  await mkdir(jobDir, { recursive: true });
+  const clip = join(root, "clip.mp4");
+  const bgm = join(root, "bed.mp3");
+  await writeFile(clip, Buffer.from("clip"));
+  await writeFile(bgm, Buffer.from("bgm"));
+  const script = {
+    legalQuantities: extractLegalQuantities(["지붕 면적 2만 m²"]),
+    segments: [
+      { narration: "지붕 면적 2만 m²", caption: "지붕 면적 2만 m²", durationHint: 10 },
+      { narration: SCRIPT_CLOSER, caption: SCRIPT_CLOSER, durationHint: 10 }
+    ]
+  };
+  const fakeSpawn = (_bin, args) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const output = args.at(-1);
+    queueMicrotask(async () => {
+      if (typeof output === "string" && (output.includes("/") || /\.(mp4|jpg|png|wav|mp3)$/i.test(output))) {
+        await mkdir(dirname(output), { recursive: true });
+        await writeFile(output, Buffer.from("ok"));
+      }
+      child.emit("close", 0);
+    });
+    return child;
+  };
+  const composed = await composeGrokImagine({
+    jobDir,
+    script,
+    clipPaths: [clip],
+    spawnImpl: fakeSpawn,
+    settings: {
+      ttsProvider: "edge",
+      ttsVoice: "ko-KR-InJoonNeural",
+      bgmEnabled: true,
+      bgmVolume: 0.08
+    },
+    synthesizeTts: async (text, options) => {
+      assert.match(text, /지붕/);
+      assert.equal(options.voice, "ko-KR-InJoonNeural");
+      assert.equal(options.provider, "edge");
+      return {
+        provider: "edge",
+        voice: options.voice,
+        audio: Buffer.from("ID3VOICE"),
+        mime: "audio/mpeg",
+        ...ttsTimingFromWords([
+          { text: "지붕", start: 0.4, end: 0.7, type: "word" },
+          { text: "면적", start: 0.7, end: 1.1, type: "word" },
+          { text: "이렇게", start: 2.0, end: 2.8, type: "word" }
+        ])
+      };
+    },
+    resolveBgm: async () => bgm
+  });
+  const ass = await readFile(join(jobDir, "captions.ass"), "utf8");
+  const mix = JSON.parse(await readFile(join(jobDir, "mix.json"), "utf8"));
+  const timing = JSON.parse(await readFile(join(jobDir, "word-timestamps.json"), "utf8"));
+  assert.match(ass, new RegExp(`,${ASS_MARGIN_V},1`));
+  assert.match(ass, /Dialogue:/);
+  assert.doesNotMatch(ass, /drawtext|drawbox/i);
+  assert.match(mix.filter, /amix=inputs=2/);
+  assert.doesNotMatch(mix.filter, /drawtext|drawbox/i);
+  assert.equal(mix.bgm, true);
+  assert.equal(timing.wordTimestamps[0].text, "지붕");
+  assert.equal(composed.marginV, ASS_MARGIN_V);
+  assert.equal(composed.captionTiming.source, CAPTION_TIMING_PAUSE);
+  assert.equal(composed.voiceover, "voiceover.mp3");
+  assert.equal(composed.captionsAss, "captions.ass");
+  await rm(root, { recursive: true, force: true });
 });

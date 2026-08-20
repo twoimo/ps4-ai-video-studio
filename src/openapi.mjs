@@ -27,6 +27,8 @@ export function studioOpenApi() {
                     topic: { type: "string" },
                     facts: { type: "array", items: { type: "string" } },
                     scriptDraft: { type: "string" },
+                    ttsProvider: { type: "string", enum: ["edge", "chirp"] },
+                    ttsVoice: { type: "string", description: "고급에서 고른 Edge/Chirp 목소리. 작업에 저장하고 합성에 씁니다." },
                     provider: { type: "string", enum: ["grok-imagine", "gemini-browser", "local-video", "local"] },
                     draftOnly: { type: "boolean", description: "초안만 저장하고 Imagine을 시작하지 않습니다." },
                     autoStart: { type: "boolean" }

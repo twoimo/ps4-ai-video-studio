@@ -82,6 +82,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
   assert.match(app, /status\.key === "draft" \? "—"/);
+  assert.match(app, /ttsVoice/);
+  assert.match(app, /create-tts-voice/);
+  assert.match(app, /대본 만들기/);
 });
 
 test("library and overlays fill the viewport instead of a phone column", async () => {

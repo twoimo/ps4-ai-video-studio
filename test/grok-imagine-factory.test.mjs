@@ -284,6 +284,8 @@ test("createJob persists grok-imagine factory fields", async () => {
     topic: "한강 갑문이 물을 나누는 이유",
     provider: "grok-imagine",
     facts: ["지붕 면적 2만 m²", "갑문은 수위를 나눕니다"],
+    ttsProvider: "edge",
+    ttsVoice: "ko-KR-InJoonNeural",
     sources: [{ title: "한강", url: "https://hangang.seoul.go.kr/" }],
     voiceover: true,
     format: "landscape",
@@ -296,6 +298,8 @@ test("createJob persists grok-imagine factory fields", async () => {
   assert.equal(job.captions, true);
   assert.equal(job.targetDurationSec, 70);
   assert.deepEqual(job.facts, ["지붕 면적 2만 m²", "갑문은 수위를 나눕니다"]);
+  assert.equal(job.ttsProvider, "edge");
+  assert.equal(job.ttsVoice, "ko-KR-InJoonNeural");
   await rm(join(process.cwd(), "workspace", "jobs", job.id), { recursive: true, force: true });
 });
 

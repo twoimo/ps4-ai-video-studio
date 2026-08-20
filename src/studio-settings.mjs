@@ -69,7 +69,8 @@ export async function readStudioSettings({ root = ROOT, env = process.env } = {}
 }
 
 export async function writeStudioSettings(input = {}, { root = ROOT, env = process.env } = {}) {
-  const settings = normalizeStudioSettings(input, env);
+  const current = await readStudioSettings({ root, env });
+  const settings = normalizeStudioSettings({ ...current, ...input }, env);
   const path = studioConfigPath(root);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(settings, null, 2)}\n`);
