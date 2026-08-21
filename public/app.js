@@ -387,8 +387,7 @@ function bindWatchScroller() {
     if (state.view !== "watch") return;
     if (event.target.closest?.(".watch-inspect")) return;
     const dy = (event.changedTouches[0]?.clientY || 0) - touchY;
-    if (Math.abs(dy) > 50 && closeOpenWatchInspect()) return;
-    if (Math.abs(dy) > 50) stepWatch(dy < 0 ? 1 : -1);
+    if (dy) closeOpenWatchInspect();
   }, { passive: true });
 }
 
@@ -446,7 +445,7 @@ function goToWatchIndex(index, { instant = false } = {}) {
   const job = jobs[next];
   state.selectedJobId = job.id;
   const slide = document.querySelector(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`);
-  slide?.scrollIntoView({ behavior: instant ? "auto" : "smooth", block: "start" });
+  slide?.scrollIntoView({ behavior: "auto", block: "start" });
   activateWatchSlide(job.id);
   replaceWatchHash(job.id);
   syncDocumentTitle();
@@ -454,8 +453,9 @@ function goToWatchIndex(index, { instant = false } = {}) {
 }
 
 function stepWatch(delta) {
-  const current = Math.max(0, watchIndexOf(state.selectedJobId));
-  goToWatchIndex(current + delta);
+  const scroller = $("#watch-scroller");
+  if (!scroller) return;
+  scroller.scrollBy({ top: delta * scroller.clientHeight, behavior: "auto" });
 }
 
 function patchWatchSlide(job) {
@@ -1613,11 +1613,13 @@ function bindEvents() {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      stepWatch(1);
+      const scroller = $("#watch-scroller");
+      scroller?.scrollBy({ top: scroller.clientHeight, behavior: "auto" });
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      stepWatch(-1);
+      const scroller = $("#watch-scroller");
+      scroller?.scrollBy({ top: -scroller.clientHeight, behavior: "auto" });
     }
     if (event.key === " ") {
       event.preventDefault();
