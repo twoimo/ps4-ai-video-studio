@@ -530,6 +530,10 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.equal(css.includes("-webkit-overflow-scrolling"), false);
   assert.equal(css.includes("backface-visibility"), false);
   assert.equal(css.includes("100svh"), false);
+  assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
+  assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*margin-inline:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-menu/);
+  assert.match(css, /#watch-feed \.watch-inspect/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*left:\s*12px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
@@ -672,9 +676,108 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(css, /100cqh/);
   assert.match(css, /container-type:\s*size/);
   assert.match(css, /\.watch-player\s*\{[^}]*position:\s*absolute/);
-  assert.match(css, /\.watch-chrome\s*\{[^}]*position:\s*fixed/);
+  assert.match(css, /\.watch-chrome\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.watch-chrome\s*\{[^}]*pointer-events:\s*none/);
+  assert.equal(/#watch-feed \.watch-chrome[\s\S]{0,80}position:\s*fixed/.test(css), false);
+  assert.equal(/#watch-feed \.watch-close[\s\S]{0,80}position:\s*fixed/.test(css), false);
+  assert.equal(/#watch-feed \.watch-menu[\s\S]{0,80}position:\s*fixed/.test(css), false);
   assert.match(css, /\.watch-feed\s*\{[^}]*overflow:\s*hidden/);
   assert.equal(/\.watch-feed\s*\{[^}]*overflow-y:\s*scroll/.test(css), false);
   assert.equal(app.includes("scrollIntoView"), false);
+  assert.match(feed, /const watchPlayers = new WeakMap/);
+  assert.match(feed, /watchPlayers\.set\(root, video\)/);
+  assert.match(feed, /function ensureWatchColumn/);
+  assert.match(feed, /className = "watch-column"/);
+  assert.match(feed, /pauseLeftoverMedia/);
+  assert.match(feed, /\.preview-wrap video, \.shorts-grid video, audio/);
+  assert.match(feed, /root\.addEventListener\("wheel"/);
+  assert.equal(feed.includes('document.addEventListener("wheel"'), false);
+  assert.equal(feed.includes('window.addEventListener("wheel"'), false);
+  assert.match(app, /preview-wrap video, \.shorts-grid video, audio/);
+  assert.match(app, /stopWatchFeed\(root\);\s*track\.dataset\.signature = signature;\s*track\.innerHTML/);
+  assert.match(html, /class="watch-column"/);
+});
+
+test("ensureWatchPlayer reuses one video before attach", () => {
+  let created = 0;
+  const video = fakeVideo(0);
+  const kids = [];
+  const stage = {
+    querySelector: () => null,
+    appendChild(node) { kids.push(node); }
+  };
+  const previous = globalThis.document;
+  globalThis.document = {
+    createElement(tag) {
+      assert.equal(tag, "video");
+      created += 1;
+      return video;
+    }
+  };
+  const root = {
+    querySelector(selector) {
+      return selector.includes("watch-stage") ? stage : null;
+    }
+  };
+  assert.equal(createWatchPlayer(root), video);
+  assert.equal(createWatchPlayer(root), video);
+  assert.equal(created, 1);
+  globalThis.document = previous;
+});
+
+test("same-job playWatchFeed only plays and does not reparent", () => {
+  const video = fakeVideo(1);
+  video.dataset.jobId = "a";
+  video.src = "/a.mp4";
+  const slides = [{ dataset: { src: "/a.mp4", jobId: "a", poster: "/a.jpg" } }];
+  const root = fakePager({ slides, video, height: 640 });
+  goWatchIndex(root, 0);
+  playWatchFeed(root);
+  const pauses = video.pauseCalls;
+  const plays = video.playCalls;
+  playWatchFeed(root);
+  assert.equal(video.pauseCalls, pauses);
+  assert.equal(video.playCalls, plays + 1);
+  assert.equal(video.style.visibility, "");
+  assert.equal(video.src, "/a.mp4");
+});
+
+test("leave watch pauses leftover preview grid and audio", () => {
+  const leftover = {
+    pauseCalls: 0,
+    pause() { this.pauseCalls += 1; }
+  };
+  const audio = {
+    pauseCalls: 0,
+    pause() { this.pauseCalls += 1; }
+  };
+  const previous = globalThis.document;
+  globalThis.document = {
+    querySelectorAll(selector) {
+      assert.match(selector, /preview-wrap video/);
+      assert.match(selector, /shorts-grid video/);
+      assert.match(selector, /audio/);
+      return [leftover, audio];
+    }
+  };
+  const videos = [fakeVideo(3)];
+  const root = fakeRoot(videos);
+  syncWatchFeed(root, "watch");
+  assert.equal(leftover.pauseCalls, 1);
+  assert.equal(audio.pauseCalls, 1);
+  assert.equal(videos[0].pauseCalls, 0);
+  syncWatchFeed(root, "grid");
+  assert.ok(leftover.pauseCalls >= 2);
+  assert.ok(audio.pauseCalls >= 2);
+  assert.equal(videos[0].pauseCalls, 1);
+  assert.equal(videos[0].src === "" || videos[0].removeCalls === 1, true);
+  globalThis.document = previous;
+});
+
+test("wheel stays on the watch feed root", () => {
+  const slides = [{ dataset: { jobId: "a", src: "/a.mp4" } }, { dataset: { jobId: "b", src: "/b.mp4" } }];
+  const root = fakePager({ slides, video: fakeVideo(1), height: 640 });
+  bindWatchFeed(root, () => {});
+  const wheels = root.listeners.filter((item) => item.type === "wheel");
+  assert.equal(wheels.length, 1);
 });

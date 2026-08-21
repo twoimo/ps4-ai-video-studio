@@ -139,7 +139,12 @@ function setView(view, options = {}) {
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
   const openingWatch = state.view === "watch";
-  if (openingWatch) sizeWatchFeed(watchFeed);
+  if (openingWatch) {
+    document.querySelectorAll(".preview-wrap video, .shorts-grid video, audio").forEach((media) => {
+      try { media.pause(); } catch { /* ignore leftover preview/grid/audio */ }
+    });
+    sizeWatchFeed(watchFeed);
+  }
   syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
   const afterPaint = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => fn();
   if (openingWatch) {
@@ -413,6 +418,7 @@ function mountWatchFeed({ focus = false, instant = false } = {}) {
   const jobs = watchableJobs();
   if (empty) empty.hidden = jobs.length > 0;
   if (!jobs.length) {
+    stopWatchFeed(root);
     track.innerHTML = "";
     track.dataset.signature = "";
     return;
@@ -420,6 +426,7 @@ function mountWatchFeed({ focus = false, instant = false } = {}) {
   const signature = watchSignature();
   const rebuilt = track.dataset.signature !== signature;
   if (rebuilt) {
+    stopWatchFeed(root);
     track.dataset.signature = signature;
     track.innerHTML = watchFeedMarkup(jobs);
   } else {

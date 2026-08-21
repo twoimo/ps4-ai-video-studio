@@ -358,7 +358,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-inspect\s*\{[^}]*height:\s*100%/);
   assert.match(css, /body\.watch-open\s*\{[^}]*display:\s*block/);
   assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*display:\s*none/);
-  assert.match(css, /\.watch-back\s*\{[^}]*position:\s*fixed/);
+  assert.match(css, /\.watch-back\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.watch-back\s*\{[^}]*top:\s*12px/);
   assert.match(css, /\.watch-back\s*\{[^}]*left:\s*12px/);
   assert.match(css, /\.watch-back\s*\{[^}]*background:\s*none/);

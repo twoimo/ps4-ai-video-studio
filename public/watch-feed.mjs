@@ -1,4 +1,5 @@
 const pagers = new WeakMap();
+const watchPlayers = new WeakMap();
 
 function pagerOf(root) {
   if (!root) return null;
@@ -40,9 +41,35 @@ function watchSlides(root) {
 function watchPlayerVideo(root) {
   if (!root) return null;
   if (typeof root.play === "function" && typeof root.querySelector !== "function") return root;
-  return root.querySelector?.(".watch-player video")
-    || root.querySelector?.("video")
-    || null;
+  const held = watchPlayers.get(root);
+  if (held) return held;
+  const found = root.querySelector?.(".watch-player video") || null;
+  if (found) watchPlayers.set(root, found);
+  return found;
+}
+
+function pauseLeftoverMedia(root) {
+  const held = root ? watchPlayers.get(root) : null;
+  const doc = globalThis.document;
+  if (typeof doc?.querySelectorAll !== "function") return;
+  for (const media of [...doc.querySelectorAll(".preview-wrap video, .shorts-grid video, audio")]) {
+    if (media === held) continue;
+    try { media.pause?.(); } catch { /* ignore leftover media */ }
+  }
+}
+
+function ensureWatchColumn(root) {
+  if (!root || typeof root.querySelector !== "function") return null;
+  let column = root.querySelector(".watch-column");
+  if (column) return column;
+  const chrome = root.querySelector("#watch-chrome") || root.querySelector(".watch-chrome");
+  if (!chrome) return null;
+  if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
+  column = document.createElement("div");
+  column.className = "watch-column";
+  chrome.parentElement?.insertBefore?.(column, chrome);
+  column.appendChild(chrome);
+  return column;
 }
 
 function currentIndex(root) {
@@ -93,8 +120,10 @@ export function stepWatchFeed(root, delta, { animate = true } = {}) {
 }
 
 function attachWatchVideo(video) {
-  video.setAttribute("playsinline", "");
-  video.setAttribute("webkit-playsinline", "");
+  if (typeof video.setAttribute === "function") {
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+  }
   video.playsInline = true;
   video.loop = true;
   video.preload = "auto";
@@ -106,15 +135,23 @@ function attachWatchVideo(video) {
 function ensureWatchPlayer(root) {
   if (!root) return null;
   if (typeof root.play === "function" && typeof root.querySelector !== "function") return root;
-  let video = watchPlayerVideo(root);
+  ensureWatchColumn(root);
+  let video = watchPlayers.get(root);
   if (video) return video;
+  video = root.querySelector?.(".watch-player video") || null;
+  if (video) {
+    attachWatchVideo(video);
+    watchPlayers.set(root, video);
+    return video;
+  }
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
     return null;
   }
+  video = document.createElement("video");
+  attachWatchVideo(video);
+  watchPlayers.set(root, video);
   const stage = root.querySelector?.(".watch-player .watch-stage") || root.querySelector?.(".watch-stage");
   if (stage) {
-    video = stage.querySelector("video") || document.createElement("video");
-    attachWatchVideo(video);
     if (!video.parentElement) stage.appendChild(video);
     return video;
   }
@@ -122,8 +159,6 @@ function ensureWatchPlayer(root) {
   player.className = "watch-player";
   const nextStage = document.createElement("div");
   nextStage.className = "watch-stage";
-  video = document.createElement("video");
-  attachWatchVideo(video);
   nextStage.appendChild(video);
   player.appendChild(nextStage);
   return video;
@@ -142,8 +177,16 @@ export function createWatchPlayer(root) {
 }
 
 export function stopWatchFeed(root) {
-  if (!root || typeof root.querySelectorAll !== "function") return;
-  for (const video of [...root.querySelectorAll("video")]) {
+  pauseLeftoverMedia(root);
+  const videos = [];
+  const held = root ? watchPlayers.get(root) : null;
+  if (held) videos.push(held);
+  if (root && typeof root.querySelectorAll === "function") {
+    for (const video of root.querySelectorAll("video")) {
+      if (!videos.includes(video)) videos.push(video);
+    }
+  }
+  for (const video of videos) {
     video.pause();
     video.currentTime = 0;
     if (typeof video.removeAttribute === "function") video.removeAttribute("src");
@@ -151,6 +194,7 @@ export function stopWatchFeed(root) {
     if (typeof video.remove === "function") video.remove();
     else video.parentElement?.removeChild?.(video);
   }
+  if (root) watchPlayers.delete(root);
 }
 
 function revealAndPlay(video, jobId) {
@@ -173,7 +217,7 @@ export function playWatchFeed(target) {
   const slides = watchSlides(root);
   const activeSlide = slides[currentIndex(root)];
   const jobId = activeSlide?.dataset?.jobId;
-  let video = watchPlayerVideo(root) || ensureWatchPlayer(root);
+  let video = ensureWatchPlayer(root);
   if (!video) return;
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
@@ -206,6 +250,7 @@ export function clearWatchSize(root) {
 }
 
 export function syncWatchFeed(root, surface, mountWatchFeed) {
+  pauseLeftoverMedia(root);
   if (surface !== "watch") {
     clearWatchSize(root);
     stopWatchFeed(root);
@@ -323,6 +368,7 @@ export function bindWatchFeed(root, onBack, onActive) {
     return;
   }
   if (root.dataset) root.dataset.watchBound = "1";
+  ensureWatchColumn(root);
   createWatchPlayer(root);
   bindWatchResize(root);
   const track = watchTrack(root);
