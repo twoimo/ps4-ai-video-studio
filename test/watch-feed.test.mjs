@@ -126,8 +126,12 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(app, /replaceWatchHash/);
   assert.match(app, /history\.replaceState\(null, "", next\)/);
   assert.match(app, /class="watch-close watch-back"[^>]*aria-label="닫기">×</);
+  assert.match(app, /playsinline webkit-playsinline/);
+  assert.match(app, /setAttribute\("webkit-playsinline"/);
+  assert.match(app, /class="watch-menu watch-materials-toggle"/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
   assert.match(css, /\.watch-close\s*\{[^}]*background:\s*none/);
   assert.match(css, /\.watch-close\s*\{[^}]*border:\s*0/);
   assert.match(css, /\.watch-close\s*\{[^}]*border-radius:\s*0/);
@@ -167,4 +171,8 @@ test("watch-feed module and app wire stop before leave", async () => {
   const watchSlide = app.slice(app.indexOf("function watchSlideMarkup"), app.indexOf("function setWatchPlayGate"));
   assert.equal(watchSlide.includes("watch-dl"), false);
   assert.equal(app.includes('class="watch-dl"'), false);
+  assert.match(app, /if \(closeOpenWatchInspect\(\)\) return;/);
+  assert.match(app, /Math\.abs\(dy\) > 50 && closeOpenWatchInspect\(\)/);
+  const bindSlide = app.slice(app.indexOf("function bindWatchSlide"), app.indexOf("function observeWatchSlides"));
+  assert.equal(bindSlide.includes("scrollIntoView"), false);
 });

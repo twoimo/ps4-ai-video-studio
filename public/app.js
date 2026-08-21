@@ -124,6 +124,7 @@ function setView(view, options = {}) {
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
+  if (state.view !== "watch") closeOpenWatchInspect();
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine"].includes(state.view));
   syncWatchFeed(watchFeed, state.view);
@@ -255,7 +256,26 @@ function watchSignature() {
 function watchSlideMarkup(job) {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div><button type="button" class="watch-materials">재료</button></div><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline webkit-playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div><button type="button" class="watch-inspect-dismiss" aria-label="닫기"></button><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+}
+
+function closeWatchInspect(slide) {
+  if (!slide?.classList.contains("inspect-open")) return false;
+  slide.classList.remove("inspect-open");
+  return true;
+}
+
+function closeOpenWatchInspect() {
+  let closed = false;
+  $$(".watch-slide.inspect-open").forEach((slide) => {
+    slide.classList.remove("inspect-open");
+    closed = true;
+  });
+  return closed;
+}
+
+function toggleWatchInspect(slide) {
+  slide?.classList.toggle("inspect-open");
 }
 
 function renderWatchSlide(job) {
@@ -298,6 +318,7 @@ function bindWatchSlide(slide) {
   });
   slide.querySelector(".watch-close")?.addEventListener("click", (event) => {
     event.stopPropagation();
+    if (closeWatchInspect(slide) || closeOpenWatchInspect()) return;
     stopWatchFeed(feed);
     openHome(event);
   });
@@ -306,9 +327,13 @@ function bindWatchSlide(slide) {
     const play = playWatchFeed(video);
     if (play) play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
   });
-  slide.querySelector(".watch-materials")?.addEventListener("click", (event) => {
+  slide.querySelector(".watch-menu")?.addEventListener("click", (event) => {
     event.stopPropagation();
-    slide.querySelector(".watch-inspect")?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    toggleWatchInspect(slide);
+  });
+  slide.querySelector(".watch-inspect-dismiss")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeWatchInspect(slide);
   });
 }
 
@@ -342,6 +367,11 @@ function bindWatchScroller() {
   scroller.dataset.bound = "1";
   scroller.addEventListener("wheel", (event) => {
     if (state.view !== "watch") return;
+    if (event.target.closest?.(".watch-inspect")) return;
+    if (closeOpenWatchInspect()) {
+      event.preventDefault();
+      return;
+    }
     if (Math.abs(event.deltaY) < 10) return;
     event.preventDefault();
     const now = Date.now();
@@ -355,7 +385,9 @@ function bindWatchScroller() {
   }, { passive: true });
   scroller.addEventListener("touchend", (event) => {
     if (state.view !== "watch") return;
+    if (event.target.closest?.(".watch-inspect")) return;
     const dy = (event.changedTouches[0]?.clientY || 0) - touchY;
+    if (Math.abs(dy) > 50 && closeOpenWatchInspect()) return;
     if (Math.abs(dy) > 50) stepWatch(dy < 0 ? 1 : -1);
   }, { passive: true });
 }
@@ -375,6 +407,8 @@ function activateWatchSlide(jobId) {
       if (video.getAttribute("src") !== url) {
         video.src = url;
         video.playsInline = true;
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
         video.loop = true;
         video.preload = "auto";
       }
@@ -1567,6 +1601,7 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (state.view === "watch") {
+        if (closeOpenWatchInspect()) return;
         stopWatchFeed($("#watch-feed"));
         openHome();
         return;
@@ -1601,9 +1636,15 @@ function bindEvents() {
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stopWatchFeed($("#watch-feed"));
+    if (document.hidden) {
+      closeOpenWatchInspect();
+      stopWatchFeed($("#watch-feed"));
+    }
   });
-  window.addEventListener("pagehide", () => stopWatchFeed($("#watch-feed")));
+  window.addEventListener("pagehide", () => {
+    closeOpenWatchInspect();
+    stopWatchFeed($("#watch-feed"));
+  });
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });
   $$(".toggle-label input").forEach((input) => input.addEventListener("change", syncToggleLabels));
   syncToggleLabels();
