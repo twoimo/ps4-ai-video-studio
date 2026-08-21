@@ -19,8 +19,51 @@ import { studioOpenApi } from "../src/openapi.mjs";
 import { parseArgs, printHelp, runCli, IMAGINE_BLOCKED } from "../cli/studio.mjs";
 import { chirpConfigured, defaultStudioSettings, readStudioSettings, writeStudioSettings } from "../src/studio-settings.mjs";
 import { SCRIPT_CLOSER, assertScriptDraft, scriptDraftPrompt } from "../src/studio-script.mjs";
-import { decodeTtsSocketData, edgeWordTimestamps, synthesizeEdgeTts, ttsTimingFromWords } from "../src/studio-tts.mjs";
+import { createHash } from "node:crypto";
+import {
+  assemblePublicEdgeTrustedClientToken,
+  decodeTtsSocketData,
+  EDGE_TTS_TOKEN,
+  edgeTtsUrl,
+  edgeWordTimestamps,
+  resolveEdgeTtsToken,
+  secMsGec,
+  synthesizeEdgeTts,
+  ttsTimingFromWords
+} from "../src/studio-tts.mjs";
 import { listBgmFiles } from "../src/studio-bgm.mjs";
+
+test("Edge TTS token is assembled from public parts or env", () => {
+  const assembled = assemblePublicEdgeTrustedClientToken();
+  assert.equal(assembled.length, 32);
+  assert.match(assembled, /^[0-9A-F]{32}$/);
+  assert.equal(
+    createHash("sha256").update(assembled).digest("hex"),
+    "558d7c6a7f7db444895946fe23a54ad172fd6d159f46cb34dd4db21bb27c07d7"
+  );
+  assert.equal(resolveEdgeTtsToken({}), assembled);
+  assert.equal(resolveEdgeTtsToken({ EDGE_TTS_TRUSTED_CLIENT_TOKEN: "" }), assembled);
+  assert.equal(resolveEdgeTtsToken({ EDGE_TTS_TRUSTED_CLIENT_TOKEN: "   " }), assembled);
+  assert.equal(resolveEdgeTtsToken({ EDGE_TTS_TRUSTED_CLIENT_TOKEN: " override-token " }), "override-token");
+  assert.equal(EDGE_TTS_TOKEN, resolveEdgeTtsToken());
+  const url = edgeTtsUrl({ connectionId: "cid", nowSec: 1_700_000_000 });
+  assert.match(url, /TrustedClientToken=/);
+  assert.ok(url.includes(`TrustedClientToken=${assembled}`));
+  const overrideUrl = edgeTtsUrl({
+    connectionId: "cid",
+    nowSec: 1_700_000_000,
+    env: { EDGE_TTS_TRUSTED_CLIENT_TOKEN: "override-token" }
+  });
+  assert.ok(overrideUrl.includes("TrustedClientToken=override-token"));
+  assert.doesNotMatch(overrideUrl, new RegExp(`TrustedClientToken=${assembled}`));
+  const expectedGec = createHash("sha256").update((() => {
+    const winEpoch = 11644473600;
+    let ticks = Math.floor((1_700_000_000 + winEpoch) * 10_000_000);
+    ticks -= ticks % 3_000_000_000;
+    return `${ticks.toString(16).toUpperCase()}${assembled}`;
+  })()).digest("hex").toUpperCase();
+  assert.equal(secMsGec(1_700_000_000), expectedGec);
+});
 
 test("Edge TTS timestamps become pause-timed ASS with MarginV=450", () => {
   const words = edgeWordTimestamps([{

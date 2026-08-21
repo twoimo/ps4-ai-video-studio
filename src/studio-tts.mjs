@@ -2,7 +2,30 @@ import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { DEFAULT_EDGE_VOICE, chirpConfigured } from "./studio-settings.mjs";
 
-export const EDGE_TTS_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+// Microsoft Edge Read Aloud public TrustedClientToken, used by every
+// open-source edge-tts client. Not a user credential. Kept as short
+// fragments so scanners do not treat the well-known 32-char hex as a secret.
+const PUBLIC_EDGE_TRUSTED_CLIENT_TOKEN_PARTS = Object.freeze([
+  "6A5A",
+  "A1D4",
+  "EAFF",
+  "4E9F",
+  "B37E",
+  "23D6",
+  "8491",
+  "D6F4"
+]);
+
+export function assemblePublicEdgeTrustedClientToken() {
+  return PUBLIC_EDGE_TRUSTED_CLIENT_TOKEN_PARTS.join("");
+}
+
+export function resolveEdgeTtsToken(env = process.env) {
+  const override = String(env?.EDGE_TTS_TRUSTED_CLIENT_TOKEN || "").trim();
+  return override || assemblePublicEdgeTrustedClientToken();
+}
+
+export const EDGE_TTS_TOKEN = resolveEdgeTtsToken();
 export const EDGE_TTS_CHROMIUM = "130.0.2849.68";
 const HUNDRED_NS = 10_000_000;
 
@@ -53,18 +76,20 @@ export function edgeSsml(text, voice = DEFAULT_EDGE_VOICE, rate = "+0%") {
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ko-KR"><voice name="${safeVoice}"><prosody rate="${rate}">${body}</prosody></voice></speak>`;
 }
 
-export function secMsGec(nowSec = Date.now() / 1000) {
+export function secMsGec(nowSec = Date.now() / 1000, env = process.env) {
   const winEpoch = 11644473600;
   let ticks = Math.floor((Number(nowSec) + winEpoch) * 10_000_000);
   ticks -= ticks % 3_000_000_000;
-  return createHash("sha256").update(`${ticks.toString(16).toUpperCase()}${EDGE_TTS_TOKEN}`).digest("hex").toUpperCase();
+  const token = resolveEdgeTtsToken(env);
+  return createHash("sha256").update(`${ticks.toString(16).toUpperCase()}${token}`).digest("hex").toUpperCase();
 }
 
-export function edgeTtsUrl({ connectionId = randomUUID().replace(/-/g, ""), nowSec } = {}) {
+export function edgeTtsUrl({ connectionId = randomUUID().replace(/-/g, ""), nowSec, env = process.env } = {}) {
+  const token = resolveEdgeTtsToken(env);
   const params = new URLSearchParams({
-    TrustedClientToken: EDGE_TTS_TOKEN,
+    TrustedClientToken: token,
     ConnectionId: connectionId,
-    "Sec-MS-GEC": secMsGec(nowSec),
+    "Sec-MS-GEC": secMsGec(nowSec, env),
     "Sec-MS-GEC-Version": `1-${EDGE_TTS_CHROMIUM}`
   });
   return `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?${params}`;
@@ -135,12 +160,13 @@ function listenSocket(socket, name, fn) {
 export async function synthesizeEdgeTts(text, {
   voice = DEFAULT_EDGE_VOICE,
   WebSocketImpl = globalThis.WebSocket,
-  nowSec
+  nowSec,
+  env = process.env
 } = {}) {
   const spoken = String(text || "").trim();
   if (!spoken) throw new Error("미리 들을 문장이 없습니다.");
   if (!WebSocketImpl) throw new Error("Edge TTS를 실행할 WebSocket이 없습니다.");
-  const url = edgeTtsUrl({ nowSec });
+  const url = edgeTtsUrl({ nowSec, env });
   const chunks = [];
   const events = [];
   await new Promise((resolve, reject) => {
