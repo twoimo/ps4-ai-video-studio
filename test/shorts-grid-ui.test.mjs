@@ -205,6 +205,9 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
   assert.equal(/\.watch-back\s*\{[^}]*border-radius:\s*999px/.test(css), false);
   assert.equal(/\.watch-back\s*\{[^}]*background:\s*rgba/.test(css), false);
+  assert.equal(css.includes(".watch-mute"), false);
+  assert.equal(css.includes(".watch-actions"), false);
+  assert.equal(css.includes(".watch-sheet"), false);
   const watchSlide = app.slice(app.indexOf("function renderWatchSlide"), app.indexOf("function bindWatchSlide"));
   assert.match(app, /watch-back[\s\S]*watch-slide-chrome[\s\S]*<\/div><\/div><\/article>/);
   assert.match(app, /class="watch-back"/);
