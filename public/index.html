@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0b0e14" />
+    <meta name="theme-color" content="#0b0d12" />
     <title>PS4_JUSTDOIT</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -15,7 +15,7 @@
           <button type="button" class="watch-close watch-back" aria-label="닫기">×</button>
           <button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
           <div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
-          <div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>
+          <div class="watch-slide-chrome"><div class="watch-meta"><h2></h2><p class="watch-caption-muted"></p></div></div>
         </div>
         <p class="watch-empty" id="watch-empty" hidden>재생할 영상이 없습니다. 라이브러리에서 초안을 확인하세요.</p>
       </div>
@@ -31,6 +31,11 @@
       </a>
       <div class="studio-chrome-actions">
         <div id="studio-chips" class="studio-chips" hidden></div>
+        <button type="button" class="library-more-toggle" id="open-backlot" aria-label="보드">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M3 5h8v6H3zm10 0h8v6h-8zM3 13h8v6H3zm10 0h8v6h-8z"/>
+          </svg>
+        </button>
         <button type="button" class="library-more-toggle" id="library-more" aria-label="메뉴">
           <svg class="library-gear" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
             <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.6.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.8 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.92 14.1a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.22l2.39-.96c.49.4 1.03.71 1.63.95l.36 2.54c.05.24.25.41.49.41h3.8c.24 0 .45-.17.5-.41l.36-2.54c.6-.24 1.14-.55 1.63-.95l2.39.96c.25.12.54.02.68-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
@@ -43,8 +48,15 @@
         <button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠">
           <div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div>
         </button>
+        <article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>
+        <article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>
+        <article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>
+        <article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>
+        <article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>
+        <article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>
       </div>
     </main>
+    <button type="button" class="short-create-fab" id="short-create" aria-label="새 쇼츠">+</button>
 
     <div class="studio-overlay feed-card" id="menu-overlay" hidden>
       <div class="overlay-backdrop" data-close-menu></div>
@@ -189,7 +201,22 @@
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel template-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="template-title">
         <button type="button" class="draft-close" id="close-template" aria-label="닫기">×</button>
-        <div id="template-root" class="template-root"><p id="template-title">잠긴 프롬프트를 불러오는 중</p></div>
+        <div id="template-root" class="template-root"><h2 id="template-title">템플릿</h2><div class="skel skel-title"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div></div>
+      </div>
+    </div>
+
+    <div class="studio-overlay feed-card" id="backlot-overlay" hidden>
+      <div class="overlay-backdrop" data-close-view="grid"></div>
+      <div class="overlay-panel backlot-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="backlot-title">
+        <button type="button" class="draft-close" id="close-backlot" aria-label="닫기">×</button>
+        <h2 id="backlot-title">보드</h2>
+        <div class="backlot-split">
+          <div class="backlot-stage">
+            <video id="backlot-preview-video" playsinline></video>
+          </div>
+          <div class="backlot-board" id="backlot-board" aria-label="보드 목록"></div>
+        </div>
+        <p class="backlot-note">자막·대본은 재료 창에서 고치세요.</p>
       </div>
     </div>
 
@@ -197,7 +224,7 @@
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel machine-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="machine-title">
         <button type="button" class="draft-close" id="close-machine" aria-label="닫기">×</button>
-        <div id="machine-root" class="machine-root"><h2 id="machine-title">사양</h2></div>
+        <div id="machine-root" class="machine-root"><h2 id="machine-title">사양</h2><div class="skel skel-title"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div></div>
       </div>
     </div>
 
@@ -207,7 +234,12 @@
         <button type="button" class="draft-close" id="close-short" aria-label="닫기">×</button>
         <div class="short-detail-layout">
           <section class="job-detail" id="job-detail" aria-live="polite">
-            <p id="short-detail-title">쇼츠를 선택하면 화면이 열립니다.</p>
+            <h2 id="short-detail-title">초안</h2>
+            <div class="skel skel-title"></div>
+            <div class="skel skel-line"></div>
+            <div class="skel skel-line"></div>
+            <div class="skel skel-line"></div>
+            <div class="skel skel-line"></div>
           </section>
           <section class="live-factory" id="live-factory" aria-live="polite" hidden></section>
         </div>

@@ -94,6 +94,14 @@ export function isWatchableShort(job = {}) {
   return Boolean(shortPreview(job).videoUrl);
 }
 
+export function backlotMasterUrl(job = {}) {
+  const artifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+  const pick = (predicate) => artifacts.find((artifact) => artifact?.url && predicate(artifact))?.url || "";
+  return pick((artifact) => /(?:^|\/)master\.mp4$/i.test(artifact.name || "") || artifact.kind === "master-video")
+    || pick((artifact) => /(?:^|\/)final\.mp4$/i.test(artifact.name || "") || artifact.kind === "video")
+    || "";
+}
+
 export function channelOneLiner(job = {}, editorial = null) {
   const fact = Array.isArray(job.facts) ? job.facts.find(Boolean) : "";
   if (fact) return String(fact).replace(/\s+/g, " ").trim();
