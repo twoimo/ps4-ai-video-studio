@@ -8,7 +8,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { generateGeminiClips } from "./gemini-browser.mjs";
 import { generateLocalVideoClips } from "./local-video-provider.mjs";
-import { buildGrokImagineScript, FACTORY_CLIP_COUNT, PROVIDER_ID as GROK_IMAGINE_PROVIDER, SHOT_DURATION_SEC, unsupportedProviderMessage, normalizeFacts } from "./grok-imagine-factory.mjs";
+import { buildGrokImagineScript, FACTORY_CLIP_COUNT, inspectJobPrompts, PROVIDER_ID as GROK_IMAGINE_PROVIDER, SHOT_DURATION_SEC, unsupportedProviderMessage, normalizeFacts } from "./grok-imagine-factory.mjs";
 import { sanitizeWorldSlotOverrides } from "./grok-imagine-template.mjs";
 import { generateGrokImagineFactory } from "./grok-imagine-provider.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
@@ -18,6 +18,7 @@ export const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = join(ROOT, "data");
 export const WORKSPACE_DIR = join(ROOT, "workspace");
 export const JOBS_DIR = join(WORKSPACE_DIR, "jobs");
+export const FACTORY_QUEUE_PATH = join(WORKSPACE_DIR, "factory-queue.json");
 export const ANALYSIS_PATH = join(DATA_DIR, "channel-analysis.json");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
@@ -85,6 +86,85 @@ export async function updateJob(jobId, patch) {
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
   await writeJob(next);
   return next;
+}
+
+export async function deleteJob(jobId) {
+  const job = await readJob(jobId);
+  if (!["draft", "failed", "queued"].includes(job.status)) {
+    const error = new Error("초안·실패·대기 작업만 삭제할 수 있습니다.");
+    error.status = 409;
+    throw error;
+  }
+  await rm(join(JOBS_DIR, jobId), { recursive: true, force: true });
+  return { id: jobId, deleted: true };
+}
+
+export function normalizeShotOverrides(input) {
+  const next = {};
+  if (!input) return next;
+  const entries = Array.isArray(input)
+    ? input.map((value, index) => [value?.index ?? index + 1, value])
+    : Object.entries(input);
+  for (const [key, value] of entries) {
+    if (!value || typeof value !== "object") continue;
+    const index = Number(value.index ?? key);
+    if (!Number.isInteger(index) || index < 1) continue;
+    const override = {};
+    if (value.prompt != null || value.visualPrompt != null) override.prompt = String(value.prompt ?? value.visualPrompt);
+    if (value.animatePrompt != null) override.animatePrompt = String(value.animatePrompt);
+    if (value.caption != null) override.caption = String(value.caption);
+    if (Object.keys(override).length) next[index] = override;
+  }
+  return next;
+}
+
+export function applyShotOverrides(script, overrides) {
+  const map = normalizeShotOverrides(overrides);
+  if (!script?.segments || !Object.keys(map).length) return script;
+  return {
+    ...script,
+    segments: script.segments.map((segment) => {
+      const override = map[segment.index];
+      if (!override) return segment;
+      return {
+        ...segment,
+        visualPrompt: override.prompt ?? segment.visualPrompt,
+        animatePrompt: override.animatePrompt ?? segment.animatePrompt,
+        caption: override.caption ?? segment.caption,
+        narration: override.caption ?? segment.narration
+      };
+    })
+  };
+}
+
+function normalizeDraftFacts(input, fallback) {
+  if (input == null) return fallback;
+  if (typeof input === "string") return normalizeFacts(input.split(/\r?\n/));
+  return normalizeFacts(input);
+}
+
+export async function saveJobDraft(jobId, input = {}) {
+  const current = await readJob(jobId);
+  if (["running", "verifying"].includes(current.status)) {
+    const error = new Error("실행 중에는 초안을 저장할 수 없습니다.");
+    error.status = 409;
+    throw error;
+  }
+  const topic = input.topic != null ? String(input.topic).trim() : String(current.topic || "").trim();
+  if (topic.length < 4) throw new Error("영상 주제를 4자 이상 입력하세요.");
+  const facts = normalizeDraftFacts(input.facts, current.facts);
+  const scriptDraft = input.scriptDraft != null ? String(input.scriptDraft) : (current.scriptDraft || "");
+  const worldSlots = input.worldSlots != null ? sanitizeWorldSlotOverrides(input.worldSlots) : (current.worldSlots || {});
+  const captions = input.captions == null ? current.captions : input.captions !== false;
+  const shotOverrides = input.shotOverrides != null ? normalizeShotOverrides(input.shotOverrides) : normalizeShotOverrides(current.shotOverrides);
+  const job = await updateJob(jobId, { topic, facts, scriptDraft, worldSlots, captions, shotOverrides });
+  let prompts = null;
+  if (job.provider === GROK_IMAGINE_PROVIDER) {
+    const script = applyShotOverrides(buildGrokImagineScript(job), job.shotOverrides);
+    await writeJsonAtomic(join(JOBS_DIR, jobId, "script.json"), script);
+    prompts = inspectJobPrompts(job, script);
+  }
+  return { job, prompts };
 }
 
 export async function listJobs() {
@@ -1148,7 +1228,9 @@ export async function runJob(jobId, options = {}) {
         message: "주제 비의존 슬롯과 6고유·1홀드 샷 목록을 짜는 중"
       }));
     }
-    const script = job.provider === GROK_IMAGINE_PROVIDER ? buildGrokImagineScript(job) : await buildScript(job);
+    const script = job.provider === GROK_IMAGINE_PROVIDER
+      ? applyShotOverrides(buildGrokImagineScript(job), job.shotOverrides)
+      : await buildScript(job);
     await writeJsonAtomic(join(jobDir, "script.json"), script);
     await progress(18, "기획", job.provider === GROK_IMAGINE_PROVIDER
       ? `공장 슬롯과 6고유·1홀드 샷 목록 ${script.segments.length}개를 준비했습니다.`

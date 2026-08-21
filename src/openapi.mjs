@@ -53,6 +53,20 @@ export function studioOpenApi() {
           operationId: "getJob",
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: { 200: { description: "작업" } }
+        },
+        patch: {
+          summary: "초안 저장",
+          operationId: "saveJobDraft",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "작업과 프롬프트" }, 409: { description: "실행 중" } }
+        }
+      },
+      "/api/jobs/{id}/draft": {
+        post: {
+          summary: "초안 저장",
+          operationId: "saveJobDraftPost",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "작업과 프롬프트" }, 409: { description: "실행 중" } }
         }
       },
       "/api/jobs/{id}/events": {
