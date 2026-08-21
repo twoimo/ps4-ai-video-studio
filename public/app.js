@@ -150,9 +150,9 @@ function sizeShortsGrid() {
   const gap = 2;
   const width = grid.clientWidth;
   if (!width) return;
-  const col = (window.innerHeight - 52 - gap) / 2 * 9 / 16;
+  const col = (window.innerHeight - 52 - gap) * 9 / 16;
   if (!(col > 0)) return;
-  const n = Math.max(2, Math.ceil((width + gap) / (col + gap)));
+  const n = Math.max(1, Math.ceil((width + gap) / (col + gap)));
   grid.style.setProperty("--n", String(n));
 }
 

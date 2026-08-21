@@ -102,7 +102,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.library\s*\{[^}]*padding:\s*8px 0 0/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
-  assert.match(css, /--rows:\s*2/);
+  assert.match(css, /--rows:\s*1/);
   assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
   assert.match(css, /--n:\s*4/);
@@ -129,7 +129,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /aria-label="\$\{escapeHtml\(job\.topic \|\| "쇼츠"\)\}"/);
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
-  assert.match(app, /Math\.max\(2,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
+  assert.match(app, /Math\.max\(1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
   assert.match(app, /innerHeight - 52 - gap/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
