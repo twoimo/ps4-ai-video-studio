@@ -99,8 +99,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal((home.match(/새 쇼츠/g) || []).length, 1);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /--poster-h:\s*calc\(100dvh - var\(--header\) - var\(--title\)/);
-  assert.match(css, /repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*var\(--col\)\)\)/);
-  assert.equal(css.includes("minmax(var(--col), 1fr)"), false);
+  assert.match(css, /repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/);
+  assert.equal(/\.shorts-grid\s*\{[^}]*justify-content:\s*start/.test(css), false);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
   assert.match(app, /status\.key === "draft" \? "—"/);

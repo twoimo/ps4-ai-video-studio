@@ -56,10 +56,9 @@ h1, h2, h3, p { margin-top: 0; }
   --poster-h: calc(100dvh - var(--header) - var(--title) - var(--pad));
   --col: min(calc(var(--poster-h) * 9 / 16), 100%);
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--col)), var(--col)));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--col)), 1fr));
   gap: var(--gap);
   align-content: start;
-  justify-content: start;
   width: 100%;
   min-height: 0;
 }
