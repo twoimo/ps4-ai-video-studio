@@ -67,6 +67,7 @@ h1, h2, h3, p { margin-top: 0; }
   overflow: auto;
   padding: 0;
 }
+.feed-sentinel { height: 1px; width: 100%; grid-column: 1 / -1; }
 .short-card { position: relative; display: block; width: 100%; text-align: left; color: var(--text); padding: 0; overflow: visible; }
 .short-card-open { display: block; width: 100%; text-align: left; color: inherit; padding: 0; }
 .short-card-detail { position: absolute; left: 6px; bottom: 6px; z-index: 2; margin: 0; padding: 0; color: var(--muted); font-size: 12px; }

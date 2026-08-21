@@ -17,6 +17,7 @@ const state = {
   poll: null,
   returnToWatch: false,
   watchObserver: null,
+  feedObserver: null,
   watchLockUntil: 0
 };
 
@@ -158,6 +159,35 @@ function sizeShortsGrid() {
 
 function createTileMarkup() {
   return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
+}
+
+function jobCardsMarkup() {
+  return state.jobs.map(renderShortCard).join("");
+}
+
+function appendFeedPage() {
+  const grid = $("#shorts-grid");
+  const sentinel = grid?.querySelector(".feed-sentinel");
+  if (!grid || !sentinel || !state.jobs.length) return;
+  const copies = grid.querySelectorAll(".short-card[data-job-id]").length / state.jobs.length;
+  if (copies >= 12) return;
+  const slot = document.createElement("template");
+  slot.innerHTML = jobCardsMarkup();
+  const cards = [...slot.content.querySelectorAll(".short-card[data-job-id]")];
+  sentinel.before(slot.content);
+  cards.forEach(bindShortCard);
+}
+
+function bindFeedScroll() {
+  const grid = $("#shorts-grid");
+  state.feedObserver?.disconnect();
+  state.feedObserver = null;
+  const sentinel = grid?.querySelector(".feed-sentinel");
+  if (!grid || !sentinel) return;
+  state.feedObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) appendFeedPage();
+  }, { root: grid, rootMargin: "600px" });
+  state.feedObserver.observe(sentinel);
 }
 
 function bust(url, token) {
@@ -403,16 +433,18 @@ function patchGridCard(job) {
   if (!job?.id) return;
   const grid = $("#shorts-grid");
   if (!grid) return;
-  const card = grid.querySelector(`.short-card[data-job-id="${CSS.escape(job.id)}"]`);
-  if (!card) {
+  const cards = [...grid.querySelectorAll(`.short-card[data-job-id="${CSS.escape(job.id)}"]`)];
+  if (!cards.length) {
     renderJobs();
     return;
   }
-  const next = document.createElement("template");
-  next.innerHTML = renderShortCard(job);
-  const fresh = next.content.firstElementChild;
-  card.replaceWith(fresh);
-  bindShortCard(fresh);
+  cards.forEach((card) => {
+    const next = document.createElement("template");
+    next.innerHTML = renderShortCard(job);
+    const fresh = next.content.firstElementChild;
+    card.replaceWith(fresh);
+    bindShortCard(fresh);
+  });
 }
 
 function currentStageText(job = {}) {
@@ -453,9 +485,10 @@ function patchDetailProgress(job) {
 function renderJobs() {
   const grid = $("#shorts-grid");
   if (grid) {
-    grid.innerHTML = `${createTileMarkup()}${state.jobs.map(renderShortCard).join("")}`;
+    grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}<div class="feed-sentinel"></div>`;
     $("#create-tile")?.addEventListener("click", openCreate);
     $$(".short-card[data-job-id]").forEach(bindShortCard);
+    bindFeedScroll();
     sizeShortsGrid();
   }
   if (state.view === "watch") {
