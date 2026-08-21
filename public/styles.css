@@ -35,7 +35,7 @@ h1, h2, h3, p { margin-top: 0; }
 .studio-chrome-actions { display: flex; align-items: center; gap: 10px; }
 .library-brand { display: flex; align-items: center; gap: 8px; min-width: 0; color: inherit; }
 .library-brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; }
-.brand-mark { display: block; width: 22px; height: 22px; color: var(--accent); flex: 0 0 auto; }
+.brand-mark { display: block; width: 24px; height: 24px; aspect-ratio: 1 / 1; flex: 0 0 24px; border-radius: 5px; background: var(--accent); color: #11170a; }
 .library { width: 100%; height: 100dvh; margin: 0; padding: 8px 0 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .library-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; min-height: 36px; }
 .library-more { position: relative; }

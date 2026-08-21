@@ -160,7 +160,8 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="watch-feed"/);
   assert.match(home, /class="library-brand"/);
   assert.match(home, /class="brand-mark"/);
-  assert.match(home, /<svg class="brand-mark"[^>]*width="22"[^>]*height="22"/);
+  assert.match(home, /<svg class="brand-mark"[^>]*width="24"[^>]*height="24"/);
+  assert.equal(/<svg class="brand-mark"[\s\S]*?<rect/.test(home), false);
   assert.match(home, /<svg class="brand-mark"[\s\S]*<h1>PS4_JUSTDOIT<\/h1>/);
   assert.match(home, /<h1>PS4_JUSTDOIT<\/h1>/);
   assert.equal(home.includes("library-brand-sub"), false);
@@ -192,9 +193,13 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(html, /id="shorts">/);
   assert.match(home, /id="create-tile"/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*width:\s*22px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*height:\s*22px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent\)/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*width:\s*24px/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*height:\s*24px/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*aspect-ratio:\s*1\s*\/\s*1/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*flex:\s*0 0 24px/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*border-radius:\s*5px/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*background:\s*var\(--accent\)/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*color:\s*#11170a/);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
   assert.match(app, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
   assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{APP_TITLE\}` : APP_TITLE/);
