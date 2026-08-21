@@ -206,7 +206,8 @@ body.overlay-open { overflow: hidden; }
 .watch-sheet summary { list-style: none; cursor: pointer; border-radius: 999px; padding: 8px 10px; background: rgba(8,10,15,.55); border: 1px solid rgba(255,255,255,.16); color: #fff; font-size: 12px; }
 .watch-sheet summary::-webkit-details-marker { display: none; }
 .watch-sheet-body { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 4; min-width: 188px; display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.35); }
-.watch-sheet-body .artifact-link, .watch-sheet-body button { text-align: left; }
+.watch-sheet-body .artifact-link, .watch-sheet-body button { text-align: left; padding: 10px 12px; border-radius: 7px; color: var(--text); font-size: 13px; }
+.watch-sheet-body button:hover, .watch-sheet-body .artifact-link:hover { background: var(--surface-2); }
 .watch-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; }
 .watch-empty[hidden] { display: none; }
 
