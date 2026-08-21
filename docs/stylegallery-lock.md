@@ -12,6 +12,7 @@ This handoff is consumer-local. Visual tokens and product chrome stay in `public
 - Library scroll `.library`: sticky-header + card-grid + frame 9/16
 - Watch scroll none: cover + frame 9/16 + overlay-stack; `body.watch-open #watch-feed { display:block }`; no scroll-snap
 - Overlays scroll on card: super-center + clamped-card `min(400px, calc(100vw - 40px))`; no right drawer
+- Board `#backlot-overlay`: cover + stage card-grid; scroll = panel
 
 ## Rejected
 

@@ -209,6 +209,35 @@ body.overlay-open { overflow: hidden; }
   box-shadow: 0 24px 64px rgba(0, 0, 0, .45);
   font-size: 15px;
 }
+#open-backlot { min-width: 44px; min-height: 44px; }
+#backlot-overlay .backlot-overlay-panel,
+.studio-overlay.feed-card .backlot-overlay-panel {
+  width: min(960px, calc(100vw - 24px));
+  max-width: min(960px, calc(100vw - 24px));
+  max-height: min(86dvh, 860px);
+  overflow: auto;
+}
+.backlot-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr); gap: 16px; min-height: 0; }
+@media (max-width: 719px) {
+  .backlot-split { grid-template-columns: 1fr; }
+}
+.backlot-stage {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  width: min(100%, calc(min(64dvh, 640px) * 9 / 16));
+  max-height: min(64dvh, 640px);
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #000;
+}
+#backlot-preview-video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.backlot-board { display: grid; gap: 8px; align-content: start; }
+.backlot-card { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.backlot-card.selected { border-color: rgba(183,243,107,.45); }
+.backlot-card-select { display: grid; gap: 4px; width: 100%; text-align: left; }
+.backlot-card-select b { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.backlot-note { margin: 16px 0 0; color: var(--muted); font-size: 13px; }
 .studio-overlay.feed-card .create-panel { width: 100%; max-width: none; min-height: 0; }
 .menu-overlay-panel .library-menu { position: static; right: auto; top: auto; min-width: 0; display: grid; padding: 0; border: 0; border-radius: 12px; background: var(--surface-2); box-shadow: none; }
 .menu-overlay-panel .library-menu button { min-height: 48px; font-size: 15px; }

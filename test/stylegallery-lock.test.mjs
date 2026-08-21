@@ -29,6 +29,7 @@ test("lock doc declares handoff and the pinned pattern stack", async () => {
   assert.match(lock, /Library scroll `?\.library`?: sticky-header \+ card-grid \+ frame 9\/16/);
   assert.match(lock, /Watch scroll none: cover \+ frame 9\/16 \+ overlay-stack; `body\.watch-open #watch-feed \{ display:block \}`; no scroll-snap/);
   assert.match(lock, /Overlays scroll on card: super-center \+ clamped-card `min\(400px, calc\(100vw - 40px\)\)`; no right drawer/);
+  assert.match(lock, /Board `#backlot-overlay`: cover \+ stage card-grid; scroll = panel/);
   assert.match(lock, /scroll-snap on watch/);
   assert.match(lock, /right inspect drawer/);
   assert.match(lock, /chrome leaking off 9:16/);
@@ -60,4 +61,32 @@ test("CSS tokens, watch-open display:block, and no 쇼츠 공장", async () => {
   assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(app.includes("쇼츠 공장"), false);
   assert.match(html, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.equal(html.includes("쇤츠 공장"), false);
+  assert.equal(css.includes("쇤츠 공장"), false);
+});
+
+test("backlot overlay is a wide board with video and no caption editor", async () => {
+  const html = await readFile(join(root, "public/index.html"), "utf8");
+  const css = await readFile(join(root, "public/styles.css"), "utf8");
+  const app = await readFile(join(root, "public/app.js"), "utf8");
+  const start = html.indexOf('id="backlot-overlay"');
+  const end = html.indexOf('id="machine-overlay"');
+  const overlay = start > 0 && end > start ? html.slice(start, end) : "";
+  assert.match(html, /id="open-backlot"[^>]*aria-label="보드"/);
+  assert.match(overlay, /id="backlot-preview-video"/);
+  assert.match(overlay, /id="backlot-board"/);
+  assert.match(overlay, /자막·대본은 재료 창에서 고치세요/);
+  assert.equal(overlay.includes("<textarea"), false);
+  assert.equal(overlay.includes("captions.ass"), false);
+  assert.equal(overlay.includes("inspect-shot-caption"), false);
+  assert.match(css, /#backlot-overlay \.backlot-overlay-panel[\s\S]*min\(960px,\s*calc\(100vw - 24px\)\)/);
+  assert.match(css, /#backlot-preview-video[\s\S]*object-fit:\s*cover/);
+  assert.match(css, /body\.watch-open \.watch-feed\s*\{[^}]*display:\s*block/);
+  assert.match(app, /#backlot-preview-video/);
+  assert.match(app, /backlotMasterUrl/);
+  assert.match(app, /초안 열기/);
+  assert.match(app, /pauseBacklotPreview/);
+  assert.equal(app.includes("muted = true"), false);
+  assert.equal(overlay.includes("muted"), false);
+  assert.equal(html.includes("쇼츠 공장"), false);
 });

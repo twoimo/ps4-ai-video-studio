@@ -1,14 +1,15 @@
-import { channelOneLiner, formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { backlotMasterUrl, channelOneLiner, formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const APP_TITLE = "PS4_JUSTDOIT";
-const VIEWS = ["create", "detail", "template", "settings", "machine", "watch", "grid"];
+const VIEWS = ["create", "detail", "template", "settings", "machine", "backlot", "watch", "grid"];
 const state = {
   jobs: [],
   selectedJobId: null,
   highlightJobId: null,
+  backlotJobId: null,
   view: "grid",
   template: null,
   createPreview: null,
@@ -18,6 +19,7 @@ const state = {
   livePoll: null,
   poll: null,
   returnToWatch: false,
+  returnToBacklot: false,
   watchObserver: null,
   feedObserver: null,
   watchLockUntil: 0,
@@ -66,6 +68,7 @@ function hashForView(view) {
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "template") return "#template";
   if (view === "settings") return "#settings";
+  if (view === "backlot") return "#backlot";
   return "#shorts";
 }
 
@@ -130,19 +133,23 @@ function setView(view, options = {}) {
   state.view = next;
   if (state.view !== "watch") closeOpenWatchInspect();
   document.body.classList.toggle("watch-open", state.view === "watch");
-  document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine"].includes(state.view));
+  document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine", "backlot"].includes(state.view));
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   const machineOverlay = $("#machine-overlay");
   if (machineOverlay) machineOverlay.hidden = state.view !== "machine";
+  const backlotOverlay = $("#backlot-overlay");
+  if (backlotOverlay) backlotOverlay.hidden = state.view !== "backlot";
+  if (state.view !== "backlot") pauseBacklotPreview();
   const menuOverlay = $("#menu-overlay");
   if (menuOverlay && next !== "grid") menuOverlay.hidden = true;
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
   const openingWatch = state.view === "watch";
   if (openingWatch) {
+    pauseBacklotPreview();
     document.querySelectorAll(".preview-wrap video, .shorts-grid video, audio").forEach((media) => {
       try { media.pause(); } catch { /* ignore leftover preview/grid/audio */ }
     });
@@ -173,6 +180,10 @@ function setView(view, options = {}) {
   if (state.view === "template") trapOverlay("#template-overlay");
   if (state.view === "settings") trapOverlay("#settings-overlay");
   if (state.view === "machine") trapOverlay("#machine-overlay");
+  if (state.view === "backlot") {
+    trapOverlay("#backlot-overlay");
+    renderBacklotBoard();
+  }
   if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
   if (state.view === "machine") renderMachineSheet();
@@ -180,6 +191,10 @@ function setView(view, options = {}) {
 }
 
 function syncDocumentTitle() {
+  if (state.view === "backlot") {
+    document.title = `보드 · ${APP_TITLE}`;
+    return;
+  }
   if (state.view === "template") {
     document.title = `템플릿 · ${APP_TITLE}`;
     return;
@@ -204,6 +219,10 @@ function applyHash() {
   }
   if (hash === "settings") {
     setView("settings", { skipHash: true });
+    return;
+  }
+  if (hash === "backlot") {
+    setView("backlot", { skipHash: true });
     return;
   }
   if (hash === "watch" || hash.startsWith("watch/")) {
@@ -484,9 +503,111 @@ function openJob(jobId) {
 function openDetail(jobId) {
   state.selectedJobId = jobId;
   if (state.view === "watch") state.returnToWatch = true;
+  if (state.view === "backlot") state.returnToBacklot = true;
   rememberOpener();
   setView("detail");
   renderJobs();
+}
+
+function backlotRank(job) {
+  const key = shortStatus(job).key;
+  if (key === "running") return 0;
+  if (key === "queued") return 1;
+  if (key === "draft") return 2;
+  if (key === "completed") return 3;
+  return 4;
+}
+
+function backlotJobs() {
+  return [...state.jobs].sort((left, right) => backlotRank(left) - backlotRank(right));
+}
+
+function attachBacklotVideo(video) {
+  if (!video) return video;
+  if (typeof video.setAttribute === "function") {
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+  }
+  video.playsInline = true;
+  video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  return video;
+}
+
+function pauseBacklotPreview() {
+  const video = $("#backlot-preview-video");
+  if (!video) return;
+  try { video.pause(); } catch { /* ignore backlot pause */ }
+}
+
+function playBacklotPreview(job) {
+  const video = attachBacklotVideo($("#backlot-preview-video"));
+  if (!video) return;
+  const src = backlotMasterUrl(job);
+  const poster = bust(shortThumbnail(job), job?.updatedAt);
+  if (poster) video.poster = poster;
+  if (!src) {
+    if (typeof video.removeAttribute === "function") video.removeAttribute("src");
+    try { video.load?.(); } catch { /* ignore empty src */ }
+    return;
+  }
+  if (video.getAttribute?.("src") !== src) video.src = src;
+  const play = video.play();
+  if (play && typeof play.catch === "function") play.catch(() => {});
+}
+
+function renderBacklotCard(job) {
+  const status = shortStatus(job);
+  const selected = job.id === state.backlotJobId ? " selected" : "";
+  const duration = status.key === "draft" ? "—" : formatClock(shortDurationSeconds(job));
+  const draft = status.key === "draft"
+    ? `<button type="button" class="ghost-button backlot-open-draft" data-job-id="${escapeHtml(job.id)}">초안 열기</button>`
+    : "";
+  return `<article class="backlot-card${selected}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="backlot-card-select" data-job-id="${escapeHtml(job.id)}"><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><b>${escapeHtml(job.topic || "쇼츠")}</b><span class="muted">${escapeHtml(duration)}</span></button>${draft}</article>`;
+}
+
+function selectBacklotJob(jobId) {
+  const job = state.jobs.find((item) => item.id === jobId) || backlotJobs()[0] || null;
+  state.backlotJobId = job?.id || null;
+  $$("#backlot-board .backlot-card").forEach((card) => {
+    card.classList.toggle("selected", card.dataset.jobId === state.backlotJobId);
+  });
+  if (job && shortStatus(job).key === "completed" && backlotMasterUrl(job)) playBacklotPreview(job);
+  else {
+    pauseBacklotPreview();
+    playBacklotPreview(job);
+  }
+}
+
+function renderBacklotBoard() {
+  const board = $("#backlot-board");
+  if (!board) return;
+  const jobs = backlotJobs();
+  if (!jobs.some((job) => job.id === state.backlotJobId)) {
+    const completed = jobs.find((job) => shortStatus(job).key === "completed" && backlotMasterUrl(job));
+    state.backlotJobId = completed?.id || jobs[0]?.id || null;
+  }
+  board.innerHTML = jobs.length
+    ? jobs.map(renderBacklotCard).join("")
+    : `<p class="empty-note">보드에 올릴 쇼츠가 없습니다.</p>`;
+  board.querySelectorAll(".backlot-card-select").forEach((button) => {
+    button.addEventListener("click", () => selectBacklotJob(button.dataset.jobId));
+  });
+  board.querySelectorAll(".backlot-open-draft").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDetail(button.dataset.jobId);
+    });
+  });
+  const selected = jobs.find((job) => job.id === state.backlotJobId);
+  if (selected) selectBacklotJob(selected.id);
+}
+
+function openBacklot(event) {
+  event?.preventDefault();
+  rememberOpener(event);
+  closeMenu();
+  setView("backlot");
 }
 
 const INSPECT_WORLD_SLOT_IDS = ["site", "weather", "everyday_thing", "hidden_thing", "materials", "wear", "trace", "palette"];
@@ -770,6 +891,10 @@ function renderJobs() {
   }
   if (state.view === "watch") {
     renderWatchFeed();
+    return;
+  }
+  if (state.view === "backlot") {
+    renderBacklotBoard();
     return;
   }
   if (state.view === "detail") {
@@ -1146,6 +1271,7 @@ async function refreshJobs() {
     state.jobs.forEach(patchGridCard);
     const selected = state.jobs.find((job) => job.id === selectedId);
     if (state.view === "watch") renderWatchFeed();
+    if (state.view === "backlot") renderBacklotBoard();
     if (state.view === "detail" && selected) {
       patchDetailProgress(selected);
       renderLiveFactory(selected);
@@ -1583,6 +1709,12 @@ function closeOverlays(event) {
     restoreOpener();
     return;
   }
+  if (state.returnToBacklot) {
+    state.returnToBacklot = false;
+    setView("backlot");
+    restoreOpener();
+    return;
+  }
   state.selectedJobId = state.view === "detail" ? null : state.selectedJobId;
   setView("grid");
   renderJobs();
@@ -1623,6 +1755,8 @@ function bindEvents() {
   $("#menu-batch")?.addEventListener("click", openBatch);
   $("#batch-draft")?.addEventListener("click", () => { void saveBatchDrafts(); });
   $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
+  $("#open-backlot")?.addEventListener("click", openBacklot);
+  $("#close-backlot")?.addEventListener("click", closeOverlays);
   $("#library-more")?.addEventListener("click", openMenu);
   $("#close-menu")?.addEventListener("click", closeMenu);
   $("#menu-import-ok")?.addEventListener("click", closeMenu);
@@ -1691,11 +1825,13 @@ function bindEvents() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       closeOpenWatchInspect();
+      pauseBacklotPreview();
       stopWatchFeed($("#watch-feed"));
     }
   });
   window.addEventListener("pagehide", () => {
     closeOpenWatchInspect();
+    pauseBacklotPreview();
     stopWatchFeed($("#watch-feed"));
   });
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });

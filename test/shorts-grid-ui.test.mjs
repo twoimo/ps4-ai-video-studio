@@ -15,7 +15,8 @@ import {
   shortStatus,
   shortStatusLabel,
   shortThumbnail,
-  shortUploadPack
+  shortUploadPack,
+  backlotMasterUrl
 } from "../public/shorts-ui.mjs";
 
 const publicDir = join(process.cwd(), "public");
@@ -281,6 +282,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(home.includes("<h1>쇼츠</h1>"), false);
   assert.equal(home.includes('class="sr-only">쇼츠'), false);
+  assert.match(home, /id="open-backlot"[^>]*aria-label="보드"/);
   assert.match(home, /id="library-more"/);
   assert.match(html, /id="menu-overlay"/);
   assert.match(html, /id="menu-title">메뉴</);
@@ -720,6 +722,32 @@ test("Shorts design system tokens, iOS dialog, FAB, and skeletons", async () => 
   assert.match(app, /id="save-draft"[^>]*>저장</);
   assert.match(app, /대본 없음/);
   assert.match(app, /슬롯 없음/);
+});
+
+test("backlot board lists jobs and plays burned-in master not chat", async () => {
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const overlay = html.slice(html.indexOf('id="backlot-overlay"'), html.indexOf('id="machine-overlay"'));
+  assert.match(html, /id="open-backlot"[^>]*aria-label="보드"/);
+  assert.match(overlay, /id="backlot-preview-video"[^>]*playsinline/);
+  assert.match(overlay, /id="backlot-board"/);
+  assert.equal(overlay.includes("<textarea"), false);
+  assert.equal(overlay.includes("muted"), false);
+  assert.match(css, /min\(960px,\s*calc\(100vw - 24px\)\)/);
+  assert.match(app, /function renderBacklotBoard/);
+  assert.match(app, /function pauseBacklotPreview/);
+  assert.match(app, /초안 열기/);
+  assert.equal(app.includes("muted = true"), false);
+  assert.equal(html.includes("쇼츠 공장"), false);
+  const job = {
+    artifacts: [
+      { name: "chat.mp4", kind: "chat-video", url: "/chat.mp4" },
+      { name: "master.mp4", kind: "master-video", url: "/master.mp4" }
+    ]
+  };
+  assert.equal(backlotMasterUrl(job), "/master.mp4");
+  assert.equal(shortPreview(job).videoUrl, "/chat.mp4");
 });
 
 test("grid cards skip 1x1 placeholder png and use real jpg", () => {
