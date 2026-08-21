@@ -144,15 +144,6 @@ function applyHash() {
   setView("grid", { skipHash: true });
 }
 
-function shortsGridN(jobCount = state.jobs.length) {
-  return Math.max(1, Math.ceil(Math.sqrt(1 + Number(jobCount || 0))));
-}
-
-function syncShortsGridSize(grid = $("#shorts-grid")) {
-  if (!grid) return;
-  grid.style.setProperty("--n", String(shortsGridN()));
-}
-
 function createTileMarkup() {
   return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
 }
@@ -450,7 +441,6 @@ function patchDetailProgress(job) {
 function renderJobs() {
   const grid = $("#shorts-grid");
   if (grid) {
-    syncShortsGridSize(grid);
     grid.innerHTML = `${createTileMarkup()}${state.jobs.map(renderShortCard).join("")}`;
     $("#create-tile")?.addEventListener("click", openCreate);
     $$(".short-card[data-job-id]").forEach(bindShortCard);
