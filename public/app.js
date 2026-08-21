@@ -15,7 +15,6 @@ const state = {
   sse: null,
   livePoll: null,
   poll: null,
-  muted: true,
   returnToWatch: false,
   watchObserver: null,
   watchLockUntil: 0
@@ -128,7 +127,7 @@ function applyHash() {
     setView("grid", { skipHash: true });
     return;
   }
-  if (hash === "short" || hash === "generation" || hash === "rendering") {
+  if (hash === "short") {
     if (state.selectedJobId && state.jobs.some((job) => job.id === state.selectedJobId)) {
       setView("detail", { skipHash: true });
       return;
@@ -159,15 +158,9 @@ function watchSignature() {
 }
 
 function renderWatchSlide(job) {
-  const status = shortStatus(job);
   const preview = shortPreview(job);
-  const duration = formatClock(shortDurationSeconds(job));
   const poster = bust(preview.poster, job.updatedAt);
-  const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
-  const retry = job.status === "failed"
-    ? `<button class="secondary-button watch-retry" type="button" data-job-id="${escapeHtml(job.id)}">다시 실행</button>`
-    : "";
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop muted preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" aria-hidden="true"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2><div class="watch-meta-row"><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="watch-duration">${escapeHtml(duration)}</span></div></div><div class="watch-actions"><button type="button" class="watch-mute" aria-pressed="${state.muted}">${state.muted ? "소리 켜기" : "음소거"}</button><details class="watch-sheet"><summary>작업</summary><div class="watch-sheet-body"><button type="button" class="watch-detail">상세</button>${downloads || "<p class=\"download-note\">내려받을 파일이 없습니다</p>"}${retry}</div></details></div></div></div></article>`;
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop muted preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" aria-hidden="true"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div></article>`;
 }
 
 function bindWatchSlide(slide) {
@@ -191,19 +184,6 @@ function bindWatchSlide(slide) {
   slide.querySelector(".watch-back")?.addEventListener("click", (event) => {
     event.stopPropagation();
     openHome(event);
-  });
-  slide.querySelector(".watch-mute")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    toggleWatchMute();
-  });
-  slide.querySelector(".watch-retry")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    state.selectedJobId = slide.dataset.jobId;
-    void runSelectedJob();
-  });
-  slide.querySelector(".watch-detail")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openDetail(slide.dataset.jobId);
   });
 }
 
@@ -253,27 +233,6 @@ function pauseAllWatchVideos() {
   $$(".watch-slide").forEach((slide) => slide.classList.remove("active"));
 }
 
-function syncMuteButtons() {
-  $$(".watch-mute").forEach((button) => {
-    button.setAttribute("aria-pressed", String(state.muted));
-    button.textContent = state.muted ? "소리 켜기" : "음소거";
-  });
-}
-
-function toggleWatchMute() {
-  state.muted = !state.muted;
-  const active = document.querySelector(".watch-slide.active video");
-  if (active) {
-    active.muted = state.muted;
-    if (!state.muted) active.play().catch(() => {
-      state.muted = true;
-      active.muted = true;
-      syncMuteButtons();
-    });
-  }
-  syncMuteButtons();
-}
-
 function activateWatchSlide(jobId) {
   $$(".watch-slide").forEach((slide) => {
     const video = slide.querySelector("video");
@@ -287,13 +246,11 @@ function activateWatchSlide(jobId) {
         video.playsInline = true;
         video.loop = true;
       }
-      video.muted = state.muted;
+      video.muted = true;
       const play = video.play();
       if (play) {
         play.catch(() => {
           video.muted = true;
-          state.muted = true;
-          syncMuteButtons();
           return video.play().catch(() => {});
         }).finally(() => slide.classList.remove("paused"));
       }
@@ -306,7 +263,6 @@ function activateWatchSlide(jobId) {
       }
     }
   });
-  syncMuteButtons();
 }
 
 function goToWatchIndex(index, { instant = false } = {}) {
@@ -329,16 +285,8 @@ function stepWatch(delta) {
 function patchWatchSlide(job) {
   const slide = document.querySelector(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`);
   if (!slide) return;
-  const status = shortStatus(job);
   const title = slide.querySelector(".watch-meta h2");
   if (title) title.textContent = job.topic || "쇼츠";
-  const badge = slide.querySelector(".watch-meta .short-status");
-  if (badge) {
-    badge.className = `short-status ${status.key}`;
-    badge.innerHTML = `<i></i>${escapeHtml(status.label)}`;
-  }
-  const duration = slide.querySelector(".watch-duration");
-  if (duration) duration.textContent = formatClock(shortDurationSeconds(job));
   const preview = shortPreview(job);
   if (preview.videoUrl) slide.dataset.videoUrl = preview.videoUrl;
 }
@@ -1167,10 +1115,6 @@ function bindEvents() {
         video.pause();
         slide.classList.add("paused");
       }
-    }
-    if (event.key === "m" || event.key === "M") {
-      event.preventDefault();
-      toggleWatchMute();
     }
   });
   document.addEventListener("visibilitychange", () => {
