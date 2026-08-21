@@ -96,10 +96,14 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /option value="grok-imagine" selected/);
   assert.match(html, /<details class="advanced-create"/);
   assert.match(html, /<summary>고급<\/summary>/);
-  assert.equal((home.match(/새 쇼츠/g) || []).length, 1);
+  assert.equal((home.match(/id="create-tile"/g) || []).length, 1);
+  assert.match(home, /id="create-tile"[\s\S]*새 쇼츠/);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
-  assert.match(css, /--poster-h:\s*calc\(100dvh - var\(--header\) - var\(--title\)/);
-  assert.match(css, /repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/);
+  assert.match(css, /--poster-h:\s*calc\(100cqh - var\(--title\)\)/);
+  assert.match(css, /container-type:\s*size/);
+  assert.match(css, /--cols:\s*max\(1,\s*round\(up,/);
+  assert.match(css, /repeat\(var\(--cols\),\s*minmax\(0,\s*1fr\)\)/);
+  assert.equal(/repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/.test(css), false);
   assert.equal(/\.shorts-grid\s*\{[^}]*justify-content:\s*start/.test(css), false);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
@@ -112,6 +116,9 @@ test("library and overlays fill the viewport instead of a phone column", async (
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   assert.match(css, /html,\s*body\s*\{[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.match(css, /\.library\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /\.library\s*\{[^}]*height:\s*100dvh/);
+  assert.match(css, /\.library\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.library\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /\.watch-feed\s*\{[^}]*height:\s*100dvh/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.match(css, /\.overlay-panel\s*\{[^}]*width:\s*100%[^}]*height:\s*100%/);
@@ -134,7 +141,10 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="shorts-grid"/);
   assert.match(home, /id="watch-feed"/);
   assert.match(home, /class="library-brand"/);
+  assert.match(home, /class="brand-mark"/);
+  assert.match(home, /<svg class="brand-mark"[\s\S]*<h1>PS4_JUSTDOIT<\/h1>/);
   assert.match(home, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.equal(home.includes("library-brand-sub"), false);
   assert.equal(home.includes("건축사전"), false);
   assert.equal(home.includes("쇼츠 공장"), false);
   assert.equal(html.includes("쇼츠 공장"), false);
@@ -163,7 +173,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(html, /id="shorts">/);
   assert.match(home, /id="create-tile"/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
-  assert.match(css, /--header:\s*52px/);
+  assert.match(css, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent\)/);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
   assert.match(app, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
   assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{APP_TITLE\}` : APP_TITLE/);
