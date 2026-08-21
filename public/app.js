@@ -357,7 +357,7 @@ function renderShortCard(job) {
   const highlight = job.id === state.highlightJobId ? " just-created" : "";
   const selected = job.id === state.selectedJobId && state.view === "detail" ? " selected" : "";
   const progress = Number(job.progress || 0);
-  const fallback = escapeHtml((job.topic || "쇼츠").slice(0, 2));
+  const fallback = escapeHtml(status.label);
   const media = thumb
     ? `<img src="${escapeHtml(thumb)}" alt="" />`
     : `<div class="thumb-fallback" aria-hidden="true"><span>${fallback}</span></div>`;

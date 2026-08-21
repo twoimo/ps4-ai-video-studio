@@ -107,6 +107,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(/\.shorts-grid\s*\{[^}]*justify-content:\s*start/.test(css), false);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
+  assert.match(app, /const fallback = escapeHtml\(status\.label\)/);
+  assert.equal(app.includes("(job.topic || \"쇼츠\").slice(0, 2)"), false);
+  assert.match(css, /\.thumb-fallback\s*\{[^}]*font-size:\s*13px/);
+  assert.match(css, /\.thumb-fallback\s*\{[^}]*font-weight:\s*500/);
   assert.match(app, /status\.key === "draft" \? "—"/);
   assert.match(app, /ttsVoice/);
   assert.match(app, /create-tts-voice/);
