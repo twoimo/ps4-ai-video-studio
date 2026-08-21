@@ -233,6 +233,17 @@ test("Edge TTS decodes Blob, ArrayBuffer, and binary metadata frames", async () 
   assert.equal(fromAb.metadata.Metadata[0].Data.text.Text, "지붕");
   const ended = await decodeTtsSocketData("Path:turn.end\r\n\r\n");
   assert.equal(ended.turnEnd, true);
+  const mpeg = Buffer.from([0xff, 0xf3, 0x64, 0xc4, 0x00, 0x00, 0x00, 0x03]);
+  // Official layout: u16be length counts the 2-byte prefix, body starts at length+2.
+  const officialHeaderText = Buffer.from("X-RequestId:1\r\nContent-Type:audio/mpeg\r\nPath:audio", "utf8");
+  const officialLen = 2 + officialHeaderText.length;
+  const official = Buffer.alloc(officialLen + 2 + mpeg.length);
+  official.writeUInt16BE(officialLen, 0);
+  officialHeaderText.copy(official, 2);
+  official.write("\r\n", officialLen, "ascii");
+  mpeg.copy(official, officialLen + 2);
+  const fromLive = await decodeTtsSocketData(official);
+  assert.deepEqual(Buffer.from(fromLive.audio), mpeg);
 });
 
 test("Edge TTS mock WebSocket returns Korean preview audio and word timestamps", async () => {

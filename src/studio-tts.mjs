@@ -159,20 +159,37 @@ async function socketBytes(data) {
   return data;
 }
 
+function splitBinaryTtsFrame(raw) {
+  const blank = raw.indexOf("\r\n\r\n");
+  if (blank >= 0) {
+    return { header: raw.subarray(0, blank).toString("utf8"), body: raw.subarray(blank + 4) };
+  }
+  // Live Microsoft frames: 2-byte big-endian header length, headers, then body.
+  // There is no blank line; edge-tts reads body at headerLength + 2.
+  if (raw.length >= 2) {
+    const headerLength = raw.readUInt16BE(0);
+    if (headerLength >= 12 && headerLength + 2 <= raw.length) {
+      const header = raw.subarray(0, headerLength).toString("utf8");
+      if (/Path:/i.test(header)) {
+        return { header, body: raw.subarray(headerLength + 2) };
+      }
+    }
+  }
+  return { header: "", body: raw };
+}
+
 export async function decodeTtsSocketData(data) {
   const payload = await socketBytes(data);
   if (typeof payload === "string") return parseTextFrame(payload);
   if (!payload || typeof payload !== "object") return parseTextFrame(String(payload ?? ""));
   const raw = Buffer.from(payload);
-  const headerEnd = raw.indexOf("\r\n\r\n");
-  const header = headerEnd >= 0 ? raw.subarray(0, headerEnd).toString("utf8") : "";
-  const body = headerEnd >= 0 ? raw.subarray(headerEnd + 4) : raw;
+  const { header, body } = splitBinaryTtsFrame(raw);
   if (/Path:audio\.metadata/i.test(header)) {
     try { return { metadata: JSON.parse(body.toString("utf8")) }; } catch { return { metadata: null }; }
   }
   if (/Path:turn\.end/i.test(header) || /Path:turn\.end/i.test(raw.toString("utf8"))) return { turnEnd: true };
   if (/Path:audio/i.test(header)) return { audio: body };
-  if (headerEnd < 0) return { audio: raw };
+  if (!header) return { audio: raw };
   return parseTextFrame(raw.toString("utf8"));
 }
 
