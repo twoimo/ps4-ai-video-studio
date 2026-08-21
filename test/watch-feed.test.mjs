@@ -128,6 +128,14 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(app, /class="watch-close watch-back"[^>]*aria-label="닫기">×</);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
+  assert.match(css, /\.watch-close\s*\{[^}]*background:\s*none/);
+  assert.match(css, /\.watch-close\s*\{[^}]*border:\s*0/);
+  assert.match(css, /\.watch-close\s*\{[^}]*border-radius:\s*0/);
+  assert.match(css, /\.watch-back\s*\{[^}]*background:\s*none/);
+  assert.match(css, /\.watch-back\s*\{[^}]*border:\s*0/);
+  assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
+  assert.equal(/\.watch-close\s*\{[^}]*border-radius:\s*50%/.test(css), false);
+  assert.equal(/\.watch-close\s*\{[^}]*background:\s*rgba/.test(css), false);
   assert.match(css, /\.watch-dl\s*\{[^}]*top:\s*64px/);
 });
 
