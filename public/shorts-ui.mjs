@@ -138,3 +138,14 @@ export function shortDownloads(job = {}) {
   take((artifact) => /(?:^|\/)captions\.ass$/i.test(artifact.name || ""));
   return picks;
 }
+
+export function shortUploadPack(job = {}) {
+  const downloads = shortDownloads(job);
+  const facts = Array.isArray(job.facts) ? job.facts.map((item) => String(item).trim()).filter(Boolean) : [];
+  const description = [...facts, String(job.scriptDraft || "").trim()].filter(Boolean).join("\n");
+  return {
+    title: String(job.topic || "").trim(),
+    description,
+    links: downloads.filter((item) => /마스터|파트|ASS/.test(item.label))
+  };
+}

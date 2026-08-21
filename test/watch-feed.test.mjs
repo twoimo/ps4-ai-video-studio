@@ -64,19 +64,19 @@ test("syncWatchFeed stops videos when the surface is not watch", () => {
   assert.equal(videos[0].currentTime, 0);
 });
 
-test("bindWatchFeed stops then calls onBack for letterbox and back clicks", () => {
+test("bindWatchFeed closes only on watch-close and ignores letterbox", () => {
   const videos = [fakeVideo(3)];
   const root = fakeRoot(videos);
   const backs = [];
   bindWatchFeed(root, (event) => backs.push(event.via));
   const handler = root.listeners.find((item) => item.type === "click").handler;
   handler({ target: { closest: (sel) => sel === ".watch-stage" ? {} : null }, via: "stage" });
+  handler({ target: { closest: () => null }, via: "letterbox" });
   assert.equal(backs.length, 0);
   assert.equal(videos[0].pauseCalls, 0);
-  handler({ target: { closest: (sel) => sel === ".watch-back" ? {} : null }, via: "back" });
-  handler({ target: { closest: () => null }, via: "letterbox" });
-  assert.deepEqual(backs, ["back", "letterbox"]);
-  assert.equal(videos[0].pauseCalls, 2);
+  handler({ target: { closest: (sel) => sel === ".watch-close, .watch-back" || sel === ".watch-close" || sel === ".watch-back" ? {} : null }, via: "close" });
+  assert.deepEqual(backs, ["close"]);
+  assert.equal(videos[0].pauseCalls, 1);
   assert.equal(videos[0].currentTime, 0);
 });
 
@@ -109,6 +109,35 @@ test("playWatchFeed unmutes before play", () => {
   assert.equal(video.playCalls, 1);
 });
 
+test("playWatchFeed never assigns muted true", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  assert.equal(feed.includes("muted = true"), false);
+  assert.equal(app.includes("muted = true"), false);
+  assert.equal(feed.includes("muted=true"), false);
+  assert.match(feed, /video\.muted = false/);
+});
+
+test("watch hash uses #watch/ and close is × top-right", async () => {
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(app, /#watch\/\$\{/);
+  assert.match(app, /hash\.startsWith\("watch\/"\)/);
+  assert.match(app, /replaceWatchHash/);
+  assert.match(app, /history\.replaceState\(null, "", next\)/);
+  assert.match(app, /class="watch-close watch-back"[^>]*aria-label="닫기">×</);
+  assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
+  assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
+  assert.match(css, /\.watch-dl\s*\{[^}]*top:\s*64px/);
+});
+
+test("rejected play shows tap-to-play on the slide", async () => {
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  assert.match(app, /탭해서 재생/);
+  assert.match(app, /setWatchPlayGate\(slide, true\)/);
+  assert.match(app, /class="watch-play"/);
+});
+
 test("watch-feed module and app wire stop before leave", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
@@ -120,6 +149,8 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(feed, /export function bindWatchFeed/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
+  assert.match(feed, /\.watch-close, \.watch-back/);
+  assert.equal(feed.includes("letterbox"), false);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view\)/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /pagehide/);

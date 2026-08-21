@@ -187,6 +187,38 @@ test("serial grok queue starts one job and holds the next", async () => {
   await gemini;
 });
 
+test("factory queue persists waiting and skips completed on restore", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-queue-"));
+  const persistPath = join(root, "factory-queue.json");
+  const jobs = {
+    wait: { id: "wait", provider: "grok-imagine", status: "queued" },
+    done: { id: "done", provider: "grok-imagine", status: "completed" },
+    run: { id: "run", provider: "grok-imagine", status: "running" }
+  };
+  const launched = [];
+  await writeFile(persistPath, JSON.stringify({ waiting: ["wait", "done"], runningId: "run" }));
+  const queue = createGrokFactoryQueue({
+    persistPath,
+    isFrozen: () => true,
+    readJob: async (id) => jobs[id],
+    updateJob: async (id, patch) => {
+      jobs[id] = { ...jobs[id], ...patch };
+      return jobs[id];
+    },
+    launch: (id) => {
+      launched.push(id);
+      return Promise.resolve();
+    }
+  });
+  const snap = await queue.restore();
+  assert.deepEqual(snap.waiting, ["run", "wait"]);
+  assert.equal(snap.runningId, null);
+  assert.deepEqual(launched, []);
+  const saved = JSON.parse(await readFile(persistPath, "utf8"));
+  assert.deepEqual(saved.waiting, ["run", "wait"]);
+  await rm(root, { recursive: true, force: true });
+});
+
 test("studio keeps import control and seed episode copy", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   const app = await readFile(join(process.cwd(), "public", "app.js"), "utf8");

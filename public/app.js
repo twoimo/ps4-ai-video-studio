@@ -1,4 +1,4 @@
-import { formatClock, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail } from "./shorts-ui.mjs";
+import { formatClock, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { bindWatchFeed, playWatchFeed, stopWatchFeed, syncWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
@@ -20,7 +20,9 @@ const state = {
   returnToWatch: false,
   watchObserver: null,
   feedObserver: null,
-  watchLockUntil: 0
+  watchLockUntil: 0,
+  createMode: "single",
+  focusOpener: null
 };
 
 function escapeHtml(value = "") {
@@ -59,10 +61,59 @@ function selectedJob() {
 
 function hashForView(view) {
   if (view === "create") return "#create";
-  if (view === "watch") return "#watch";
+  if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "template") return "#template";
   if (view === "settings") return "#settings";
   return "#shorts";
+}
+
+function replaceWatchHash(jobId) {
+  if (state.view !== "watch" || !jobId) return;
+  const next = `#watch/${jobId}`;
+  if (location.hash !== next) history.replaceState(null, "", next);
+}
+
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex=\"-1\"])";
+
+function overlayFocusables(root) {
+  if (!root || typeof root.querySelectorAll !== "function") return [];
+  return [...root.querySelectorAll(FOCUSABLE)].filter((node) => !node.hidden && node.closest("[hidden]") == null);
+}
+
+function bindFocusTrap(root) {
+  if (!root || root.dataset.focusTrap === "1") return;
+  root.dataset.focusTrap = "1";
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const items = overlayFocusables(root);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+}
+
+function rememberOpener(event) {
+  state.focusOpener = event?.currentTarget || document.activeElement;
+}
+
+function restoreOpener() {
+  const opener = state.focusOpener;
+  state.focusOpener = null;
+  if (opener && typeof opener.focus === "function") opener.focus();
+}
+
+function trapOverlay(selector) {
+  const root = $(selector);
+  if (!root) return;
+  bindFocusTrap(root);
+  window.requestAnimationFrame(() => overlayFocusables(root)[0]?.focus());
 }
 
 function setView(view, options = {}) {
@@ -89,10 +140,15 @@ function setView(view, options = {}) {
     if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
   }
   if (state.view === "create") {
-    window.requestAnimationFrame(() => $("#topic")?.focus());
+    syncCreateMode();
+    trapOverlay("#create-overlay");
     void hydrateCreateSlots();
     void hydrateStudioSettings();
   }
+  if (state.view === "detail") trapOverlay("#short-overlay");
+  if (state.view === "template") trapOverlay("#template-overlay");
+  if (state.view === "settings") trapOverlay("#settings-overlay");
+  if (state.view === "machine") trapOverlay("#machine-overlay");
   if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
   if (state.view === "machine") renderMachineSheet();
@@ -127,7 +183,9 @@ function applyHash() {
     setView("settings", { skipHash: true });
     return;
   }
-  if (hash === "watch") {
+  if (hash === "watch" || hash.startsWith("watch/")) {
+    const jobId = hash.startsWith("watch/") ? decodeURIComponent(hash.slice("watch/".length)) : "";
+    if (jobId) state.selectedJobId = jobId;
     if (watchableJobs().length) {
       setView("watch", { skipHash: true, instant: true });
       return;
@@ -198,24 +256,28 @@ function renderWatchSlide(job) {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
   const downloads = shortDownloads(job).map((item) => `<a class="watch-dl-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div>${downloads ? `<div class="watch-dl">${downloads}</div>` : ""}</div></article>`;
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div>${downloads ? `<div class="watch-dl">${downloads}</div>` : ""}<button type="button" class="watch-materials">재료</button></div><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+}
+
+function setWatchPlayGate(slide, show) {
+  const button = slide?.querySelector(".watch-play");
+  if (button) button.hidden = !show;
 }
 
 function bindWatchSlide(slide) {
   const stage = slide.querySelector(".watch-stage");
   const video = slide.querySelector("video");
   const feed = slide.closest("#watch-feed") || $("#watch-feed");
-  slide.addEventListener("click", (event) => {
-    if (event.target.closest(".watch-stage")) return;
-    stopWatchFeed(feed);
-    openHome(event);
-  });
   stage?.addEventListener("click", (event) => {
-    if (event.target.closest("button, details, a")) return;
+    if (event.target.closest("button, details, a, .watch-inspect")) return;
     if (!slide.classList.contains("active") || !video) return;
     if (video.paused) {
-      if (document.body.classList.contains("watch-open")) playWatchFeed(video)?.catch(() => {});
-      else stopWatchFeed(feed);
+      const play = document.body.classList.contains("watch-open") ? playWatchFeed(video) : null;
+      if (play) {
+        play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
+      } else {
+        stopWatchFeed(feed);
+      }
       slide.classList.remove("paused");
     } else {
       video.pause();
@@ -231,10 +293,19 @@ function bindWatchSlide(slide) {
       progress?.setAttribute("aria-valuenow", String(value));
     }
   });
-  slide.querySelector(".watch-back")?.addEventListener("click", (event) => {
+  slide.querySelector(".watch-close")?.addEventListener("click", (event) => {
     event.stopPropagation();
     stopWatchFeed(feed);
     openHome(event);
+  });
+  slide.querySelector(".watch-play")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const play = playWatchFeed(video);
+    if (play) play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
+  });
+  slide.querySelector(".watch-materials")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    slide.querySelector(".watch-inspect")?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
   });
 }
 
@@ -253,7 +324,9 @@ function observeWatchSlides() {
         state.selectedJobId = jobId;
         syncDocumentTitle();
       }
+      replaceWatchHash(jobId);
       activateWatchSlide(jobId);
+      void hydrateWatchInspect(jobId);
     }, { root: scroller, threshold: [0.6, 0.85, 1] });
   }
   state.watchObserver.disconnect();
@@ -305,12 +378,12 @@ function activateWatchSlide(jobId) {
       if (active && document.body.classList.contains("watch-open")) {
         const play = playWatchFeed(video);
         if (play) {
-          play.catch(() => {
+          play.then(() => setWatchPlayGate(slide, false)).catch(() => {
             if (!document.body.classList.contains("watch-open")) {
               stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
               return;
             }
-            playWatchFeed(video)?.catch(() => {});
+            setWatchPlayGate(slide, true);
           }).finally(() => slide.classList.remove("paused"));
         }
       } else if (active) {
@@ -338,7 +411,9 @@ function goToWatchIndex(index, { instant = false } = {}) {
   const slide = document.querySelector(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`);
   slide?.scrollIntoView({ behavior: instant ? "auto" : "smooth", block: "start" });
   activateWatchSlide(job.id);
+  replaceWatchHash(job.id);
   syncDocumentTitle();
+  void hydrateWatchInspect(job.id);
 }
 
 function stepWatch(delta) {
@@ -394,8 +469,108 @@ function openJob(jobId) {
 function openDetail(jobId) {
   state.selectedJobId = jobId;
   if (state.view === "watch") state.returnToWatch = true;
+  rememberOpener();
   setView("detail");
   renderJobs();
+}
+
+function collectShotOverrides(root) {
+  const overrides = {};
+  root?.querySelectorAll("[data-shot-index]").forEach((node) => {
+    const index = Number(node.dataset.shotIndex);
+    if (!Number.isInteger(index)) return;
+    overrides[index] = {
+      index,
+      prompt: node.querySelector("[data-shot-prompt]")?.value || "",
+      animatePrompt: node.querySelector("[data-shot-animate]")?.value || "",
+      caption: node.querySelector("[data-shot-caption]")?.value || ""
+    };
+  });
+  return overrides;
+}
+
+function collectDraftFields(root) {
+  return {
+    topic: root.querySelector("[data-draft-topic]")?.value || "",
+    facts: (root.querySelector("[data-draft-facts]")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+    scriptDraft: root.querySelector("[data-draft-script]")?.value || "",
+    worldSlots: Object.fromEntries([...root.querySelectorAll("[data-world-slot]")].map((input) => [input.dataset.worldSlot, input.value]).filter(([, value]) => String(value || "").trim())),
+    shotOverrides: collectShotOverrides(root)
+  };
+}
+
+function renderUploadPack(job) {
+  const pack = shortUploadPack(job);
+  const links = pack.links.map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
+  return `<section class="upload-pack"><h3>업로드 준비</h3><p class="pack-title">${escapeHtml(pack.title || job.topic || "")}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
+}
+
+function renderInspectMarkup(job, prompts) {
+  const frozen = state.health?.imagine?.frozen !== false;
+  const facts = Array.isArray(job.facts) ? job.facts.join("\n") : "";
+  const slots = prompts?.worldSlots || Object.entries(job.worldSlots || {}).map(([id, value]) => ({ id, label: id, value, editable: true }));
+  const shots = prompts?.shots || [];
+  const artifacts = (job.artifacts || []).map((item) => `<a class="artifact-link" href="${escapeHtml(item.url || "")}" download>${escapeHtml(item.name || "")}</a>`).join("");
+  const captionDownloads = shortDownloads(job).filter((item) => /자막/.test(item.label)).map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
+  const shotFields = shots.map((shot) => `<article class="shot-edit" data-shot-index="${Number(shot.index)}"><b>${String(shot.index).padStart(2, "0")}</b><label class="field-label">프롬프트</label><textarea data-shot-prompt rows="3">${escapeHtml(shot.prompt || "")}</textarea><label class="field-label">애니메이트</label><textarea data-shot-animate rows="2">${escapeHtml(shot.animatePrompt || "")}</textarea><label class="field-label">자막</label><textarea data-shot-caption rows="2">${escapeHtml(shot.caption || "")}</textarea></article>`).join("");
+  return `<h3>재료</h3><label class="field-label">주제</label><input data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /><label class="field-label">사실</label><textarea data-draft-facts rows="4">${escapeHtml(facts)}</textarea><label class="field-label">대본</label><textarea data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea><div class="slot-grid">${renderWorldSlotFields(slots, { editable: true, namePrefix: `inspect-${job.id}` })}</div>${shotFields}${captionDownloads ? `<div class="download-list"><h4>자막</h4>${captionDownloads}</div>` : ""}${artifacts ? `<div class="download-list"><h4>산출물</h4>${artifacts}</div>` : ""}${renderUploadPack(job)}<div class="inspect-actions"><button type="button" class="primary-button" data-inspect-save>저장</button><button type="button" class="secondary-button" data-inspect-regen${frozen ? " disabled" : ""}>다시 생성</button>${frozen ? `<p class="inspect-frozen">크레딧 402</p>` : ""}</div>`;
+}
+
+async function saveInspectDraft(jobId, root) {
+  const body = collectDraftFields(root);
+  const payload = await api(`/api/jobs/${encodeURIComponent(jobId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (payload.job) upsertJob(payload.job);
+  return payload;
+}
+
+function bindInspectActions(root, jobId) {
+  root.querySelector("[data-inspect-save]")?.addEventListener("click", async () => {
+    try {
+      await saveInspectDraft(jobId, root);
+      showToast("초안을 저장했습니다.");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+  root.querySelector("[data-inspect-regen]")?.addEventListener("click", async () => {
+    if (state.health?.imagine?.frozen !== false) {
+      showToast("크레딧 402", "error");
+      return;
+    }
+    try {
+      await saveInspectDraft(jobId, root);
+      await api(`/api/jobs/${encodeURIComponent(jobId)}/run`, { method: "POST" });
+      showToast("대기열에 넣었습니다.");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  });
+}
+
+async function hydrateWatchInspect(jobId) {
+  const panel = document.querySelector(`.watch-inspect[data-job-id="${CSS.escape(jobId)}"]`);
+  if (!panel || panel.dataset.ready === jobId) return;
+  let job = state.jobs.find((item) => item.id === jobId) || null;
+  let prompts = null;
+  try {
+    job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+    upsertJob(job);
+  } catch {
+    // Keep the library copy if the detail request fails.
+  }
+  try {
+    prompts = await api(`/api/jobs/${encodeURIComponent(jobId)}/prompts`);
+  } catch {
+    prompts = null;
+  }
+  if (!job) return;
+  panel.innerHTML = renderInspectMarkup(job, prompts);
+  panel.dataset.ready = jobId;
+  bindInspectActions(panel, jobId);
 }
 
 function openHome(event) {
@@ -808,30 +983,30 @@ function renderJobDetail(job) {
     : still
       ? `<img class="preview-still" src="${escapeHtml(still)}" alt="" />`
       : `<div class="preview-unavailable">${escapeHtml(status.label)}</div>`;
-  const facts = (Array.isArray(job.facts) ? job.facts : []).map((fact) => String(fact).trim()).filter(Boolean).slice(0, 4);
-  const factsMarkup = facts.length
-    ? `<ul class="draft-facts">${facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>`
-    : "";
+  const facts = (Array.isArray(job.facts) ? job.facts : []).map((fact) => String(fact).trim()).filter(Boolean);
+  const factsMarkup = `<label class="field-label" for="detail-facts">사실</label><textarea id="detail-facts" data-draft-facts rows="4">${escapeHtml(facts.join("\n"))}</textarea>${facts.length ? `<ul class="draft-facts">${facts.slice(0, 4).map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>` : ""}`;
   const scriptText = String(job.scriptDraft || job.script?.oneLiner || "").trim();
-  const scriptMarkup = scriptText ? `<pre class="draft-script">${escapeHtml(scriptText)}</pre>` : "";
+  const scriptMarkup = `<label class="field-label" for="detail-script">대본</label><textarea id="detail-script" class="draft-script" data-draft-script rows="4">${escapeHtml(scriptText)}</textarea>`;
   const slotEntries = Object.entries(job.worldSlots || {}).filter(([, value]) => String(value || "").trim());
   const slotsMarkup = slotEntries.length
-    ? `<dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`
+    ? `<dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><div class="slot-grid">${renderWorldSlotFields(slotEntries.map(([id, value]) => ({ id, label: id, value, editable: true })), { editable: true, namePrefix: "detail-slot" })}</div>`
     : "";
   const frozen = state.health?.imagine?.frozen !== false;
+  const saveDraft = `<button class="secondary-button" id="save-draft" type="button">저장</button>`;
   const runDraft = status.key === "draft"
-    ? `<button class="primary-button" id="run-draft" type="button"${frozen ? " disabled" : ""}>공장 시작</button>`
+    ? `<button class="primary-button" id="run-draft" type="button"${frozen ? " disabled" : ""}>공장 시작</button>${frozen ? `<p class="inspect-frozen">크레딧 402</p>` : ""}`
     : "";
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status)
     ? `<div class="upload-box"><label for="detail-upload"><span>클립을 올리세요</span><small>MP4, MOV, WebM</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local" type="button">업로드한 클립으로 편집</button></div>`
     : "";
   const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${scriptMarkup}${slotsMarkup}${factsMarkup}${runDraft}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div><label class="field-label" for="detail-topic">주제</label><input id="detail-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" />${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${scriptMarkup}${slotsMarkup}${factsMarkup}${saveDraft}${runDraft}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
   $("#run-draft")?.addEventListener("click", runSelectedJob);
+  $("#save-draft")?.addEventListener("click", () => { void saveDetailDraft(); });
 }
 
 async function uploadLocalClips(event) {
@@ -846,8 +1021,26 @@ async function uploadLocalClips(event) {
   } catch (error) { showToast(error.message, "error"); }
 }
 
+async function saveDetailDraft() {
+  if (!state.selectedJobId) return;
+  try {
+    const payload = await saveInspectDraft(state.selectedJobId, $("#job-detail"));
+    showToast("초안을 저장했습니다.");
+    if (payload.job) {
+      upsertJob(payload.job);
+      renderJobDetail(payload.job);
+    }
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 async function runSelectedJob() {
   if (!state.selectedJobId) return;
+  if (state.health?.imagine?.frozen !== false) {
+    showToast("크레딧 402", "error");
+    return;
+  }
   try {
     await api(`/api/jobs/${encodeURIComponent(state.selectedJobId)}/run`, { method: "POST" });
     showToast("편집을 시작했습니다.");
@@ -980,14 +1173,102 @@ function syncProviderForm() {
   syncToggleLabels();
 }
 
+function syncCreateMode() {
+  const batch = state.createMode === "batch";
+  const title = $("#create-title");
+  if (title) title.textContent = batch ? "양산" : "새 쇼츠";
+  const topicField = $("#single-topic-field");
+  const topic = $("#topic");
+  const batchField = $("#batch-field");
+  const submit = $("#create-submit");
+  const actions = $("#batch-actions");
+  const frozenNote = $("#batch-frozen");
+  const queue = $("#batch-queue");
+  if (topicField) topicField.hidden = batch;
+  if (batchField) batchField.hidden = !batch;
+  if (submit) submit.hidden = batch;
+  if (actions) actions.hidden = !batch;
+  if (topic) topic.required = !batch;
+  const frozen = state.health?.imagine?.frozen !== false;
+  if (queue) queue.disabled = frozen;
+  if (frozenNote) frozenNote.hidden = !batch || !frozen;
+}
+
 function openCreate(event) {
   event?.preventDefault();
+  rememberOpener(event);
+  state.createMode = "single";
   setView("create");
   void hydrateCreateSlots();
 }
 
+function openBatch(event) {
+  event?.preventDefault();
+  rememberOpener(event);
+  $("#library-more")?.removeAttribute("open");
+  state.createMode = "batch";
+  setView("create");
+  void hydrateCreateSlots();
+}
+
+function parseBatchTopics() {
+  return ($("#batch-topics")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length >= 4);
+}
+
+function batchJobBody(topic) {
+  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  return { topic, facts, provider: "grok-imagine", draftOnly: true, captions: true, voiceover: false };
+}
+
+async function saveBatchDrafts() {
+  const topics = parseBatchTopics();
+  if (!topics.length) {
+    showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
+    return;
+  }
+  try {
+    for (const topic of topics) {
+      const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batchJobBody(topic)) });
+      if (payload.job) upsertJob(payload.job);
+    }
+    await refreshJobs();
+    showToast(`초안 ${topics.length}개를 저장했습니다.`);
+    closeOverlays();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function queueBatchJobs() {
+  if (state.health?.imagine?.frozen !== false) {
+    showToast("크레딧 402", "error");
+    return;
+  }
+  const topics = parseBatchTopics();
+  if (!topics.length) {
+    showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
+    return;
+  }
+  try {
+    for (const topic of topics) {
+      const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batchJobBody(topic)) });
+      const jobId = payload.job?.id;
+      if (jobId) {
+        upsertJob(payload.job);
+        await api(`/api/jobs/${encodeURIComponent(jobId)}/run`, { method: "POST" });
+      }
+    }
+    await refreshJobs();
+    showToast(`대기열에 ${topics.length}개를 넣었습니다.`);
+    closeOverlays();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 function openTemplate(event) {
   event?.preventDefault();
+  rememberOpener(event);
   $("#library-more")?.removeAttribute("open");
   if (state.view === "watch") state.returnToWatch = true;
   setView("template");
@@ -995,6 +1276,7 @@ function openTemplate(event) {
 
 function openSettings(event) {
   event?.preventDefault();
+  rememberOpener(event);
   $("#library-more")?.removeAttribute("open");
   if (state.view === "watch") state.returnToWatch = true;
   setView("settings");
@@ -1002,6 +1284,7 @@ function openSettings(event) {
 
 function openMachine(event) {
   event?.preventDefault();
+  rememberOpener(event);
   $("#library-more")?.removeAttribute("open");
   setView("machine");
 }
@@ -1182,11 +1465,13 @@ function closeOverlays(event) {
   if (state.returnToWatch) {
     state.returnToWatch = false;
     setView("watch", { instant: true });
+    restoreOpener();
     return;
   }
   state.selectedJobId = state.view === "detail" ? null : state.selectedJobId;
   setView("grid");
   renderJobs();
+  restoreOpener();
 }
 
 async function refreshQuietly() {
@@ -1209,6 +1494,16 @@ function bindEvents() {
     $("#library-more")?.removeAttribute("open");
     if (state.view === "watch") state.returnToWatch = true;
     openCreate(event);
+  });
+  $("#menu-batch")?.addEventListener("click", openBatch);
+  $("#batch-draft")?.addEventListener("click", () => { void saveBatchDrafts(); });
+  $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
+  $("#library-more")?.addEventListener("toggle", () => {
+    const menu = $("#library-more");
+    if (menu?.open) {
+      rememberOpener({ currentTarget: menu.querySelector("summary") });
+      bindFocusTrap(menu);
+    }
   });
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome);
@@ -1261,7 +1556,8 @@ function bindEvents() {
       const slide = document.querySelector(".watch-slide.active");
       if (!video || !slide) return;
       if (video.paused) {
-        if (document.body.classList.contains("watch-open")) playWatchFeed(video)?.catch(() => {});
+        const play = document.body.classList.contains("watch-open") ? playWatchFeed(video) : null;
+        if (play) play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
         else stopWatchFeed($("#watch-feed"));
         slide.classList.remove("paused");
       } else {

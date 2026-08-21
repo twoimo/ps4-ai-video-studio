@@ -9,6 +9,7 @@ export function stopWatchFeed(root) {
 export function playWatchFeed(video) {
   if (!video) return;
   video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   return video.play();
 }
 
@@ -28,9 +29,8 @@ export function bindWatchFeed(root, onBack) {
   }
   if (root.dataset) root.dataset.watchBound = "1";
   root.addEventListener("click", (event) => {
-    const back = event.target?.closest?.(".watch-back");
-    const letterbox = !event.target?.closest?.(".watch-stage");
-    if (!back && !letterbox) return;
+    const close = event.target?.closest?.(".watch-close, .watch-back");
+    if (!close) return;
     stopWatchFeed(root);
     onBack?.(event);
   });

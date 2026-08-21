@@ -13,7 +13,8 @@ import {
   shortPreview,
   shortStatus,
   shortStatusLabel,
-  shortThumbnail
+  shortThumbnail,
+  shortUploadPack
 } from "../public/shorts-ui.mjs";
 
 const publicDir = join(process.cwd(), "public");
@@ -203,7 +204,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
   assert.match(server, /request\.method === "DELETE"/);
+  assert.match(server, /FACTORY_QUEUE_PATH/);
   assert.match(pipeline, /export async function deleteJob/);
+  assert.match(pipeline, /export async function saveJobDraft/);
+  assert.match(pipeline, /factory-queue\.json/);
 });
 
 test("library and overlays fill the viewport instead of a phone column", async () => {
@@ -333,20 +337,25 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /body\.watch-open\s*\{[^}]*display:\s*block/);
   assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.watch-back\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /\.watch-back\s*\{[^}]*top:\s*12px/);
+  assert.match(css, /\.watch-back\s*\{[^}]*right:\s*12px/);
   assert.match(css, /\.watch-back\s*\{[^}]*background:\s*none/);
   assert.match(css, /\.watch-back\s*\{[^}]*border:\s*0/);
   assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
   assert.equal(/\.watch-back\s*\{[^}]*border-radius:\s*999px/.test(css), false);
   assert.equal(/\.watch-back\s*\{[^}]*background:\s*rgba/.test(css), false);
+  assert.match(css, /\.watch-dl\s*\{[^}]*top:\s*64px/);
+  assert.match(css, /@media \(max-width:\s*860px\)/);
+  assert.match(css, /60dvh/);
   assert.equal(css.includes(".watch-mute"), false);
   assert.equal(css.includes(".watch-actions"), false);
   assert.equal(css.includes(".watch-sheet"), false);
   const watchSlide = app.slice(app.indexOf("function renderWatchSlide"), app.indexOf("function bindWatchSlide"));
-  assert.match(app, /watch-back[\s\S]*watch-slide-chrome[\s\S]*<\/article>/);
-  assert.match(app, /class="watch-back"/);
-  assert.match(app, /class="watch-back"[^>]*>←</);
+  assert.match(app, /watch-close watch-back[\s\S]*watch-slide-chrome[\s\S]*watch-inspect[\s\S]*<\/article>/);
+  assert.match(app, /class="watch-close watch-back"/);
+  assert.match(app, /class="watch-close watch-back"[^>]*aria-label="닫기">×</);
   assert.match(app, /function isWatchableShort|isWatchableShort\(job\)/);
-  assert.match(app, /#watch/);
+  assert.match(app, /#watch\//);
   assert.match(app, /#shorts/);
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
@@ -354,7 +363,7 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
   assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
-  assert.match(app, /hash === "watch"/);
+  assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /hash === "short"/);
   assert.match(app, /hash === "short"[\s\S]*setView\("detail"/);
   assert.match(app, /class="draft-facts"/);
@@ -397,8 +406,8 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /video\.removeAttribute\("src"\)/);
   assert.match(app, /playsinline loop preload/);
   assert.equal(app.includes("playsinline loop muted"), false);
-  assert.match(app, /#watch-feed[\s\S]*closest\("\.watch-stage"\)[\s\S]*openHome/);
-  assert.match(app, /slide\.addEventListener\("click"[\s\S]*closest\("\.watch-stage"\)[\s\S]*stopWatchFeed[\s\S]*openHome/);
+  assert.equal(app.includes("letterbox"), false);
+  assert.match(app, /class="watch-close watch-back"/);
   assert.match(app, /다시 실행/);
   assert.match(app, /openJob/);
   assert.match(app, /function openDetail/);
@@ -425,6 +434,68 @@ test("completed short lists master chat parts and ASS downloads", () => {
   });
   assert.deepEqual(downloads.map((item) => item.label), ["마스터", "채팅용", "파트 1", "자막 ASS"]);
   assert.ok(downloads.every((item) => item.href.includes("download=1")));
+});
+
+test("watch inspector saves drafts and freezes regen", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
+  const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
+  assert.match(app, /class="watch-inspect"/);
+  assert.match(app, /hydrateWatchInspect/);
+  assert.match(app, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/prompts/);
+  assert.match(app, /method: "PATCH"/);
+  assert.match(app, /다시 생성/);
+  assert.match(app, /크레딧 402/);
+  assert.match(app, /health\?\.imagine\?\.frozen !== false/);
+  assert.match(app, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/run/);
+  assert.match(css, /\.watch-inspect\s*\{[^}]*360px/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*40dvh/);
+  assert.match(pipeline, /export async function saveJobDraft/);
+  assert.match(pipeline, /buildGrokImagineScript/);
+  assert.match(server, /request\.method === "PATCH"/);
+  assert.match(server, /suffix === "draft"/);
+  assert.match(server, /크레딧 402/);
+});
+
+test("양산 batch and upload pack stay draft-only unless unfrozen", async () => {
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  assert.match(html, /id="menu-batch">양산</);
+  assert.match(html, /id="batch-topics"/);
+  assert.match(html, /id="batch-draft"[^>]*>[\s\S]*초안만 저장/);
+  assert.match(html, /id="batch-queue"[^>]*>[\s\S]*대기열에 넣고 생성/);
+  assert.match(html, /id="batch-frozen"[^>]*>크레딧 402</);
+  assert.match(app, /createMode = "batch"/);
+  assert.match(app, /title\.textContent = batch \? "양산" : "새 쇼츠"/);
+  assert.match(app, /provider: "grok-imagine"/);
+  assert.match(app, /draftOnly: true/);
+  assert.match(app, /function queueBatchJobs/);
+  assert.match(app, /\/run/);
+  assert.match(app, /업로드 준비/);
+  assert.match(app, /bindFocusTrap/);
+  assert.match(app, /restoreOpener/);
+  assert.equal(html.includes("gemini-browser"), false);
+  assert.equal(html.includes("YouTube"), false);
+  assert.equal(html.includes("쇼츠 공장"), false);
+  assert.equal(app.includes("muted = true"), false);
+});
+
+test("upload pack lists title description master parts and ASS", () => {
+  const pack = shortUploadPack({
+    topic: "놀이터 아래 물탱크",
+    facts: ["지붕 면적 2만 m²"],
+    scriptDraft: "이렇게 설계된 겁니다.",
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/a/artifacts/master.mp4" },
+      { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-01.mp4" },
+      { name: "captions.ass", kind: "captions-ass", url: "/api/jobs/a/artifacts/captions.ass" }
+    ]
+  });
+  assert.equal(pack.title, "놀이터 아래 물탱크");
+  assert.match(pack.description, /지붕 면적/);
+  assert.match(pack.description, /이렇게 설계된 겁니다/);
+  assert.deepEqual(pack.links.map((item) => item.label), ["마스터", "파트 1", "자막 ASS"]);
 });
 
 test("grid cards skip 1x1 placeholder png and use real jpg", () => {

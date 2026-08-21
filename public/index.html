@@ -29,6 +29,7 @@
           </summary>
           <div class="library-menu">
             <button type="button" id="menu-create">새 쇼츠</button>
+            <button type="button" id="menu-batch">양산</button>
             <button type="button" id="import-library">가져오기</button>
             <button type="button" id="open-template">템플릿</button>
             <button type="button" id="open-settings">설정</button>
@@ -51,8 +52,14 @@
         <button type="button" class="draft-close" id="close-create" aria-label="닫기">×</button>
         <form class="create-panel" id="create-form">
           <h2 id="create-title">새 쇼츠</h2>
+          <div id="single-topic-field">
           <label class="field-label" for="topic">주제</label>
           <input id="topic" name="topic" placeholder="예: 오래된 도시 시설의 숨은 원리" required minlength="4" />
+          </div>
+          <div id="batch-field" hidden>
+            <label class="field-label" for="batch-topics">주제 (한 줄에 하나)</label>
+            <textarea id="batch-topics" rows="6" placeholder="오래된 도시 시설의 숨은 원리&#10;빗물이 모이는 놀이터"></textarea>
+          </div>
           <div id="facts-field">
             <label class="field-label" for="facts">출처에 적힌 사실 <span class="muted">(줄바꿈으로 구분 · 없는 숫자는 만들지 않음)</span></label>
             <textarea id="facts" rows="4" placeholder="출처에서 확인한 사실만 적습니다.&#10;예: 지붕 면적 2만 m²"></textarea>
@@ -63,7 +70,12 @@
           </div>
           <label class="field-label" for="script-draft" hidden id="script-draft-label">대본 초안</label>
           <textarea id="script-draft" rows="5" hidden placeholder="이렇게 설계된 겁니다."></textarea>
-          <button class="primary-button" type="submit"><span>초안 저장</span></button>
+          <button class="primary-button" id="create-submit" type="submit"><span>초안 저장</span></button>
+          <div id="batch-actions" hidden>
+            <button class="primary-button" id="batch-draft" type="button"><span>초안만 저장</span></button>
+            <button class="secondary-button" id="batch-queue" type="button"><span>대기열에 넣고 생성</span></button>
+            <p id="batch-frozen" class="form-footnote" hidden>크레딧 402</p>
+          </div>
           <details class="advanced-create" id="advanced-create">
             <summary>고급</summary>
             <p class="form-footnote">월드 슬롯, 다른 생성 소스, 로컬 업로드는 여기에만 있습니다. 공장은 공식 grok CLI만 쓰며 Gemini로 대체하지 않습니다.</p>
