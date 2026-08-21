@@ -8,6 +8,8 @@ function fakeVideo(time = 4) {
   return {
     paused: false,
     muted: true,
+    volume: 1,
+    preload: "none",
     currentTime: time,
     playCalls: 0,
     pauseCalls: 0,
@@ -109,6 +111,28 @@ test("playWatchFeed unmutes before play", () => {
   assert.equal(video.playCalls, 1);
 });
 
+test("playWatchFeed preloads neighbors but only plays the active slide", () => {
+  const active = fakeVideo(1);
+  const neighbor = fakeVideo(2);
+  const far = fakeVideo(3);
+  const slides = [
+    { className: "watch-slide active", querySelector: (sel) => sel === "video" ? active : null },
+    { className: "watch-slide", querySelector: (sel) => sel === "video" ? neighbor : null },
+    { className: "watch-slide", querySelector: (sel) => sel === "video" ? far : null }
+  ];
+  playWatchFeed(fakeFeed(slides, 0, 640));
+  assert.equal(active.playCalls, 1);
+  assert.equal(active.volume, 1);
+  assert.equal(neighbor.playCalls, 0);
+  assert.equal(neighbor.pauseCalls, 1);
+  assert.equal(neighbor.currentTime, 2);
+  assert.equal(neighbor.muted, false);
+  assert.equal(neighbor.volume, 0);
+  assert.equal(neighbor.preload, "auto");
+  assert.equal(far.playCalls, 0);
+  assert.equal(far.pauseCalls, 0);
+});
+
 test("playWatchFeed never assigns muted true", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
@@ -162,19 +186,22 @@ test("sizeWatchFeed writes --watch-h from clientHeight once", () => {
   assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
 });
 
-test("sizeWatchFeed prefers window.innerHeight and lock unless force", () => {
+test("sizeWatchFeed uses clientHeight and falls back to innerHeight only when the box is 0", () => {
   const previous = globalThis.window;
   globalThis.window = { innerHeight: 812 };
   const root = fakeFeed([], 0, 711);
-  assert.equal(sizeWatchFeed(root), 812);
-  assert.equal(root.style.getPropertyValue("--watch-h"), "812px");
+  assert.equal(sizeWatchFeed(root), 711);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
   assert.equal(root.dataset.sized, "1");
   globalThis.window.innerHeight = 400;
   root.clientHeight = 12;
-  assert.equal(sizeWatchFeed(root), 812);
+  assert.equal(sizeWatchFeed(root), 711);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
+  clearWatchSize(root);
+  root.clientHeight = 0;
+  globalThis.window.innerHeight = 812;
+  assert.equal(sizeWatchFeed(root, { force: true }), 812);
   assert.equal(root.style.getPropertyValue("--watch-h"), "812px");
-  assert.equal(sizeWatchFeed(root, { force: true }), 400);
-  assert.equal(root.style.getPropertyValue("--watch-h"), "400px");
   clearWatchSize(root);
   assert.equal(root.dataset.sized, undefined);
   globalThis.window = previous;
@@ -237,9 +264,12 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(app, /playsinline webkit-playsinline/);
   assert.match(app, /setAttribute\("webkit-playsinline"/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
-  assert.match(css, /\.watch-feed\s*\{[^}]*--watch-h:\s*100svh/);
-  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*var\(--watch-h,\s*100svh\)/);
-  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*var\(--watch-h,\s*100svh\)/);
+  assert.match(css, /\.watch-feed\s*\{[^}]*--watch-h:\s*100%/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*var\(--watch-h,\s*100%\)/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*var\(--watch-h,\s*100%\)/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*backface-visibility:\s*hidden/);
+  assert.match(css, /\.watch-slide video\s*\{[^}]*backface-visibility:\s*hidden/);
+  assert.equal(css.includes("-webkit-overflow-scrolling"), false);
   assert.match(css, /--watch-h/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
@@ -269,7 +299,7 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(feed, /video\.currentTime = 0/);
   assert.match(feed, /export function syncWatchFeed/);
   assert.match(feed, /clearWatchSize\(root\);\s*stopWatchFeed\(root\)/);
-  assert.match(feed, /sizeWatchFeed\(root\);\s*if \(root\) root\.hidden = false;/);
+  assert.match(feed, /if \(root\) root\.hidden = false;\s*sizeWatchFeed\(root\)/);
   assert.match(feed, /mountWatchFeed\(\)/);
   assert.match(feed, /export function bindWatchFeed/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
@@ -314,7 +344,11 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(feed, /export function clearWatchSize/);
   assert.match(feed, /dataset\.sized/);
   assert.match(feed, /force = false/);
+  assert.match(feed, /root\.clientHeight/);
   assert.match(feed, /window\.innerHeight/);
+  assert.match(feed, /distance <= 1\.05/);
+  assert.match(feed, /index === activeIndex/);
+  assert.match(feed, /index === activeIndex[\s\S]*video\.play\(\)/);
   assert.match(app, /clearWatchSize\(watchFeed\)/);
   assert.match(app, /sizeWatchFeed\(watchFeed\)/);
   assert.match(app, /force:\s*true/);

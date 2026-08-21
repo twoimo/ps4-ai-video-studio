@@ -16,7 +16,48 @@ function watchVideo(target) {
     || null;
 }
 
+function watchSlides(target) {
+  if (!target) return [];
+  const scroller = watchScroller(target);
+  if (typeof scroller?.querySelectorAll !== "function") return [];
+  return [...scroller.querySelectorAll(".watch-slide")];
+}
+
+function watchActiveIndex(root, slides) {
+  const scroller = watchScroller(root);
+  const h = pageHeight(root);
+  if (scroller && typeof scroller.scrollTop === "number" && h > 0) {
+    return Math.round(scroller.scrollTop / h);
+  }
+  const marked = slides.findIndex((slide) => slide.classList?.contains?.("active") && !slide.dataset?.loop);
+  if (marked >= 0) return marked;
+  return slides.findIndex((slide) => slide.classList?.contains?.("active") || String(slide.className || "").includes("active"));
+}
+
 export function playWatchFeed(target) {
+  const slides = watchSlides(target);
+  if (slides.length) {
+    const activeIndex = watchActiveIndex(target, slides);
+    let result;
+    slides.forEach((slide, index) => {
+      const video = slide.querySelector?.("video");
+      if (!video) return;
+      const distance = Math.abs(index - activeIndex);
+      if (distance <= 1.05) {
+        video.preload = "auto";
+        video.muted = false;
+        if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+        if (index === activeIndex) {
+          video.volume = 1;
+          result = video.play();
+        } else {
+          video.volume = 0;
+          video.pause();
+        }
+      }
+    });
+    return result;
+  }
   const video = watchVideo(target);
   if (!video) return;
   video.muted = false;
@@ -34,8 +75,8 @@ export function syncWatchFeed(root, surface, mountWatchFeed) {
     stopWatchFeed(root);
     return;
   }
-  sizeWatchFeed(root);
   if (root) root.hidden = false;
+  sizeWatchFeed(root);
   if (typeof mountWatchFeed === "function") mountWatchFeed();
 }
 
@@ -77,8 +118,9 @@ export const watchPageHeight = pageHeight;
 export function sizeWatchFeed(root, { force = false } = {}) {
   if (!root) return 0;
   if (root.dataset?.sized === "1" && !force) return pageHeight(root);
+  const fromBox = Math.round(root.clientHeight || 0);
   const fromWindow = typeof window !== "undefined" ? Number(window.innerHeight) || 0 : 0;
-  const height = Math.round(fromWindow || root.clientHeight || 0);
+  const height = fromBox || Math.round(fromWindow) || 0;
   if (height > 0 && typeof root.style?.setProperty === "function") {
     root.style.setProperty("--watch-h", `${height}px`);
   }

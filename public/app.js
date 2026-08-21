@@ -125,13 +125,11 @@ function setView(view, options = {}) {
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
-  if (next === "watch") sizeWatchFeed(watchFeed);
-  else clearWatchSize(watchFeed);
+  if (next !== "watch") clearWatchSize(watchFeed);
   state.view = next;
   if (state.view !== "watch") closeOpenWatchInspect();
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine"].includes(state.view));
-  syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
@@ -140,6 +138,8 @@ function setView(view, options = {}) {
   if (machineOverlay) machineOverlay.hidden = state.view !== "machine";
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
+  if (state.view === "watch") sizeWatchFeed(watchFeed);
+  syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
   if (!options.skipHash) {
     const nextHash = hashForView(state.view);
     if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
@@ -478,14 +478,16 @@ function activateWatchSlide(jobId) {
       const url = slide.dataset.videoUrl;
       if (url && video.getAttribute("src") !== url) video.src = url;
       primeWatchVideo(video);
+      video.muted = false;
+      if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
       video.volume = active ? 1 : 0;
       if (!document.body.classList.contains("watch-open")) {
         if (active) stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
         else video.pause();
         return;
       }
-      const play = playWatchFeed(video);
       if (active) {
+        const play = playWatchFeed(video);
         if (play) {
           play.then(() => setWatchPlayGate(slide, false)).catch(() => {
             if (!document.body.classList.contains("watch-open")) {
@@ -495,8 +497,8 @@ function activateWatchSlide(jobId) {
             setWatchPlayGate(slide, true);
           }).finally(() => slide.classList.remove("paused"));
         }
-      } else if (play) {
-        play.catch(() => {});
+      } else {
+        video.pause();
       }
     } else {
       video.pause();
