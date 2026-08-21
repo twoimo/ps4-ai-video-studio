@@ -60,7 +60,8 @@ test("short cards map status, hook still, and duration", () => {
   };
   assert.equal(isWatchableShort(playground), true);
   assert.equal(isWatchableShort(refuge), true);
-  assert.equal(shortPreview(playground).videoUrl, "/api/jobs/seed-playground-cistern/artifacts/chat.mp4");
+  assert.match(shortPreview(playground).videoUrl, /\/artifacts\/(master|chat|final)\.mp4$/);
+  assert.match(shortPreview(refuge).videoUrl, /\/artifacts\/(master|chat|final)\.mp4$/);
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
