@@ -2,7 +2,7 @@ import { formatClock, isWatchableShort, shortDownloads, shortDurationSeconds, sh
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const STUDIO_TITLE = "건축사전 공장";
+const STUDIO_TITLE = "PS4_JUSTDOIT";
 const VIEWS = ["create", "detail", "template", "settings", "watch", "grid"];
 const state = {
   jobs: [],

@@ -130,11 +130,12 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const homeEnd = html.indexOf('id="create-overlay"');
   const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
-  assert.match(html, /<title>건축사전 공장<\/title>/);
+  assert.match(html, /<title>PS4_JUSTDOIT<\/title>/);
   assert.match(home, /id="shorts-grid"/);
   assert.match(home, /id="watch-feed"/);
   assert.match(home, /class="library-brand"/);
-  assert.match(home, /<h1>건축사전<\/h1>/);
+  assert.match(home, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.equal(home.includes("건축사전"), false);
   assert.match(home, /쇼츠 공장/);
   assert.equal(home.includes("<h1>쇼츠</h1>"), false);
   assert.equal(home.includes('class="sr-only">쇼츠'), false);
@@ -151,7 +152,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="create-tile"/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
   assert.match(css, /--header:\s*52px/);
-  assert.match(app, /const STUDIO_TITLE = "건축사전 공장"/);
+  assert.match(app, /const STUDIO_TITLE = "PS4_JUSTDOIT"/);
   assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{STUDIO_TITLE\}` : STUDIO_TITLE/);
   assert.match(app, /document\.title = STUDIO_TITLE/);
   assert.equal(home.includes("class=\"sidebar\""), false);
