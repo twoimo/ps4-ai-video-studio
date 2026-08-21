@@ -287,6 +287,22 @@ function setWatchPlayGate(slide, show) {
   if (button) button.hidden = !show;
 }
 
+function primeWatchVideo(video) {
+  if (!video) return;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.loop = true;
+  video.preload = "auto";
+  video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  const paint = () => {
+    if (video.currentTime === 0) video.currentTime = 0.05;
+  };
+  if (video.readyState >= 1) paint();
+  else video.addEventListener("loadeddata", paint, { once: true });
+}
+
 function bindWatchSlide(slide) {
   const stage = slide.querySelector(".watch-stage");
   const video = slide.querySelector("video");
@@ -394,25 +410,25 @@ function bindWatchScroller() {
 function activateWatchSlide(jobId) {
   const jobs = watchableJobs();
   const index = jobs.findIndex((job) => job.id === jobId);
-  const nextId = index >= 0 ? jobs[index + 1]?.id : null;
+  const neighborIds = new Set([jobs[index - 1]?.id, jobs[index + 1]?.id].filter(Boolean));
   $$(".watch-slide").forEach((slide) => {
     const video = slide.querySelector("video");
     const active = slide.dataset.jobId === jobId;
-    const preloadNext = slide.dataset.jobId === nextId;
+    const neighbor = neighborIds.has(slide.dataset.jobId);
     slide.classList.toggle("active", active);
     if (!video) return;
-    if (active || preloadNext) {
+    if (active || neighbor) {
       const url = slide.dataset.videoUrl;
-      if (video.getAttribute("src") !== url) {
-        video.src = url;
-        video.playsInline = true;
-        video.setAttribute("playsinline", "");
-        video.setAttribute("webkit-playsinline", "");
-        video.loop = true;
-        video.preload = "auto";
+      if (url && video.getAttribute("src") !== url) video.src = url;
+      primeWatchVideo(video);
+      video.volume = active ? 1 : 0;
+      if (!document.body.classList.contains("watch-open")) {
+        if (active) stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
+        else video.pause();
+        return;
       }
-      if (active && document.body.classList.contains("watch-open")) {
-        const play = playWatchFeed(video);
+      const play = playWatchFeed(video);
+      if (active) {
         if (play) {
           play.then(() => setWatchPlayGate(slide, false)).catch(() => {
             if (!document.body.classList.contains("watch-open")) {
@@ -422,13 +438,12 @@ function activateWatchSlide(jobId) {
             setWatchPlayGate(slide, true);
           }).finally(() => slide.classList.remove("paused"));
         }
-      } else if (active) {
-        stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
-      } else {
-        video.pause();
+      } else if (play) {
+        play.catch(() => {});
       }
     } else {
       video.pause();
+      video.volume = 0;
       slide.classList.remove("paused");
       if (video.getAttribute("src")) {
         video.removeAttribute("src");
@@ -484,6 +499,13 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
     scroller.dataset.signature = signature;
     scroller.innerHTML = jobs.map(renderWatchSlide).join("");
     $$(".watch-slide").forEach(bindWatchSlide);
+    $$(".watch-slide").slice(0, 2).forEach((slide) => {
+      const video = slide.querySelector("video");
+      const url = slide.dataset.videoUrl;
+      if (!video || !url) return;
+      if (video.getAttribute("src") !== url) video.src = url;
+      primeWatchVideo(video);
+    });
     observeWatchSlides();
     bindWatchScroller();
   } else {

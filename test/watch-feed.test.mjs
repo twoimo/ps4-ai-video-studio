@@ -129,6 +129,8 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(app, /playsinline webkit-playsinline/);
   assert.match(app, /setAttribute\("webkit-playsinline"/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100svh/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100svh/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
@@ -168,6 +170,10 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(app, /aria-valuenow/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
   assert.match(app, /preload = "auto"/);
+  assert.match(app, /function primeWatchVideo/);
+  assert.match(app, /video\.currentTime = 0\.05/);
+  assert.match(app, /\.slice\(0,\s*2\)[\s\S]*primeWatchVideo\(video\)/);
+  assert.equal(app.includes("muted = true"), false);
   const watchSlide = app.slice(app.indexOf("function watchSlideMarkup"), app.indexOf("function setWatchPlayGate"));
   assert.equal(watchSlide.includes("watch-dl"), false);
   assert.equal(app.includes('class="watch-dl"'), false);
