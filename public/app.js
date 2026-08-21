@@ -1,5 +1,5 @@
 import { formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
-import { bindWatchFeed, playWatchFeed, stopWatchFeed, syncWatchFeed } from "./watch-feed.mjs";
+import { bindWatchFeed, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -21,7 +21,7 @@ const state = {
   watchObserver: null,
   feedObserver: null,
   watchLockUntil: 0,
-  watchSnapTimer: 0,
+  watchSwiping: false,
   createMode: "single",
   focusOpener: null
 };
@@ -254,10 +254,18 @@ function watchSignature() {
   return watchableJobs().map((job) => `${job.id}:${shortPreview(job).videoUrl}`).join("\n");
 }
 
-function watchSlideMarkup(job) {
+function watchSlideMarkup(job, loop = "") {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline webkit-playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div><button type="button" class="watch-inspect-dismiss" aria-label="닫기"></button><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+  const loopAttr = loop === "head" ? ' data-loop="head"' : loop === "tail" ? ' data-loop="tail"' : "";
+  return `<article class="watch-slide"${loopAttr} data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline webkit-playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div><button type="button" class="watch-inspect-dismiss" aria-label="닫기"></button><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+}
+
+function watchFeedMarkup(jobs) {
+  if (jobs.length >= 2) {
+    return `${watchSlideMarkup(jobs[jobs.length - 1], "head")}${jobs.map((job) => watchSlideMarkup(job)).join("")}${watchSlideMarkup(jobs[0], "tail")}`;
+  }
+  return jobs.map((job) => watchSlideMarkup(job)).join("");
 }
 
 function closeWatchInspect(slide) {
@@ -378,43 +386,38 @@ function observeWatchSlides() {
   scroller.querySelectorAll(".watch-slide").forEach((slide) => state.watchObserver.observe(slide));
 }
 
-function sizeWatchFeed() {
-  const root = $("#watch-feed");
-  if (!root) return 0;
-  const height = Math.round(root.clientHeight);
-  if (height > 0) root.style.setProperty("--watch-h", `${height}px`);
-  return height;
-}
-
-function snapWatchFeed() {
-  const scroller = $("#watch-scroller");
-  if (!scroller) return;
-  const h = sizeWatchFeed();
-  if (!(h > 0)) return;
-  scroller.scrollTop = Math.round(scroller.scrollTop / h) * h;
-}
-
 function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) {
+  const root = $("#watch-feed");
   const scroller = $("#watch-scroller");
-  const h = sizeWatchFeed();
+  const h = watchPageHeight(root);
   if (!scroller || !(h > 0)) return;
-  const last = Math.max(0, watchableJobs().length - 1);
-  scroller.scrollTop = Math.max(0, Math.min(last, index)) * h;
+  const jobs = watchableJobs();
+  const last = Math.max(0, jobs.length - 1);
+  const real = Math.max(0, Math.min(last, index));
+  const offset = jobs.length >= 2 ? 1 : 0;
+  scroller.scrollTop = (real + offset) * h;
+}
+
+function afterWatchSnap() {
+  const root = $("#watch-feed");
+  snapWatchFeed(root);
+  const scroller = $("#watch-scroller");
+  const h = watchPageHeight(root);
+  if (!scroller || !(h > 0)) return;
+  const slides = [...scroller.querySelectorAll(".watch-slide")];
+  const landed = slides[Math.round(scroller.scrollTop / h)];
+  const jobId = landed?.dataset.jobId;
+  if (!jobId) return;
+  state.selectedJobId = jobId;
+  replaceWatchHash(jobId);
+  activateWatchSlide(jobId);
+  void hydrateWatchInspect(jobId);
 }
 
 function bindWatchScroller() {
   const scroller = $("#watch-scroller");
   if (!scroller || scroller.dataset.bound) return;
   scroller.dataset.bound = "1";
-  const settle = () => {
-    if (state.view !== "watch") return;
-    snapWatchFeed();
-  };
-  scroller.addEventListener("scrollend", settle);
-  scroller.addEventListener("scroll", () => {
-    window.clearTimeout(state.watchSnapTimer);
-    state.watchSnapTimer = window.setTimeout(settle, 80);
-  }, { passive: true });
   scroller.addEventListener("wheel", (event) => {
     if (state.view !== "watch") return;
     if (event.target.closest?.(".watch-inspect")) return;
@@ -428,16 +431,20 @@ function bindWatchScroller() {
     if (now < state.watchLockUntil) return;
     state.watchLockUntil = now + 520;
     stepWatch(event.deltaY > 0 ? 1 : -1);
+    afterWatchSnap();
   }, { passive: false });
   let touchY = 0;
   scroller.addEventListener("touchstart", (event) => {
+    state.watchSwiping = true;
     touchY = event.touches[0]?.clientY || 0;
   }, { passive: true });
   scroller.addEventListener("touchend", (event) => {
+    state.watchSwiping = false;
     if (state.view !== "watch") return;
     if (event.target.closest?.(".watch-inspect")) return;
     const dy = (event.changedTouches[0]?.clientY || 0) - touchY;
     if (dy) closeOpenWatchInspect();
+    afterWatchSnap();
   }, { passive: true });
 }
 
@@ -445,9 +452,13 @@ function activateWatchSlide(jobId) {
   const jobs = watchableJobs();
   const index = jobs.findIndex((job) => job.id === jobId);
   const neighborIds = new Set([jobs[index - 1]?.id, jobs[index + 1]?.id].filter(Boolean));
+  if (jobs.length >= 2 && index >= 0) {
+    if (index === 0) neighborIds.add(jobs[jobs.length - 1].id);
+    if (index === jobs.length - 1) neighborIds.add(jobs[0].id);
+  }
   $$(".watch-slide").forEach((slide) => {
     const video = slide.querySelector("video");
-    const active = slide.dataset.jobId === jobId;
+    const active = slide.dataset.jobId === jobId && !slide.dataset.loop;
     const neighbor = neighborIds.has(slide.dataset.jobId);
     slide.classList.toggle("active", active);
     if (!video) return;
@@ -503,17 +514,17 @@ function goToWatchIndex(index, { instant = false } = {}) {
 function stepWatch(delta) {
   const scroller = $("#watch-scroller");
   if (!scroller) return;
-  const h = sizeWatchFeed() || scroller.clientHeight;
+  const h = watchPageHeight($("#watch-feed")) || scroller.clientHeight;
   scroller.scrollBy({ top: delta * h, behavior: "auto" });
 }
 
 function patchWatchSlide(job) {
-  const slide = document.querySelector(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`);
-  if (!slide) return;
-  const title = slide.querySelector(".watch-meta h2");
-  if (title) title.textContent = job.topic || "쇼츠";
-  const preview = shortPreview(job);
-  if (preview.videoUrl) slide.dataset.videoUrl = preview.videoUrl;
+  document.querySelectorAll(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`).forEach((slide) => {
+    const title = slide.querySelector(".watch-meta h2");
+    if (title) title.textContent = job.topic || "쇼츠";
+    const preview = shortPreview(job);
+    if (preview.videoUrl) slide.dataset.videoUrl = preview.videoUrl;
+  });
 }
 
 function renderWatchFeed({ focus = false, instant = false } = {}) {
@@ -529,11 +540,16 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
     return;
   }
   const signature = watchSignature();
-  if (scroller.dataset.signature !== signature) {
+  const rebuilt = scroller.dataset.signature !== signature;
+  if (rebuilt) {
     scroller.dataset.signature = signature;
-    scroller.innerHTML = jobs.map(renderWatchSlide).join("");
+    scroller.innerHTML = watchFeedMarkup(jobs);
     $$(".watch-slide").forEach(bindWatchSlide);
-    $$(".watch-slide").slice(0, 2).forEach((slide) => {
+    const prime = [
+      ...$$(".watch-slide:not([data-loop])").slice(0, 2),
+      ...$$(".watch-slide[data-loop]")
+    ];
+    prime.forEach((slide) => {
       const video = slide.querySelector("video");
       const url = slide.dataset.videoUrl;
       if (!video || !url) return;
@@ -545,8 +561,8 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
   } else {
     jobs.forEach(patchWatchSlide);
   }
-  sizeWatchFeed();
-  if (focus || !document.querySelector(".watch-slide.active")) {
+  if (focus || rebuilt) sizeWatchFeed($("#watch-feed"));
+  if (focus || !document.querySelector(".watch-slide.active:not([data-loop])")) {
     const index = Math.max(0, watchIndexOf(state.selectedJobId));
     window.requestAnimationFrame(() => {
       placeWatchFeed(index);
@@ -682,7 +698,8 @@ function bindInspectActions(root, jobId) {
 }
 
 async function hydrateWatchInspect(jobId) {
-  const panel = document.querySelector(`.watch-inspect[data-job-id="${CSS.escape(jobId)}"]`);
+  const panel = document.querySelector(`.watch-slide:not([data-loop]) .watch-inspect[data-job-id="${CSS.escape(jobId)}"]`)
+    || document.querySelector(`.watch-inspect[data-job-id="${CSS.escape(jobId)}"]`);
   if (!panel || panel.dataset.ready === jobId) return;
   let job = state.jobs.find((item) => item.id === jobId) || null;
   let prompts = null;
@@ -1615,13 +1632,12 @@ async function refreshQuietly() {
 }
 
 function bindEvents() {
-  const onViewportResize = () => {
+  window.addEventListener("resize", () => {
     sizeShortsGrid();
-    if (state.view !== "watch") return;
+    if (state.view !== "watch" || state.watchSwiping) return;
+    sizeWatchFeed($("#watch-feed"));
     placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
-  };
-  window.addEventListener("resize", onViewportResize);
-  window.visualViewport?.addEventListener("resize", onViewportResize);
+  });
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
@@ -1682,17 +1698,21 @@ function bindEvents() {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       const scroller = $("#watch-scroller");
-      scroller?.scrollBy({ top: scroller.clientHeight, behavior: "auto" });
+      const h = watchPageHeight($("#watch-feed")) || scroller?.clientHeight;
+      if (scroller && h) scroller.scrollBy({ top: h, behavior: "auto" });
+      afterWatchSnap();
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
       const scroller = $("#watch-scroller");
-      scroller?.scrollBy({ top: -scroller.clientHeight, behavior: "auto" });
+      const h = watchPageHeight($("#watch-feed")) || scroller?.clientHeight;
+      if (scroller && h) scroller.scrollBy({ top: -h, behavior: "auto" });
+      afterWatchSnap();
     }
     if (event.key === " ") {
       event.preventDefault();
-      const video = document.querySelector(".watch-slide.active video");
-      const slide = document.querySelector(".watch-slide.active");
+      const slide = selectedWatchSlide($("#watch-feed")) || document.querySelector(".watch-slide.active:not([data-loop])") || document.querySelector(".watch-slide.active");
+      const video = slide?.querySelector("video");
       if (!video || !slide) return;
       if (video.paused) {
         const play = document.body.classList.contains("watch-open") ? playWatchFeed(video) : null;

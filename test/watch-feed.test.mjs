@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { bindWatchFeed, playWatchFeed, stopWatchFeed, syncWatchFeed } from "../public/watch-feed.mjs";
+import { bindWatchFeed, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight } from "../public/watch-feed.mjs";
 
 function fakeVideo(time = 4) {
   return {
@@ -118,6 +118,91 @@ test("playWatchFeed never assigns muted true", async () => {
   assert.match(feed, /video\.muted = false/);
 });
 
+function fakeFeed(slides, scrollTop = 0, height = 640) {
+  const props = { "--watch-h": `${height}px` };
+  const scroller = {
+    scrollTop,
+    querySelectorAll(selector) {
+      return selector === ".watch-slide" ? slides : [];
+    }
+  };
+  return {
+    clientHeight: height,
+    style: {
+      getPropertyValue(name) { return props[name] || ""; },
+      setProperty(name, value) { props[name] = value; }
+    },
+    querySelector(selector) {
+      if (selector === "#watch-scroller" || selector === ".watch-scroller") return scroller;
+      if (selector === ".watch-slide.active:not([data-loop])") return slides.find((slide) => slide.className?.includes("active") && !slide.dataset?.loop) || null;
+      if (selector.startsWith(".watch-slide[data-job-id=") && selector.includes(":not([data-loop])")) {
+        const id = selector.slice(selector.indexOf('"') + 1, selector.lastIndexOf('"]:not'));
+        return slides.find((slide) => slide.dataset?.jobId === id && !slide.dataset?.loop) || null;
+      }
+      if (selector.startsWith(".watch-slide[data-job-id=")) {
+        const id = selector.slice(selector.indexOf('"') + 1, selector.lastIndexOf('"'));
+        return slides.find((slide) => slide.dataset?.jobId === id) || null;
+      }
+      if (selector === ".watch-slide.active") return slides.find((slide) => slide.className?.includes("active")) || null;
+      return null;
+    },
+    scroller
+  };
+}
+
+test("sizeWatchFeed writes --watch-h from clientHeight once", () => {
+  const root = fakeFeed([], 0, 711);
+  assert.equal(sizeWatchFeed(root), 711);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
+  assert.equal(watchPageHeight(root), 711);
+});
+
+test("watchPageHeight uses measured px and ignores CSS 100svh", () => {
+  const root = fakeFeed([], 0, 640);
+  root.style.setProperty("--watch-h", "100svh");
+  assert.equal(watchPageHeight(root), 0);
+  root.style.setProperty("--watch-h", "640px");
+  assert.equal(watchPageHeight(root), 640);
+});
+
+test("snapWatchFeed uses existing --watch-h and does not remeasure", () => {
+  const slides = [
+    { dataset: { jobId: "a" } },
+    { dataset: { jobId: "b" } }
+  ];
+  const root = fakeFeed(slides, 80, 640);
+  const before = root.style.getPropertyValue("--watch-h");
+  root.clientHeight = 12;
+  const original = root.style.setProperty;
+  root.style.setProperty = () => { throw new Error("snapWatchFeed remesured --watch-h"); };
+  snapWatchFeed(root);
+  root.style.setProperty = original;
+  assert.equal(root.style.getPropertyValue("--watch-h"), before);
+  assert.equal(root.scroller.scrollTop, 0);
+});
+
+test("snapWatchFeed jumps head clone to real last and tail clone to real first", () => {
+  const slides = [
+    { dataset: { loop: "head", jobId: "b" } },
+    { dataset: { jobId: "a" } },
+    { dataset: { jobId: "b" } },
+    { dataset: { loop: "tail", jobId: "a" } }
+  ];
+  const head = fakeFeed(slides, 0, 640);
+  snapWatchFeed(head);
+  assert.equal(head.scroller.scrollTop, 2 * 640);
+  const tail = fakeFeed(slides, 3 * 640, 640);
+  snapWatchFeed(tail);
+  assert.equal(tail.scroller.scrollTop, 1 * 640);
+});
+
+test("selectedWatchSlide prefers the real slide over a loop clone", () => {
+  const real = { dataset: { jobId: "a" }, className: "watch-slide active" };
+  const clone = { dataset: { jobId: "a", loop: "tail" }, className: "watch-slide" };
+  const root = fakeFeed([clone, real], 0, 640);
+  assert.equal(selectedWatchSlide(root, "a"), real);
+});
+
 test("watch hash uses #watch/ and close is × top-right", async () => {
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
   const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
@@ -129,6 +214,7 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(app, /playsinline webkit-playsinline/);
   assert.match(app, /setAttribute\("webkit-playsinline"/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
+  assert.match(css, /\.watch-feed\s*\{[^}]*--watch-h:\s*100svh/);
   assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*var\(--watch-h,\s*100svh\)/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*var\(--watch-h,\s*100svh\)/);
   assert.match(css, /--watch-h/);
@@ -183,11 +269,21 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.equal(/touchend[\s\S]*scrollBy/.test(bindScroller), false);
   assert.equal(/touchend[\s\S]*stepWatch/.test(bindScroller), false);
   assert.match(bindScroller, /if \(dy\) closeOpenWatchInspect\(\)/);
-  assert.match(bindScroller, /scrollend/);
-  assert.match(app, /function sizeWatchFeed/);
-  assert.match(app, /function snapWatchFeed/);
-  assert.match(app, /setProperty\("--watch-h"/);
-  assert.match(app, /scrollTop = Math\.round\(scroller\.scrollTop \/ h\) \* h/);
+  assert.match(bindScroller, /afterWatchSnap\(\)/);
+  assert.equal(bindScroller.includes("setTimeout"), false);
+  assert.equal(app.includes("visualViewport"), false);
+  assert.equal(app.includes("쇼츠 공장"), false);
+  assert.match(feed, /export function sizeWatchFeed/);
+  assert.match(feed, /export function snapWatchFeed/);
+  assert.match(feed, /setProperty\("--watch-h"/);
+  assert.equal(/function snapWatchFeed[\s\S]*setProperty\("--watch-h"/.test(feed), false);
+  assert.match(feed, /scrollTop = Math\.round\(scroller\.scrollTop \/ h\) \* h/);
+  assert.match(feed, /dataset\?\.loop === "head"/);
+  assert.match(feed, /dataset\?\.loop === "tail"/);
+  assert.match(feed, /:not\(\[data-loop\]\)/);
+  assert.match(app, /data-loop="head"/);
+  assert.match(app, /data-loop="tail"/);
+  assert.match(app, /function watchFeedMarkup/);
   assert.match(app, /scrollBy\(\{\s*top:\s*delta \* h,\s*behavior:\s*"auto"\s*\}\)/);
   const bindSlide = app.slice(app.indexOf("function bindWatchSlide"), app.indexOf("function observeWatchSlides"));
   assert.equal(bindSlide.includes("scrollIntoView"), false);

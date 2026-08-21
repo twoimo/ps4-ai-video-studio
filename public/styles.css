@@ -275,7 +275,7 @@ body.overlay-open { overflow: hidden; }
 .shot-prompt pre, .slot-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .prompt-subhead { margin: 12px 0 6px; font-size: 13px; }
 
-.watch-feed { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 5; width: 100%; background: #000; overscroll-behavior: none; }
+.watch-feed { --watch-h: 100svh; position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 5; width: 100%; background: #000; overscroll-behavior: none; }
 .watch-feed[hidden] { display: none; }
 .watch-scroller { display: flex; flex-direction: column; height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; scroll-snap-stop: always; scroll-behavior: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; touch-action: pan-y; scrollbar-width: none; }
 .watch-scroller::-webkit-scrollbar { display: none; }
