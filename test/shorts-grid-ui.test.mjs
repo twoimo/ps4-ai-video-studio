@@ -137,6 +137,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /<h1>PS4_JUSTDOIT<\/h1>/);
   assert.equal(home.includes("건축사전"), false);
   assert.equal(home.includes("쇼츠 공장"), false);
+  assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(home.includes("<h1>쇼츠</h1>"), false);
   assert.equal(home.includes('class="sr-only">쇼츠'), false);
   assert.match(home, /id="library-more"/);
