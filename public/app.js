@@ -58,7 +58,6 @@ function selectedJob() {
 
 function hashForView(view) {
   if (view === "create") return "#create";
-  if (view === "detail") return "#short";
   if (view === "watch") return "#watch";
   if (view === "template") return "#template";
   if (view === "settings") return "#settings";

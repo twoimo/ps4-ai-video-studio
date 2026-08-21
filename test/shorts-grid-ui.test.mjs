@@ -91,6 +91,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /id="open-settings"/);
   assert.match(html, /대본 만들기/);
   assert.match(html, /id="settings-overlay"/);
+  assert.match(html, /class="studio-overlay feed-card" id="short-overlay"/);
+  assert.match(html, /id="close-short">닫기</);
   assert.match(html, /목소리 미리 듣기/);
   assert.equal(html.includes("완벽"), false);
   assert.match(html, /option value="grok-imagine" selected/);
@@ -173,7 +175,12 @@ test("library and overlays fill the viewport instead of a phone column", async (
   assert.equal(css.includes("min(520px"), false);
   assert.equal(css.includes("min(440px"), false);
   assert.equal(/\.library\s*\{[^}]*max-width:/.test(css), false);
-  assert.match(css, /--player-h:\s*calc\(100dvh/);
+  assert.match(css, /\.studio-overlay\.feed-card \.overlay-panel[\s\S]*width:\s*min\(28rem,\s*calc\(100vw - 32px\)\)/);
+  assert.match(css, /\.studio-overlay\.feed-card \.overlay-panel[\s\S]*height:\s*auto/);
+  assert.match(css, /\.studio-overlay\.feed-card \.overlay-panel[\s\S]*max-height:\s*calc\(100dvh - 48px\)/);
+  assert.match(css, /\.short-detail-layout\s*\{[^}]*display:\s*grid/);
+  assert.equal(/\.short-detail-layout\s*\{[^}]*min-height:\s*calc\(100dvh/.test(css), false);
+  assert.equal(/\.job-detail\s*\{[^}]*display:\s*contents/.test(css), false);
   assert.match(css, /\.create-panel\s*\{[^}]*max-width:\s*36rem/);
   assert.match(css, /\.create-panel\s*\{[^}]*margin:\s*0/);
 });
@@ -292,9 +299,12 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /setView\("detail"\)/);
+  assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
+  assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch"/);
   assert.match(app, /hash === "short"/);
+  assert.match(app, /hash === "short"[\s\S]*setView\("detail"/);
   assert.equal(app.includes('hash === "generation"'), false);
   assert.equal(app.includes('hash === "rendering"'), false);
   assert.match(app, /view: "grid"/);
