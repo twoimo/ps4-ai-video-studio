@@ -104,7 +104,7 @@ test("createJob stores editable world slot overrides", async () => {
 test("studio HTML exposes a prompt template surface", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   assert.match(html, /id="template-overlay"/);
-  assert.match(html, /프롬프트 템플릿/);
+  assert.match(html, /id="open-template">템플릿</);
   assert.match(html, /id="create-world-slots"/);
   assert.equal(html.indexOf('id="shorts-grid"') < html.indexOf('id="template-overlay"'), true);
 });

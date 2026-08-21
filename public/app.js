@@ -97,6 +97,10 @@ function setView(view, options = {}) {
 }
 
 function syncDocumentTitle() {
+  if (state.view === "template") {
+    document.title = `템플릿 · ${APP_TITLE}`;
+    return;
+  }
   if (state.view === "watch" || state.view === "detail") {
     const shortTitle = String(selectedJob()?.topic || "").trim();
     document.title = shortTitle ? `${shortTitle} · ${APP_TITLE}` : APP_TITLE;

@@ -192,7 +192,7 @@ test("studio keeps import control and seed episode copy", async () => {
   assert.match(html, /id="live-factory"/);
   assert.match(html, /id="template-overlay"/);
   assert.match(html, /id="import-library"/);
-  assert.match(html, /이미 만든 편 가져오기/);
+  assert.match(html, /id="import-library">가져오기</);
   assert.equal(html.includes("playground-cistern"), false);
   assert.equal(html.includes("workspace/imports"), false);
   assert.match(app, /\/api\/library\/import/);
