@@ -1,5 +1,5 @@
 import { formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
-import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
+import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -275,7 +275,7 @@ function watchSlideMarkup(job, loop = "") {
 }
 
 function watchChromeMarkup() {
-  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>`;
+  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>`;
 }
 
 function watchFeedMarkup(jobs) {
@@ -304,11 +304,6 @@ function renderWatchSlide(job) {
   return watchSlideMarkup(job);
 }
 
-function setWatchPlayGate(show) {
-  const button = $("#watch-feed .watch-play");
-  if (button) button.hidden = !show;
-}
-
 function bindWatchChrome() {
   const feed = $("#watch-feed");
   if (!feed || feed.dataset.chromeBound === "1") return;
@@ -328,11 +323,6 @@ function bindWatchChrome() {
     if (closeOpenWatchInspect()) return;
     stopWatchFeed(feed);
     openHome(event);
-  });
-  feed.querySelector(".watch-play")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const play = playWatchFeed(feed);
-    if (play) play.then(() => setWatchPlayGate(false)).catch(() => setWatchPlayGate(true));
   });
   feed.querySelector(".watch-menu")?.addEventListener("click", (event) => {
     event.preventDefault();
@@ -379,15 +369,7 @@ function activateWatchSlide(jobId) {
     return;
   }
   const play = playWatchFeed(feed);
-  if (play) {
-    play.then(() => setWatchPlayGate(false)).catch(() => {
-      if (!document.body.classList.contains("watch-open")) {
-        stopWatchFeed(feed);
-        return;
-      }
-      setWatchPlayGate(true);
-    });
-  }
+  if (play && typeof play.catch === "function") play.catch(() => {});
 }
 
 function goToWatchIndex(index, { instant = false } = {}) {
@@ -450,6 +432,7 @@ function mountWatchFeed({ focus = false, instant = false } = {}) {
   } else {
     placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
   }
+  settleWatchIndex(root, { animate: false });
 }
 
 function renderWatchFeed(options) {
@@ -1600,8 +1583,8 @@ function bindEvents() {
       if (!video) return;
       if (video.paused) {
         const play = document.body.classList.contains("watch-open") ? playWatchFeed(feed) : null;
-        if (play) play.then(() => setWatchPlayGate(false)).catch(() => setWatchPlayGate(true));
-        else stopWatchFeed(feed);
+        if (play && typeof play.catch === "function") play.catch(() => {});
+        else if (!play) stopWatchFeed(feed);
       } else {
         video.pause();
       }

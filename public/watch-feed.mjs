@@ -15,6 +15,7 @@ function pagerOf(root) {
       velocity: 0,
       swiping: false,
       swallowClick: false,
+      wheelAt: 0,
       onActive: null
     };
     pagers.set(root, pager);
@@ -81,10 +82,14 @@ export function goWatchIndex(root, index, { animate = false } = {}) {
   applyWatchTransform(root, { animate });
 }
 
+export function moveWatchIndex(root, index, options) {
+  return goWatchIndex(root, index, options);
+}
+
 export function stepWatchFeed(root, delta, { animate = true } = {}) {
   const pager = pagerOf(root);
   if (!pager) return;
-  goWatchIndex(root, pager.index + delta, { animate });
+  moveWatchIndex(root, pager.index + delta, { animate });
 }
 
 function attachWatchVideo(video) {
@@ -148,25 +153,51 @@ export function stopWatchFeed(root) {
   }
 }
 
+function revealAndPlay(video, jobId) {
+  if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
+  if (video.style) video.style.visibility = "";
+  const play = video.play();
+  if (play && typeof play.catch === "function") play.catch(() => {});
+  return play;
+}
+
 export function playWatchFeed(target) {
   if (target && typeof target.play === "function" && typeof target.querySelector !== "function") {
     target.muted = false;
     if (typeof target.removeAttribute === "function") target.removeAttribute("muted");
-    return target.play();
+    const play = target.play();
+    if (play && typeof play.catch === "function") play.catch(() => {});
+    return play;
   }
   const root = target;
   const slides = watchSlides(root);
   const activeSlide = slides[currentIndex(root)];
-  const video = reparentWatchVideo(root, activeSlide);
+  const jobId = activeSlide?.dataset?.jobId;
+  let video = watchPlayerVideo(root) || ensureWatchPlayer(root);
   if (!video) return;
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   video.volume = 1;
   video.preload = "auto";
+  if (jobId && video.dataset?.jobId === jobId) {
+    return revealAndPlay(video, jobId);
+  }
+  if (video.style) video.style.visibility = "hidden";
+  video.pause();
+  video = reparentWatchVideo(root, activeSlide);
+  if (!video) return;
+  if (activeSlide?.dataset?.poster) video.poster = activeSlide.dataset.poster;
   const src = activeSlide?.dataset?.src || activeSlide?.dataset?.videoUrl;
   if (src && video.getAttribute?.("src") !== src) video.src = src;
-  if (activeSlide?.dataset?.poster) video.poster = activeSlide.dataset.poster;
-  return video.play();
+  if (video.dataset) video.dataset.jobId = jobId || "";
+  if (typeof video.addEventListener === "function") {
+    const reveal = () => revealAndPlay(video, jobId);
+    video.addEventListener("loadeddata", reveal, { once: true });
+    video.addEventListener("canplay", reveal, { once: true });
+  }
+  const play = video.play();
+  if (play && typeof play.catch === "function") play.catch(() => {});
+  return play;
 }
 
 export function clearWatchSize(root) {
@@ -227,12 +258,17 @@ export function wrapWatchFeed(root) {
   reparentWatchVideo(root, slides[pager.index]);
 }
 
-function settleWatchPager(root) {
+export function settleWatchIndex(root, { animate = false } = {}) {
   wrapWatchFeed(root);
   const slide = currentWatchSlide(root);
   const pager = pagerOf(root);
   pager?.onActive?.(slide?.dataset?.jobId, slide);
+  if (animate) return;
   playWatchFeed(root);
+}
+
+function settleWatchPager(root) {
+  settleWatchIndex(root, { animate: false });
 }
 
 function chromeHit(event) {
@@ -245,10 +281,8 @@ function chromeHit(event) {
     || closest(".watch-menu")
     || closest(".watch-materials-toggle")
     || closest(".watch-inspect-dismiss")
-    || closest(".watch-tap-play")
-    || closest(".watch-play")
     || closest(".watch-dl")
-    || closest(".watch-inspect, .watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-inspect-dismiss, .watch-tap-play, .watch-play, .watch-dl")
+    || closest(".watch-inspect, .watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-inspect-dismiss, .watch-dl")
   );
 }
 
@@ -307,11 +341,6 @@ export function bindWatchFeed(root, onBack, onActive) {
         onBack?.(event);
         return;
       }
-      if (event.target?.closest?.(".watch-play, .watch-tap-play")) {
-        const play = playWatchFeed(root);
-        if (play && typeof play.catch === "function") play.catch(() => {});
-        return;
-      }
       return;
     }
     if (pager.swallowClick) {
@@ -325,6 +354,7 @@ export function bindWatchFeed(root, onBack, onActive) {
     if (!video) return;
     if (video.paused) {
       const play = globalThis.document?.body?.classList?.contains("watch-open") ? playWatchFeed(root) : null;
+      if (play && typeof play.catch === "function") play.catch(() => {});
       if (!play) stopWatchFeed(root);
     } else {
       video.pause();
@@ -380,11 +410,25 @@ export function bindWatchFeed(root, onBack, onActive) {
     pager.swallowClick = true;
     const dy = pager.dy;
     const fast = Math.abs(pager.velocity) > 0.4;
-    if (Math.abs(dy) > 40 || fast) stepWatchFeed(root, dy < 0 ? 1 : -1, { animate: true });
-    else applyWatchTransform(root, { animate: true });
+    if (Math.abs(dy) > 40 || fast) {
+      moveWatchIndex(root, pager.index + (dy < 0 ? 1 : -1), { animate: true });
+      playWatchFeed(root);
+    } else applyWatchTransform(root, { animate: true });
   };
   root.addEventListener("pointerup", (event) => endPointer(event, false));
   root.addEventListener("pointercancel", (event) => endPointer(event, true));
+  root.addEventListener("wheel", (event) => {
+    if (event.target?.closest?.(".watch-inspect")) return;
+    if (pager.swiping || root.dataset?.swiping === "1") return;
+    const dy = event.deltaY || 0;
+    if (Math.abs(dy) <= 40) return;
+    event.preventDefault?.();
+    const now = Date.now();
+    if (now - (pager.wheelAt || 0) < 320) return;
+    pager.wheelAt = now;
+    moveWatchIndex(root, pager.index + (dy > 0 ? 1 : -1), { animate: true });
+    playWatchFeed(root);
+  }, { passive: false });
   track?.addEventListener?.("transitionend", (event) => {
     if (event.propertyName && event.propertyName !== "transform") return;
     settleWatchPager(root);

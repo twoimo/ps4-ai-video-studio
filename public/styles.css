@@ -195,8 +195,7 @@ body.overlay-open { overflow: hidden; }
 .live-stage b { font-size: 12px; }
 .watch-menu { position: fixed; top: 12px; right: 12px; z-index: 8; min-width: 44px; min-height: 44px; padding: 0; margin: 0; display: grid; place-items: center; background: none; border: 0; border-radius: 0; color: #fff; appearance: none; -webkit-appearance: none; text-shadow: 0 1px 6px rgba(0,0,0,.75); pointer-events: auto; }
 .watch-menu svg { display: block; width: 22px; height: 22px; }
-.watch-play { position: fixed; left: 50%; top: 50%; z-index: 5; transform: translate(-50%, -50%); min-height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(8,10,15,.82); color: #fff; font-size: 14px; pointer-events: auto; }
-.watch-inspect { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100%; height: 100%; overflow: auto; background: var(--surface); color: var(--text); padding: 14px 14px 24px; z-index: 7; }
+.watch-inspect { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100%; height: 100%; overflow: auto; background: var(--surface); color: var(--text); padding: 14px 14px 24px; z-index: 7; visibility: hidden; pointer-events: none; transform: translateX(100%); }
 .watch-inspect .inspect-stack { display: grid; gap: 10px; }
 .watch-inspect .field-label { margin: 0; }
 .watch-inspect .inspect-caption { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 8px; align-items: start; }
@@ -279,15 +278,15 @@ body.overlay-open { overflow: hidden; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
 .watch-track { position: absolute; left: 0; right: 0; top: 0; width: 100%; will-change: transform; }
-.watch-slide { position: relative; box-sizing: border-box; width: 100%; height: 100cqh; min-height: 100cqh; max-height: 100cqh; overflow: hidden; contain: size layout; margin: 0; padding: 0; background: #000; }
-.watch-slide .watch-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-.watch-player { position: absolute; inset: 0; z-index: 1; height: 100%; pointer-events: none; display: flex; justify-content: center; }
+.watch-slide { position: relative; box-sizing: border-box; width: 100%; height: 100cqh; min-height: 100cqh; max-height: 100cqh; max-width: calc(100cqh * 9 / 16); margin-inline: auto; overflow: hidden; contain: size layout; margin-block: 0; padding: 0; background: #000; }
+.watch-slide .watch-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.watch-player { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; display: flex; justify-content: center; }
 .watch-player .watch-stage,
-.watch-stage { position: relative; height: 100%; width: min(100%, calc(100cqh * 9 / 16)); overflow: hidden; background: transparent; }
-.watch-player video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto; }
+.watch-stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+.watch-player video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: auto; }
 .watch-chrome { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 .watch-close,
-.watch-back { position: fixed; top: 12px; right: 12px; left: auto; z-index: 5; min-width: 44px; min-height: 44px; padding: 0; margin: 0; background: none; border: 0; border-radius: 0; color: #fff; font-size: 22px; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,.75); appearance: none; -webkit-appearance: none; pointer-events: auto; }
+.watch-back { position: fixed; top: 12px; left: 12px; right: auto; z-index: 5; min-width: 44px; min-height: 44px; padding: 0; margin: 0; background: none; border: 0; border-radius: 0; color: #fff; font-size: 22px; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,.75); appearance: none; -webkit-appearance: none; pointer-events: auto; }
 .watch-close { background: none; border: 0; border-radius: 0; }
 .watch-close:focus-visible,
 .watch-back:focus-visible { background: none; border: 0; border-radius: 0; box-shadow: none; }
@@ -296,11 +295,12 @@ body.overlay-open { overflow: hidden; }
 .watch-slide-chrome { position: fixed; left: 12px; right: 12px; bottom: 68px; z-index: 3; pointer-events: none; }
 .watch-inspect-dismiss { display: none; position: fixed; inset: 0; z-index: 6; width: 100%; height: 100%; padding: 0; margin: 0; background: rgba(0,0,0,.45); border: 0; border-radius: 0; }
 .watch-feed.inspect-open .watch-inspect-dismiss { display: block; }
+.watch-feed.inspect-open .watch-inspect {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
 @media (max-width: 860px) {
-  .watch-player .watch-stage,
-  .watch-stage { width: 100%; max-width: 100%; }
-  .watch-player video,
-  .watch-slide .watch-poster { object-fit: cover; }
   .watch-close,
   .watch-back {
     top: max(12px, env(safe-area-inset-top));
@@ -317,29 +317,11 @@ body.overlay-open { overflow: hidden; }
     bottom: max(18px, env(safe-area-inset-bottom));
   }
   .watch-inspect {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
     width: min(360px, 86vw);
-    height: 100%;
-    z-index: 7;
-    transform: translateX(100%);
-    visibility: hidden;
-    pointer-events: none;
     padding-top: max(14px, env(safe-area-inset-top));
     padding-right: max(14px, env(safe-area-inset-right));
     padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
-  .watch-feed.inspect-open .watch-inspect {
-    transform: translateX(0);
-    visibility: visible;
-    pointer-events: auto;
-  }
-}
-@media (min-width: 861px) {
-  .watch-menu,
-  .watch-inspect-dismiss { display: none; }
 }
 .watch-meta { min-width: 0; }
 .watch-meta h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.03em; text-shadow: 0 1px 10px rgba(0,0,0,.72); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

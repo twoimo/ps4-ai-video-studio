@@ -31,6 +31,8 @@ function fakeVideo(time = 4) {
     parentElement: null,
     playCalls: 0,
     pauseCalls: 0,
+    dataset: {},
+    style: { visibility: "" },
     closest(selector) {
       return selector === ".watch-player" ? null : null;
     },
@@ -38,6 +40,7 @@ function fakeVideo(time = 4) {
       return name === "src" ? this.src : null;
     },
     removeAttribute() {},
+    addEventListener() {},
     play() {
       this.playCalls += 1;
       this.paused = false;
@@ -236,6 +239,36 @@ test("playWatchFeed plays only the shared player", () => {
   assert.equal(video.playCalls, 2);
 });
 
+test("playWatchFeed hides the video before reparent when the job changes", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const playFn = feed.slice(feed.indexOf("export function playWatchFeed"), feed.indexOf("export function clearWatchSize"));
+  assert.ok(playFn.indexOf('visibility = "hidden"') < playFn.indexOf("reparentWatchVideo"));
+  assert.match(playFn, /visibility = "hidden"/);
+  assert.match(playFn, /reparentWatchVideo/);
+  assert.match(playFn, /loadeddata/);
+  assert.match(playFn, /canplay/);
+  const video = fakeVideo(1);
+  const slides = [
+    { dataset: { src: "/a.mp4", jobId: "a", poster: "/a.jpg" } },
+    { dataset: { src: "/b.mp4", jobId: "b", poster: "/b.jpg" } }
+  ];
+  const root = fakePager({ slides, video, height: 640 });
+  goWatchIndex(root, 0);
+  playWatchFeed(root);
+  assert.equal(video.dataset.jobId, "a");
+  goWatchIndex(root, 1);
+  playWatchFeed(root);
+  assert.equal(video.style.visibility, "hidden");
+  assert.equal(video.src, "/b.mp4");
+  assert.equal(video.poster, "/b.jpg");
+  assert.equal(video.dataset.jobId, "b");
+  video.dataset.jobId = "b";
+  video.style.visibility = "hidden";
+  playWatchFeed(root);
+  assert.equal(video.style.visibility, "");
+  assert.equal(video.playCalls, 3);
+});
+
 test("playWatchFeed never assigns muted true", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
@@ -355,6 +388,45 @@ test("pointer swipe translates the track then steps one slide", () => {
   assert.match(root.track.style.transform, /translate3d\(0,\s*-640px,\s*0\)/);
 });
 
+test("pointerup swipe calls playWatchFeed after moveWatchIndex", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const endFn = feed.slice(feed.indexOf("const endPointer"), feed.indexOf('root.addEventListener("pointerup"'));
+  assert.ok(endFn.indexOf("moveWatchIndex") < endFn.indexOf("playWatchFeed(root)"));
+  assert.match(endFn, /moveWatchIndex\(root,[\s\S]*\{\s*animate:\s*true\s*\}\)/);
+  assert.match(endFn, /playWatchFeed\(root\)/);
+  const video = fakeVideo(1);
+  const slides = [{ dataset: { jobId: "a", src: "/a.mp4" } }, { dataset: { jobId: "b", src: "/b.mp4" } }];
+  const root = fakePager({ slides, video, height: 640 });
+  bindWatchFeed(root, () => {});
+  const start = root.listeners.find((item) => item.type === "pointerdown").handler;
+  const move = root.listeners.find((item) => item.type === "pointermove").handler;
+  const end = root.listeners.find((item) => item.type === "pointerup").handler;
+  goWatchIndex(root, 0);
+  video.dataset.jobId = "a";
+  const plays = video.playCalls;
+  start({ clientX: 10, clientY: 200, target: { closest: () => null } });
+  move({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  end({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  assert.equal(getWatchIndex(root), 1);
+  assert.equal(video.playCalls, plays + 1);
+  assert.equal(video.src, "/b.mp4");
+});
+
+test("wheel listener steps one slide and plays", () => {
+  const video = fakeVideo(1);
+  const slides = [{ dataset: { jobId: "a", src: "/a.mp4" } }, { dataset: { jobId: "b", src: "/b.mp4" } }];
+  const root = fakePager({ slides, video, height: 640 });
+  bindWatchFeed(root, () => {});
+  const wheel = root.listeners.find((item) => item.type === "wheel");
+  assert.ok(wheel);
+  goWatchIndex(root, 0);
+  wheel.handler({ deltaY: 80, target: { closest: () => null }, preventDefault() {} });
+  assert.equal(getWatchIndex(root), 1);
+  assert.equal(video.src, "/b.mp4");
+  wheel.handler({ deltaY: 80, target: { closest: () => null }, preventDefault() {} });
+  assert.equal(getWatchIndex(root), 1);
+});
+
 test("pointer tap under 10px snaps back and does not change index", () => {
   const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
   const root = fakePager({ slides, height: 640 });
@@ -418,13 +490,14 @@ test("pointer drag swallows the following click", () => {
   move({ clientX: 10, clientY: 140, target: { closest: () => null } });
   end({ clientX: 10, clientY: 140, target: { closest: () => null } });
   const prevented = [];
+  const pauses = video.pauseCalls;
   click({
     target: { closest: (sel) => sel === "video" || sel === ".watch-stage" ? {} : null },
     preventDefault() { prevented.push("prevent"); },
     stopPropagation() { prevented.push("stop"); }
   });
   assert.deepEqual(prevented, ["prevent", "stop"]);
-  assert.equal(video.pauseCalls, 0);
+  assert.equal(video.pauseCalls, pauses);
 });
 
 test("selectedWatchSlide prefers the real slide over a loop clone", () => {
@@ -458,7 +531,7 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.equal(css.includes("backface-visibility"), false);
   assert.equal(css.includes("100svh"), false);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
-  assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
+  assert.match(css, /\.watch-close[\s\S]*left:\s*12px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
   assert.match(css, /\.watch-close\s*\{[^}]*background:\s*none/);
   assert.match(css, /\.watch-close\s*\{[^}]*border:\s*0/);
@@ -470,11 +543,24 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.equal(/\.watch-close\s*\{[^}]*background:\s*rgba/.test(css), false);
 });
 
-test("rejected play shows tap-to-play", async () => {
+test("watch chrome has no tap-to-play overlay", async () => {
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
-  assert.match(app, /탭해서 재생/);
-  assert.match(app, /setWatchPlayGate\(true\)/);
-  assert.match(app, /class="watch-play"/);
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const chrome = app.slice(app.indexOf("function watchChromeMarkup"), app.indexOf("function watchFeedMarkup"));
+  assert.equal(chrome.includes("탭해서 재생"), false);
+  assert.equal(chrome.includes("watch-play"), false);
+  assert.equal(chrome.includes("watch-tap-play"), false);
+  assert.equal(app.includes("showTapPlay"), false);
+  assert.equal(app.includes("hideTapPlay"), false);
+  assert.equal(app.includes("setWatchPlayGate"), false);
+  assert.equal(feed.includes("showTapPlay"), false);
+  assert.equal(feed.includes("hideTapPlay"), false);
+  assert.equal(html.includes("탭해서 재생"), false);
+  assert.equal(html.includes('class="watch-play"'), false);
+  assert.equal(/\.watch-play\s*\{/.test(css), false);
+  assert.equal(css.includes(".watch-tap-play"), false);
 });
 
 test("watch-feed module and app wire the transform pager", async () => {
@@ -562,6 +648,19 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.equal(feed.includes("touchstart"), false);
   assert.equal(feed.includes("touchend"), false);
   assert.match(feed, /function reparentWatchVideo/);
+  assert.match(feed, /activeSlide\.appendChild/);
+  assert.match(feed, /export function moveWatchIndex/);
+  assert.match(feed, /export function settleWatchIndex/);
+  assert.match(feed, /addEventListener\("wheel"/);
+  assert.match(feed, /passive:\s*false/);
+  assert.match(css, /\.watch-player video\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /\.watch-slide \.watch-poster\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100%/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*margin-inline:\s*auto/);
+  assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-menu[\s\S]*display:\s*none/.test(css), false);
+  assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-inspect-dismiss[\s\S]*display:\s*none/.test(css), false);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(feed, /swallowClick/);
   assert.match(feed, /movement < 10/);
