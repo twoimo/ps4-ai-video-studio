@@ -1,9 +1,8 @@
+import { TEMPLATE_ID, TEMPLATE_TITLE } from "./grok-imagine-template.mjs";
 import {
   CLIP_COUNT_LOCK,
   HARD_FAILS,
-  SHOT_TYPE_META,
-  TEMPLATE_ID,
-  TEMPLATE_TITLE
+  SHOT_TYPE_META
 } from "./grok-imagine-spec.mjs";
 import {
   FACTORY_CLIP_COUNT,
