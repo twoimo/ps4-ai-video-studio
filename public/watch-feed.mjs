@@ -197,11 +197,20 @@ export function stopWatchFeed(root) {
   if (root) watchPlayers.delete(root);
 }
 
+function revealWatchVideo(video) {
+  if (!video?.style) return video;
+  video.style.visibility = "visible";
+  video.style.opacity = "1";
+  return video;
+}
+
 function revealAndPlay(video, jobId) {
   if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
-  if (video.style) video.style.visibility = "";
+  revealWatchVideo(video);
   const play = video.play();
-  if (play && typeof play.catch === "function") play.catch(() => {});
+  if (play && typeof play.then === "function") {
+    play.then(() => revealWatchVideo(video)).catch(() => {});
+  }
   return play;
 }
 
@@ -209,8 +218,12 @@ export function playWatchFeed(target) {
   if (target && typeof target.play === "function" && typeof target.querySelector !== "function") {
     target.muted = false;
     if (typeof target.removeAttribute === "function") target.removeAttribute("muted");
+    attachWatchVideo(target);
+    revealWatchVideo(target);
     const play = target.play();
-    if (play && typeof play.catch === "function") play.catch(() => {});
+    if (play && typeof play.then === "function") {
+      play.then(() => revealWatchVideo(target)).catch(() => {});
+    }
     return play;
   }
   const root = target;
@@ -219,6 +232,7 @@ export function playWatchFeed(target) {
   const jobId = activeSlide?.dataset?.jobId;
   let video = ensureWatchPlayer(root);
   if (!video) return;
+  attachWatchVideo(video);
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   video.volume = 1;
@@ -226,21 +240,29 @@ export function playWatchFeed(target) {
   if (jobId && video.dataset?.jobId === jobId) {
     return revealAndPlay(video, jobId);
   }
-  if (video.style) video.style.visibility = "hidden";
+  if (video.style) {
+    video.style.visibility = "hidden";
+    video.style.opacity = "0";
+  }
   video.pause();
   video = reparentWatchVideo(root, activeSlide);
   if (!video) return;
+  attachWatchVideo(video);
   if (activeSlide?.dataset?.poster) video.poster = activeSlide.dataset.poster;
   const src = activeSlide?.dataset?.src || activeSlide?.dataset?.videoUrl;
-  if (src && video.getAttribute?.("src") !== src) video.src = src;
-  if (video.dataset) video.dataset.jobId = jobId || "";
+  const reveal = () => revealAndPlay(video, jobId);
   if (typeof video.addEventListener === "function") {
-    const reveal = () => revealAndPlay(video, jobId);
     video.addEventListener("loadeddata", reveal, { once: true });
     video.addEventListener("canplay", reveal, { once: true });
+    video.addEventListener("playing", reveal, { once: true });
   }
+  if (src && video.getAttribute?.("src") !== src) video.src = src;
+  if (video.dataset) video.dataset.jobId = jobId || "";
+  if ((video.readyState || 0) >= 2) revealWatchVideo(video);
   const play = video.play();
-  if (play && typeof play.catch === "function") play.catch(() => {});
+  if (play && typeof play.then === "function") {
+    play.then(() => revealWatchVideo(video)).catch(() => {});
+  }
   return play;
 }
 
@@ -399,8 +421,11 @@ export function bindWatchFeed(root, onBack, onActive) {
     const video = watchPlayerVideo(root);
     if (!video) return;
     if (video.paused) {
+      revealWatchVideo(video);
       const play = globalThis.document?.body?.classList?.contains("watch-open") ? playWatchFeed(root) : null;
-      if (play && typeof play.catch === "function") play.catch(() => {});
+      if (play && typeof play.then === "function") {
+        play.then(() => revealWatchVideo(video)).catch(() => {});
+      }
       if (!play) stopWatchFeed(root);
     } else {
       video.pause();

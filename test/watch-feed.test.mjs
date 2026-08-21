@@ -32,7 +32,8 @@ function fakeVideo(time = 4) {
     playCalls: 0,
     pauseCalls: 0,
     dataset: {},
-    style: { visibility: "" },
+    readyState: 0,
+    style: { visibility: "", opacity: "" },
     closest(selector) {
       return selector === ".watch-player" ? null : null;
     },
@@ -241,12 +242,22 @@ test("playWatchFeed plays only the shared player", () => {
 
 test("playWatchFeed hides the video before reparent when the job changes", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
-  const playFn = feed.slice(feed.indexOf("export function playWatchFeed"), feed.indexOf("export function clearWatchSize"));
+  const playFn = feed.slice(feed.indexOf("function revealWatchVideo"), feed.indexOf("export function clearWatchSize"));
   assert.ok(playFn.indexOf('visibility = "hidden"') < playFn.indexOf("reparentWatchVideo"));
+  assert.ok(playFn.indexOf("loadeddata") < playFn.indexOf("video.src"));
+  assert.ok(playFn.indexOf("canplay") < playFn.indexOf("video.src"));
+  assert.ok(playFn.indexOf("playing") < playFn.indexOf("video.src"));
   assert.match(playFn, /visibility = "hidden"/);
+  assert.match(playFn, /function revealWatchVideo/);
+  assert.match(playFn, /visibility = "visible"/);
+  assert.match(playFn, /opacity = "1"/);
+  assert.match(playFn, /readyState/);
   assert.match(playFn, /reparentWatchVideo/);
   assert.match(playFn, /loadeddata/);
   assert.match(playFn, /canplay/);
+  assert.match(playFn, /playing/);
+  assert.match(feed, /setAttribute\("playsinline"/);
+  assert.match(feed, /setAttribute\("webkit-playsinline"/);
   const video = fakeVideo(1);
   const slides = [
     { dataset: { src: "/a.mp4", jobId: "a", poster: "/a.jpg" } },
@@ -265,7 +276,8 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   video.dataset.jobId = "b";
   video.style.visibility = "hidden";
   playWatchFeed(root);
-  assert.equal(video.style.visibility, "");
+  assert.equal(video.style.visibility, "visible");
+  assert.equal(video.style.opacity, "1");
   assert.equal(video.playCalls, 3);
 });
 
@@ -530,6 +542,10 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.equal(css.includes("-webkit-overflow-scrolling"), false);
   assert.equal(css.includes("backface-visibility"), false);
   assert.equal(css.includes("100svh"), false);
+  assert.match(css, /#watch-feed[\s\S]*min-height:\s*100%/);
+  assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*height:\s*100%/);
+  assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*min-height:\s*100%/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*margin-inline:\s*auto/);
   assert.match(css, /#watch-feed \.watch-menu/);
@@ -658,6 +674,12 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /addEventListener\("wheel"/);
   assert.match(feed, /passive:\s*false/);
   assert.match(css, /\.watch-player video\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /\.watch-player video\s*\{[^}]*display:\s*block/);
+  assert.match(css, /\.watch-player video\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /\.watch-player video\s*\{[^}]*height:\s*100%/);
+  assert.match(css, /\.watch-player video\s*\{[^}]*background:\s*transparent/);
+  assert.equal(/\.watch-player video\s*\{[^}]*display:\s*none/.test(css), false);
+  assert.match(css, /\.watch-slide \.watch-poster\s*\{[^}]*z-index:\s*0/);
   assert.match(css, /\.watch-slide \.watch-poster\s*\{[^}]*object-fit:\s*cover/);
   assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*100%/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100%/);
@@ -738,7 +760,8 @@ test("same-job playWatchFeed only plays and does not reparent", () => {
   playWatchFeed(root);
   assert.equal(video.pauseCalls, pauses);
   assert.equal(video.playCalls, plays + 1);
-  assert.equal(video.style.visibility, "");
+  assert.equal(video.style.visibility, "visible");
+  assert.equal(video.style.opacity, "1");
   assert.equal(video.src, "/a.mp4");
 });
 
@@ -780,4 +803,48 @@ test("wheel stays on the watch feed root", () => {
   bindWatchFeed(root, () => {});
   const wheels = root.listeners.filter((item) => item.type === "wheel");
   assert.equal(wheels.length, 1);
+});
+
+test("readyState 2 after src reveals the hidden video immediately", () => {
+  const video = fakeVideo(1);
+  video.readyState = 2;
+  const slides = [
+    { dataset: { src: "/a.mp4", jobId: "a" } },
+    { dataset: { src: "/b.mp4", jobId: "b" } }
+  ];
+  const root = fakePager({ slides, video, height: 640 });
+  goWatchIndex(root, 0);
+  playWatchFeed(root);
+  goWatchIndex(root, 1);
+  playWatchFeed(root);
+  assert.equal(video.style.visibility, "visible");
+  assert.equal(video.style.opacity, "1");
+  assert.equal(video.src, "/b.mp4");
+});
+
+test("listeners before src catch synchronous Android loadeddata", () => {
+  const video = fakeVideo(1);
+  let srcValue = "";
+  const handlers = [];
+  video.addEventListener = (_type, handler) => { handlers.push(handler); };
+  Object.defineProperty(video, "src", {
+    configurable: true,
+    get() { return srcValue; },
+    set(value) {
+      srcValue = value;
+      for (const handler of handlers) handler();
+    }
+  });
+  const slides = [
+    { dataset: { src: "/a.mp4", jobId: "a" } },
+    { dataset: { src: "/b.mp4", jobId: "b" } }
+  ];
+  const root = fakePager({ slides, video, height: 640 });
+  goWatchIndex(root, 0);
+  playWatchFeed(root);
+  goWatchIndex(root, 1);
+  playWatchFeed(root);
+  assert.ok(handlers.length >= 3);
+  assert.equal(video.style.visibility, "visible");
+  assert.equal(video.style.opacity, "1");
 });

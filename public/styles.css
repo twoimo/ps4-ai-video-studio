@@ -272,16 +272,17 @@ body.overlay-open { overflow: hidden; }
 .shot-prompt pre, .slot-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .prompt-subhead { margin: 12px 0 6px; font-size: 13px; }
 
-.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; background: #000; touch-action: none; container-type: size; }
+#watch-feed,
+.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
-#watch-feed .watch-column { position: relative; height: 100%; width: 100%; max-width: calc(100cqh * 9 / 16); margin-inline: auto; overflow: hidden; }
+#watch-feed .watch-column { position: relative; height: 100%; width: 100%; min-height: 100%; max-width: calc(100cqh * 9 / 16); margin-inline: auto; overflow: hidden; }
 #watch-feed .watch-track { position: absolute; left: 0; right: 0; top: 0; width: 100%; will-change: transform; }
 .watch-track { position: absolute; left: 0; right: 0; top: 0; width: 100%; will-change: transform; }
 #watch-feed .watch-slide,
 .watch-slide { position: relative; box-sizing: border-box; width: 100%; height: 100cqh; min-height: 100cqh; max-height: 100cqh; max-width: calc(100cqh * 9 / 16); margin-inline: auto; overflow: hidden; contain: size layout; margin-block: 0; padding: 0; background: #000; }
 #watch-feed .watch-slide .watch-poster,
-.watch-slide .watch-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.watch-slide .watch-poster { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; object-fit: cover; }
 #watch-feed .watch-player,
 .watch-player { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; display: flex; justify-content: center; }
 #watch-feed .watch-player .watch-stage,
@@ -289,7 +290,7 @@ body.overlay-open { overflow: hidden; }
 .watch-player .watch-stage,
 .watch-stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: transparent; }
 #watch-feed .watch-player video,
-.watch-player video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: auto; }
+.watch-player video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; background: transparent; pointer-events: auto; }
 #watch-feed .watch-chrome,
 .watch-chrome { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 #watch-feed .watch-menu {
