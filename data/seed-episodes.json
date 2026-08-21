@@ -1,0 +1,171 @@
+{
+  "channel": "신비한 건축사전",
+  "handle": "@신비한_건축사전_1",
+  "dropRoots": ["workspace/imports", "workspace/masters", "workspace/episodes", "fixtures/episodes"],
+  "episodes": [
+    {
+      "id": "seed-playground-cistern",
+      "slug": "playground-cistern",
+      "topic": "서울 공원 놀이터 밑에 텅 빈 콘크리트 방이 있는 이유",
+      "facts": [
+        "놀이터 아래는 빗물을 받아 두는 저류조입니다",
+        "콘크리트 방은 사람이 노는 공간이 아닙니다"
+      ],
+      "duration": 53.3,
+      "referenceTitle": "서울 공원 놀이터 밑에 텅 빈 콘크리트 방이 있는 이유"
+    },
+    {
+      "id": "seed-refuge-floor",
+      "slug": "refuge-floor",
+      "topic": "고층 아파트 중간층이 텅 비어 보이는 이유",
+      "facts": [
+        "피난안전구역은 일정 층마다 비워 둡니다",
+        "그 층은 살림집이 아닙니다"
+      ],
+      "duration": 48.2,
+      "referenceTitle": "고층 아파트 중간층이 텅 비어 보이는 이유"
+    },
+    {
+      "id": "seed-balcony-refuge",
+      "slug": "balcony-refuge",
+      "draft": true,
+      "topic": "안방 옆 작은 방은 창고가 아닙니다",
+      "facts": [
+        "대피공간은 세대마다 2㎡입니다",
+        "공용 대피공간은 3㎡입니다",
+        "계단이 하나인 4층부터 생깁니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "안방 옆 작은 방은 창고가 아닙니다"
+    },
+    {
+      "id": "seed-floor-slab",
+      "slug": "floor-slab",
+      "draft": true,
+      "topic": "위층 발소리는 바닥 두께로 막습니다",
+      "facts": [
+        "벽식 바닥은 210mm입니다",
+        "라멘 바닥은 150mm입니다",
+        "바닥충격음은 49dB입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "위층 발소리는 바닥 두께로 막습니다"
+    },
+    {
+      "id": "seed-daylight-gap",
+      "slug": "daylight-gap",
+      "draft": true,
+      "topic": "옆 동이 저렇게 떨어진 건 햇볕 때문입니다",
+      "facts": [
+        "10m 위는 높이의 1/2를 띄웁니다",
+        "10m 높이가 기준선입니다",
+        "10m 아래는 1.5m입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "옆 동이 저렇게 떨어진 건 햇볕 때문입니다"
+    },
+    {
+      "id": "seed-parking-stall",
+      "slug": "parking-stall",
+      "draft": true,
+      "topic": "주차선이 딱 그 크기인 이유는 법이 자로 잰 겁니다",
+      "facts": [
+        "일반 주차장은 길이 5.0m입니다",
+        "너비는 2.5m입니다",
+        "장애인 전용은 너비 3.3m입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "주차선이 딱 그 크기인 이유는 법이 자로 잰 겁니다"
+    },
+    {
+      "id": "seed-parking-height",
+      "slug": "parking-height",
+      "draft": true,
+      "topic": "지하주차장 천장이 머리를 스치는 높이",
+      "facts": [
+        "차로 너비는 6.0m입니다",
+        "차로 높이는 2.3m입니다",
+        "지상 출입이 없으면 2.7m입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "지하주차장 천장이 머리를 스치는 높이"
+    },
+    {
+      "id": "seed-fire-truck-road",
+      "slug": "fire-truck-road",
+      "draft": true,
+      "topic": "단지 정문 문주가 높은 이유는 소방차 때문입니다",
+      "facts": [
+        "보도는 1.5m입니다",
+        "단지 안 도로는 7m입니다",
+        "300세대 미만 진입로는 6m입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "단지 정문 문주가 높은 이유는 소방차 때문입니다"
+    },
+    {
+      "id": "seed-indoor-hydrant",
+      "slug": "indoor-hydrant",
+      "draft": true,
+      "topic": "복도 빨간 함은 장식이 아닙니다",
+      "facts": [
+        "호스 구경은 40mm입니다",
+        "수평 도달은 25m입니다",
+        "방수구 높이는 1.5m입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "복도 빨간 함은 장식이 아닙니다"
+    },
+    {
+      "id": "seed-emergency-elevator",
+      "slug": "emergency-elevator",
+      "draft": true,
+      "topic": "저 엘리베이터는 평소에 안 탑니다",
+      "facts": [
+        "카 너비는 1100mm입니다",
+        "31m부터 비상용 승강기를 둡니다",
+        "한 대당 바닥면적 1500㎡가 기준입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "저 엘리베이터는 평소에 안 탑니다"
+    },
+    {
+      "id": "seed-fire-compartment",
+      "slug": "fire-compartment",
+      "draft": true,
+      "topic": "복도 셔터가 갑자기 내려오는 이유",
+      "facts": [
+        "방화구획은 바닥면적 1000㎡마다 나눕니다",
+        "셔터는 연기·열에 내려옵니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "복도 셔터가 갑자기 내려오는 이유"
+    },
+    {
+      "id": "seed-lightning-rod",
+      "slug": "lightning-rod",
+      "draft": true,
+      "topic": "옥상 쇠막대는 안테나가 아닙니다",
+      "facts": [
+        "옆면 돌출발뢰침은 60m입니다",
+        "높이 20m부터 피뢰침을 둡니다",
+        "피뢰침은 지붕 위 25cm입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "옥상 쇠막대는 안테나가 아닙니다"
+    },
+    {
+      "id": "seed-access-ramp",
+      "slug": "access-ramp",
+      "draft": true,
+      "topic": "정문 앞 긴 비탈은 장식이 아닙니다",
+      "facts": [
+        "경사로 너비는 1.2m입니다",
+        "기울기는 1/12입니다",
+        "참은 1.5m × 1.5m입니다"
+      ],
+      "duration": 50,
+      "referenceTitle": "정문 앞 긴 비탈은 장식이 아닙니다"
+    }
+  ]
+}

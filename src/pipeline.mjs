@@ -8,7 +8,11 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { generateGeminiClips } from "./gemini-browser.mjs";
 import { generateLocalVideoClips } from "./local-video-provider.mjs";
+import { buildGrokImagineScript, FACTORY_CLIP_COUNT, PROVIDER_ID as GROK_IMAGINE_PROVIDER, SHOT_DURATION_SEC, unsupportedProviderMessage, normalizeFacts } from "./grok-imagine-factory.mjs";
+import { sanitizeWorldSlotOverrides } from "./grok-imagine-template.mjs";
+import { generateGrokImagineFactory } from "./grok-imagine-provider.mjs";
 import { appendRunEvent, artifactReceipt, hashFile, writeJsonAtomic, writeRunManifest } from "./run-ledger.mjs";
+import { factoryStageEvent, mergeLiveArtifacts } from "./grok-imagine-live.mjs";
 
 export const ROOT = resolve(import.meta.dirname, "..");
 export const DATA_DIR = join(ROOT, "data");
@@ -17,7 +21,7 @@ export const JOBS_DIR = join(WORKSPACE_DIR, "jobs");
 export const ANALYSIS_PATH = join(DATA_DIR, "channel-analysis.json");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
-const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser"]);
+const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser", "grok-imagine"]);
 const DEFAULT_SAY_RATE = 165;
 const GEMINI_PROFILE_ROOT = resolve(process.env.HOME || "/tmp", ".ps4-ai-video-studio");
 function normalizeGeminiProfile(input) {
@@ -55,6 +59,10 @@ function hashJson(value) {
 export async function ensureWorkspace() {
   await mkdir(JOBS_DIR, { recursive: true });
   await mkdir(join(WORKSPACE_DIR, "uploads"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "imports"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "masters"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "episodes"), { recursive: true });
+  await mkdir(join(WORKSPACE_DIR, "songs"), { recursive: true });
 }
 
 export async function readAnalysis() {
@@ -106,24 +114,32 @@ export async function createJob(input) {
   const targetDurationSec = Math.max(20, Math.min(180, Number(input.targetDurationSec) || benchmarkDuration.recommendedTargetSec || 78));
   const sources = Array.isArray(input.sources) ? input.sources.filter((source) => source && (source.url || source.title || typeof source === "string")) : [];
   const provider = input.provider === undefined ? "gemini-browser" : input.provider;
-  if (!SUPPORTED_PROVIDERS.has(provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
+  if (!SUPPORTED_PROVIDERS.has(provider)) throw new Error(unsupportedProviderMessage());
   const geminiProfile = provider === "gemini-browser" ? normalizeGeminiProfile(input) : {};
+  const factory = provider === GROK_IMAGINE_PROVIDER;
   const job = {
     id,
     topic: input.topic.trim(),
-    format: input.format === "landscape" ? "landscape" : "vertical",
+    format: factory ? "vertical" : input.format === "landscape" ? "landscape" : "vertical",
     provider,
     ...geminiProfile,
-    clipCount: Math.max(1, Math.min(12, Number(input.clipCount) || 6)),
-    captions: input.captions !== false,
-    voiceover: input.voiceover !== false,
+    clipCount: factory ? FACTORY_CLIP_COUNT : Math.max(1, Math.min(12, Number(input.clipCount) || 6)),
+    captions: factory ? true : input.captions !== false,
+    voiceover: factory ? false : input.voiceover !== false,
+    facts: normalizeFacts(input.facts),
+    scriptDraft: typeof input.scriptDraft === "string" ? input.scriptDraft : "",
+    ...(input.ttsProvider === "chirp" || input.ttsProvider === "edge" ? { ttsProvider: input.ttsProvider } : {}),
+    ...(typeof input.ttsVoice === "string" && input.ttsVoice.trim() ? { ttsVoice: input.ttsVoice.trim() } : {}),
+    worldSlots: factory ? sanitizeWorldSlotOverrides(input.worldSlots) : {},
     sources,
-    targetDurationSec,
+    targetDurationSec: factory ? FACTORY_CLIP_COUNT * SHOT_DURATION_SEC : targetDurationSec,
     targetDurationRangeSec: benchmarkDuration.recommendedRangeSec || [benchmarkDuration.p10Sec || 43, benchmarkDuration.p90Sec || 104],
-    status: "queued",
-    stage: "대기",
+    status: input.draftOnly || input.startImagine === false ? "draft" : "queued",
+    stage: input.draftOnly || input.startImagine === false ? "초안" : "대기",
     progress: 0,
-    message: "제작 요청을 받았습니다.",
+    message: input.draftOnly || input.startImagine === false
+      ? "대본 초안만 저장했습니다. Imagine은 시작하지 않았습니다."
+      : "제작 요청을 받았습니다.",
     warnings: [],
     artifacts: [],
     createdAt: new Date().toISOString(),
@@ -132,6 +148,11 @@ export async function createJob(input) {
   const dir = join(JOBS_DIR, id);
   await mkdir(join(dir, "clips"), { recursive: true });
   await mkdir(join(dir, "normalized"), { recursive: true });
+  if (factory) {
+    const script = buildGrokImagineScript(job);
+    await writeJsonAtomic(join(dir, "script.json"), script);
+    job.artifacts = [{ name: "script.json", kind: "script", url: `/api/jobs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent("script.json")}` }];
+  }
   await writeJob(job);
   return job;
 }
@@ -958,13 +979,14 @@ export async function renderJob(job, script, onProgress = async () => {}, inputM
 }
 const MUTABLE_OUTPUTS = [
   "final.mp4", "assembled.mp4", "voiced.mp4", "voiceover.aiff", "voiceover-mastered.wav", "voiceover-concat.txt", "concat.txt",
-  "captions.srt", "captions.vtt", "caption-timing.json", "voiceover-sync.json", "script.json",
+  "captions.srt", "captions.vtt", "captions.ass", "caption-timing.json", "voiceover-sync.json", "script.json",
   "sources.json", "frame-audio-caption.json", "thumbnail.jpg", "quality.json",
-  "committee-review.json"
+  "committee-review.json", "master.mp4", "chat.mp4", "grok-imagine-generation.json"
 ];
 function providerPolicy(provider) {
   if (provider === "gemini-browser") return "no-local-video-fallback";
   if (provider === "local-video") return "local-video-command-adapter-no-fallback";
+  if (provider === GROK_IMAGINE_PROVIDER) return "official-grok-cli-imagine-factory-no-fallback";
   return "local-upload-edit";
 }
 async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVideoClips = false) {
@@ -977,6 +999,8 @@ async function clearMutableOutputs(jobDir, preserveGemini = false, clearLocalVid
   }
   await rm(join(jobDir, "quality"), { recursive: true, force: true });
   await rm(join(jobDir, "normalized"), { recursive: true, force: true });
+  await rm(join(jobDir, "factory"), { recursive: true, force: true });
+  await rm(join(jobDir, "parts"), { recursive: true, force: true });
   await mkdir(join(jobDir, "normalized"), { recursive: true });
 }
 
@@ -1026,8 +1050,8 @@ export async function runJob(jobId, options = {}) {
   };
   try {
     await mkdir(runDir, { recursive: true });
-    if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
-    await clearMutableOutputs(jobDir, job.provider === "gemini-browser", job.provider === "local-video");
+    if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error(unsupportedProviderMessage());
+    await clearMutableOutputs(jobDir, job.provider === "gemini-browser", job.provider === "local-video" || job.provider === GROK_IMAGINE_PROVIDER);
     await writeRunManifest(runDir, runManifest);
     job = await updateJob(jobId, {
       status: "running",
@@ -1074,6 +1098,7 @@ export async function runJob(jobId, options = {}) {
 
   let inputManifest = null;
   let localVideoGeneration = null;
+  let grokImagineGeneration = null;
   const captureRunInputs = async (requestedNames = null, expectedCount = job.clipCount) => {
     if (inputManifest) return inputManifest;
     inputManifest = await createInputManifest(jobDir, runDir, jobId, runId, requestedNames, expectedCount);
@@ -1116,9 +1141,26 @@ export async function runJob(jobId, options = {}) {
     job = await updateJob(jobId, { sources: sourceBundle.records, sourceBundle: { status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 } });
     await record({ type: "sources_captured", status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 });
 
-    const script = await buildScript(job);
+    if (job.provider === GROK_IMAGINE_PROVIDER) {
+      await record(factoryStageEvent({
+        stageId: "plan",
+        status: "RUN",
+        message: "주제 비의존 슬롯과 6고유·1홀드 샷 목록을 짜는 중"
+      }));
+    }
+    const script = job.provider === GROK_IMAGINE_PROVIDER ? buildGrokImagineScript(job) : await buildScript(job);
     await writeJsonAtomic(join(jobDir, "script.json"), script);
-    await progress(18, "기획", `${script.generatedBy === "gemini-api" ? "Gemini" : "로컬 템플릿"} 대본과 ${script.segments.length}개 장면을 준비했습니다.`);
+    await progress(18, "기획", job.provider === GROK_IMAGINE_PROVIDER
+      ? `공장 슬롯과 6고유·1홀드 샷 목록 ${script.segments.length}개를 준비했습니다.`
+      : `${script.generatedBy === "gemini-api" ? "Gemini" : "로컬 템플릿"} 대본과 ${script.segments.length}개 장면을 준비했습니다.`);
+    if (job.provider === GROK_IMAGINE_PROVIDER) {
+      await record(factoryStageEvent({
+        stageId: "plan",
+        status: "PASS",
+        message: `슬롯 ${script.slots?.length || 6}개 · 샷 ${script.segments.length}개 준비`,
+        prompt: script.segments[0]?.visualPrompt || ""
+      }));
+    }
 
     if (job.provider === "gemini-browser") {
       await progress(24, "Gemini 영상", "Chrome의 Gemini 동영상 만들기 화면을 제어하는 중입니다.");
@@ -1157,11 +1199,77 @@ export async function runJob(jobId, options = {}) {
       };
       await writeRunManifest(runDir, runManifest);
       await captureRunInputs(localVideoGeneration.outputNames.map((name) => name.replace(/^clips\//, "")), script.segments.length);
+    } else if (job.provider === GROK_IMAGINE_PROVIDER) {
+      await progress(24, "훅 스틸 잠금", "공식 grok CLI로 훅 잠금·image_edit·10초 애니메이션을 실행합니다. Gemini로 대체하지 않습니다.");
+      grokImagineGeneration = await generateGrokImagineFactory(job, script, runId, async (value, message) => progress(24 + Math.round(value * 0.30), message || "Grok Imagine 공장", message), {
+        onEvent: async (event) => {
+          await record(event);
+          const artifacts = mergeLiveArtifacts(job.artifacts, event.artifacts);
+          job = await updateJob(jobId, {
+            stage: event.label || event.message || job.stage,
+            message: event.message || job.message,
+            artifacts,
+            live: {
+              stageId: event.stageId,
+              status: event.status,
+              shotIndex: event.shotIndex,
+              message: event.message,
+              prompt: event.prompt || event.animatePrompt || null,
+              frozen: Boolean(event.frozen)
+            }
+          });
+        }
+      });
+      if (!grokImagineGeneration || grokImagineGeneration.status !== "completed" || grokImagineGeneration.runId !== runId) {
+        throw new Error("Grok Imagine 공장 provenance가 현재 runId에 결속되지 않았습니다.");
+      }
+      const providerReceipt = {
+        ...grokImagineGeneration.receipt,
+        provider: GROK_IMAGINE_PROVIDER,
+        model: grokImagineGeneration.model,
+        modelVersion: grokImagineGeneration.modelVersion,
+        modelId: grokImagineGeneration.modelId,
+        requestHash: grokImagineGeneration.requestHash,
+        scriptHash: grokImagineGeneration.scriptHash
+      };
+      await record({
+        type: "provider_generation",
+        provider: GROK_IMAGINE_PROVIDER,
+        jobId,
+        runId,
+        model: grokImagineGeneration.model,
+        modelVersion: grokImagineGeneration.modelVersion,
+        modelId: grokImagineGeneration.modelId,
+        receipt: providerReceipt,
+        artifact: { name: `runs/${runId}/grok-imagine-generation.json`, path: `runs/${runId}/grok-imagine-generation.json`, sha256: providerReceipt.sha256 }
+      });
+      runManifest = {
+        ...runManifest,
+        providerReceipt,
+        providerArtifact: { name: `runs/${runId}/grok-imagine-generation.json`, path: `runs/${runId}/grok-imagine-generation.json`, sha256: providerReceipt.sha256 }
+      };
+      await writeRunManifest(runDir, runManifest);
+      await captureRunInputs(grokImagineGeneration.outputNames.map((name) => name.replace(/^clips\//, "")), script.segments.length);
     } else {
       await progress(54, "소스 확인", "업로드된 로컬 클립을 사용합니다.");
     }
 
-    const rendered = await renderJob(job, script, progress, inputManifest);
+    const rendered = job.provider === GROK_IMAGINE_PROVIDER
+      ? {
+        warnings: [],
+        artifacts: [
+          { name: "final.mp4", kind: "video", url: mediaPath(job.id, "final.mp4") },
+          { name: "master.mp4", kind: "master-video", url: mediaPath(job.id, "master.mp4") },
+          { name: "chat.mp4", kind: "chat-video", url: mediaPath(job.id, "chat.mp4") },
+          { name: "captions.srt", kind: "captions", url: mediaPath(job.id, "captions.srt") },
+          { name: "captions.ass", kind: "captions-ass", url: mediaPath(job.id, "captions.ass") },
+          { name: "script.json", kind: "script", url: mediaPath(job.id, "script.json") },
+          { name: "thumbnail.jpg", kind: "thumbnail", url: mediaPath(job.id, "thumbnail.jpg") },
+          ...(grokImagineGeneration?.artifacts || [])
+        ],
+        duration: grokImagineGeneration?.compose?.duration || script.targetDurationSec
+      }
+      : await renderJob(job, script, progress, inputManifest);
     job = await updateJob(jobId, {
       status: "verifying",
       stage: "검수",
@@ -1207,6 +1315,8 @@ export async function runJob(jobId, options = {}) {
       { name: "sources.json", kind: "source-bundle", url: mediaPath(job.id, "sources.json") },
       ...(existsSync(join(jobDir, "gemini-generation.json")) ? [{ name: "gemini-generation.json", kind: "provider-provenance", url: mediaPath(job.id, "gemini-generation.json") }] : []),
       ...(localVideoGeneration ? [{ name: `runs/${runId}/local-video-generation.json`, kind: "provider-provenance", url: mediaPath(job.id, `runs/${runId}/local-video-generation.json`) }] : []),
+      ...(grokImagineGeneration ? [{ name: `runs/${runId}/grok-imagine-generation.json`, kind: "provider-provenance", url: mediaPath(job.id, `runs/${runId}/grok-imagine-generation.json`) }] : []),
+      ...(existsSync(join(jobDir, "grok-imagine-generation.json")) ? [{ name: "grok-imagine-generation.json", kind: "provider-provenance", url: mediaPath(job.id, "grok-imagine-generation.json") }] : []),
       { name: `runs/${runId}/events.jsonl`, kind: "run-events", url: mediaPath(job.id, `runs/${runId}/events.jsonl`) },
       { name: `runs/${runId}/input-manifest.json`, kind: "input-manifest", url: mediaPath(job.id, `runs/${runId}/input-manifest.json`) },
       { name: `runs/${runId}/benchmarks/channel-analysis.json`, kind: "benchmark-snapshot", url: mediaPath(job.id, `runs/${runId}/benchmarks/channel-analysis.json`) },
@@ -1223,7 +1333,7 @@ export async function runJob(jobId, options = {}) {
       ...runManifest,
       status: "finalizing",
       runStatus,
-      script: { generatedBy: script.generatedBy, segmentCount: script.segments.length, targetDurationSec: job.targetDurationSec, sourceBundle: job.sourceBundle || { status: "missing" }, providerProvenance: localVideoGeneration ? `runs/${runId}/local-video-generation.json` : existsSync(join(jobDir, "gemini-generation.json")) ? "gemini-generation.json" : null },
+      script: { generatedBy: script.generatedBy, segmentCount: script.segments.length, targetDurationSec: job.targetDurationSec, sourceBundle: job.sourceBundle || { status: "missing" }, providerProvenance: grokImagineGeneration ? `runs/${runId}/grok-imagine-generation.json` : localVideoGeneration ? `runs/${runId}/local-video-generation.json` : existsSync(join(jobDir, "gemini-generation.json")) ? "gemini-generation.json" : null },
       inputs: sourceEntries,
       artifacts: await artifactReceipt(jobDir, snapshotArtifacts),
       qualitySummary,
