@@ -23,13 +23,17 @@ import { createHash } from "node:crypto";
 import {
   assemblePublicEdgeTrustedClientToken,
   decodeTtsSocketData,
+  EDGE_TTS_CHROMIUM,
   EDGE_TTS_TOKEN,
+  edgeTtsHandshakeHeaders,
   edgeTtsUrl,
   edgeWordTimestamps,
+  generateEdgeTtsMuid,
   resolveEdgeTtsToken,
   secMsGec,
   synthesizeEdgeTts,
-  ttsTimingFromWords
+  ttsTimingFromWords,
+  windowsFileTimeTicks
 } from "../src/studio-tts.mjs";
 import { listBgmFiles } from "../src/studio-bgm.mjs";
 
@@ -56,13 +60,25 @@ test("Edge TTS token is assembled from public parts or env", () => {
   });
   assert.ok(overrideUrl.includes("TrustedClientToken=override-token"));
   assert.doesNotMatch(overrideUrl, new RegExp(`TrustedClientToken=${assembled}`));
-  const expectedGec = createHash("sha256").update((() => {
-    const winEpoch = 11644473600;
-    let ticks = Math.floor((1_700_000_000 + winEpoch) * 10_000_000);
-    ticks -= ticks % 3_000_000_000;
-    return `${ticks.toString(16).toUpperCase()}${assembled}`;
-  })()).digest("hex").toUpperCase();
-  assert.equal(secMsGec(1_700_000_000), expectedGec);
+  assert.equal(EDGE_TTS_CHROMIUM, "143.0.3650.75");
+  assert.match(url, /Sec-MS-GEC-Version=1-143\.0\.3650\.75/);
+  const nowSec = 1_700_000_000;
+  let seconds = nowSec + 11_644_473_600;
+  seconds -= seconds % 300;
+  const decimalTicks = (BigInt(seconds.toFixed(0)) * 10_000_000n).toString();
+  assert.match(decimalTicks, /^\d+$/);
+  assert.equal(windowsFileTimeTicks(nowSec).toString(), decimalTicks);
+  const expectedGec = createHash("sha256").update(`${decimalTicks}${assembled}`).digest("hex").toUpperCase();
+  let hexTicks = Math.floor((nowSec + 11_644_473_600) * 10_000_000);
+  hexTicks -= hexTicks % 3_000_000_000;
+  const hexGec = createHash("sha256").update(`${hexTicks.toString(16).toUpperCase()}${assembled}`).digest("hex").toUpperCase();
+  assert.equal(secMsGec(nowSec), expectedGec);
+  assert.notEqual(secMsGec(nowSec), hexGec);
+  const muid = generateEdgeTtsMuid();
+  assert.match(muid, /^[0-9A-F]{32}$/);
+  const headers = edgeTtsHandshakeHeaders({ muid });
+  assert.equal(headers.Cookie, `muid=${muid};`);
+  assert.match(headers["User-Agent"], /Chrome\/143\.0\.0\.0/);
 });
 
 test("Edge TTS timestamps become pause-timed ASS with MarginV=450", () => {
@@ -221,7 +237,11 @@ test("Edge TTS decodes Blob, ArrayBuffer, and binary metadata frames", async () 
 
 test("Edge TTS mock WebSocket returns Korean preview audio and word timestamps", async () => {
   class MockEdgeSocket {
-    constructor() {
+    constructor(url, options = {}) {
+      this.url = url;
+      this.headers = options.headers || {};
+      MockEdgeSocket.lastUrl = url;
+      MockEdgeSocket.lastHeaders = this.headers;
       this.listeners = {};
       queueMicrotask(() => this.emit("open"));
     }
@@ -255,6 +275,9 @@ test("Edge TTS mock WebSocket returns Korean preview audio and word timestamps",
   assert.equal(result.audio.toString(), "ID3PREVIEW");
   assert.equal(result.wordTimestamps[0].text, "지붕");
   assert.equal(result.wordTimestamps[0].start, 0.4);
+  assert.match(String(MockEdgeSocket.lastUrl || ""), /Sec-MS-GEC=/);
+  assert.match(String(MockEdgeSocket.lastUrl || ""), /Sec-MS-GEC-Version=1-143\.0\.3650\.75/);
+  assert.match(String(MockEdgeSocket.lastHeaders?.Cookie || ""), /^muid=[0-9A-F]{32};$/);
 });
 
 test("settings PUT merges TTS without wiping BGM", async () => {

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { DEFAULT_EDGE_VOICE, chirpConfigured } from "./studio-settings.mjs";
 
@@ -26,8 +26,11 @@ export function resolveEdgeTtsToken(env = process.env) {
 }
 
 export const EDGE_TTS_TOKEN = resolveEdgeTtsToken();
-export const EDGE_TTS_CHROMIUM = "130.0.2849.68";
+// Keep aligned with edge-tts SEC_MS_GEC_VERSION / CHROMIUM_FULL_VERSION.
+export const EDGE_TTS_CHROMIUM = "143.0.3650.75";
 const HUNDRED_NS = 10_000_000;
+const WIN_EPOCH_SEC = 11_644_473_600;
+const GEC_CLOCK_STEP_SEC = 300;
 
 export function ticksToSeconds(value) {
   return Number(value || 0) / HUNDRED_NS;
@@ -76,12 +79,34 @@ export function edgeSsml(text, voice = DEFAULT_EDGE_VOICE, rate = "+0%") {
   return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ko-KR"><voice name="${safeVoice}"><prosody rate="${rate}">${body}</prosody></voice></speak>`;
 }
 
+export function windowsFileTimeTicks(nowSec = Date.now() / 1000) {
+  // Match edge-tts drm.py: unix + WIN_EPOCH, floor to 5 minutes, then 100ns ticks.
+  let seconds = Number(nowSec) + WIN_EPOCH_SEC;
+  seconds -= seconds % GEC_CLOCK_STEP_SEC;
+  return BigInt(seconds.toFixed(0)) * BigInt(HUNDRED_NS);
+}
+
 export function secMsGec(nowSec = Date.now() / 1000, env = process.env) {
-  const winEpoch = 11644473600;
-  let ticks = Math.floor((Number(nowSec) + winEpoch) * 10_000_000);
-  ticks -= ticks % 3_000_000_000;
   const token = resolveEdgeTtsToken(env);
-  return createHash("sha256").update(`${ticks.toString(16).toUpperCase()}${token}`).digest("hex").toUpperCase();
+  return createHash("sha256").update(`${windowsFileTimeTicks(nowSec).toString()}${token}`).digest("hex").toUpperCase();
+}
+
+export function generateEdgeTtsMuid() {
+  return randomBytes(16).toString("hex").toUpperCase();
+}
+
+export function edgeTtsHandshakeHeaders({
+  chromium = EDGE_TTS_CHROMIUM,
+  muid = generateEdgeTtsMuid()
+} = {}) {
+  const major = String(chromium || EDGE_TTS_CHROMIUM).split(".")[0];
+  return {
+    "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36 Edg/${major}.0.0.0`,
+    Origin: "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
+    Pragma: "no-cache",
+    "Cache-Control": "no-cache",
+    Cookie: `muid=${muid};`
+  };
 }
 
 export function edgeTtsUrl({ connectionId = randomUUID().replace(/-/g, ""), nowSec, env = process.env } = {}) {
@@ -172,10 +197,7 @@ export async function synthesizeEdgeTts(text, {
   await new Promise((resolve, reject) => {
     let settled = false;
     const socket = new WebSocketImpl(url, {
-      headers: {
-        "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${EDGE_TTS_CHROMIUM} Safari/537.36 Edg/${EDGE_TTS_CHROMIUM}`,
-        Origin: "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold"
-      }
+      headers: edgeTtsHandshakeHeaders()
     });
     const finish = (error, value) => {
       if (settled) return;
