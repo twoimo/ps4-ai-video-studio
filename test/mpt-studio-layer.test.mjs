@@ -60,25 +60,31 @@ test("Edge TTS token is assembled from public parts or env", () => {
   });
   assert.ok(overrideUrl.includes("TrustedClientToken=override-token"));
   assert.doesNotMatch(overrideUrl, new RegExp(`TrustedClientToken=${assembled}`));
-  assert.equal(EDGE_TTS_CHROMIUM, "143.0.3650.75");
-  assert.match(url, /Sec-MS-GEC-Version=1-143\.0\.3650\.75/);
+});
+
+test("Edge TTS GEC is SHA256 of decimal ticks, not toString(16)", () => {
+  const token = assemblePublicEdgeTrustedClientToken();
   const nowSec = 1_700_000_000;
   let seconds = nowSec + 11_644_473_600;
   seconds -= seconds % 300;
-  const decimalTicks = (BigInt(seconds.toFixed(0)) * 10_000_000n).toString();
+  const decimalTicks = (BigInt(seconds) * 10_000_000n).toString();
   assert.match(decimalTicks, /^\d+$/);
+  assert.doesNotMatch(decimalTicks, /[A-Fa-f]/);
   assert.equal(windowsFileTimeTicks(nowSec).toString(), decimalTicks);
-  const expectedGec = createHash("sha256").update(`${decimalTicks}${assembled}`).digest("hex").toUpperCase();
-  let hexTicks = Math.floor((nowSec + 11_644_473_600) * 10_000_000);
-  hexTicks -= hexTicks % 3_000_000_000;
-  const hexGec = createHash("sha256").update(`${hexTicks.toString(16).toUpperCase()}${assembled}`).digest("hex").toUpperCase();
-  assert.equal(secMsGec(nowSec), expectedGec);
+  const decimalGec = createHash("sha256").update(`${decimalTicks}${token}`).digest("hex").toUpperCase();
+  const hexTicks = BigInt(decimalTicks).toString(16).toUpperCase();
+  const hexGec = createHash("sha256").update(`${hexTicks}${token}`).digest("hex").toUpperCase();
+  assert.equal(secMsGec(nowSec), decimalGec);
   assert.notEqual(secMsGec(nowSec), hexGec);
+  assert.notEqual(decimalTicks, hexTicks);
+  assert.equal(EDGE_TTS_CHROMIUM, "143.0.3650.75");
+  assert.match(edgeTtsUrl({ connectionId: "cid", nowSec }), /Sec-MS-GEC-Version=1-143\.0\.3650\.75/);
   const muid = generateEdgeTtsMuid();
   assert.match(muid, /^[0-9A-F]{32}$/);
   const headers = edgeTtsHandshakeHeaders({ muid });
   assert.equal(headers.Cookie, `muid=${muid};`);
   assert.match(headers["User-Agent"], /Chrome\/143\.0\.0\.0/);
+  assert.match(headers["User-Agent"], /Edg\/143\.0\.0\.0/);
 });
 
 test("Edge TTS timestamps become pause-timed ASS with MarginV=450", () => {
