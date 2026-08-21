@@ -1,5 +1,5 @@
 import { formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
-import { bindWatchFeed, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight } from "./watch-feed.mjs";
+import { bindWatchFeed, clearWatchSize, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -118,17 +118,20 @@ function trapOverlay(selector) {
 }
 
 function setView(view, options = {}) {
-  state.view = VIEWS.includes(view) ? view : "grid";
+  const next = VIEWS.includes(view) ? view : "grid";
   const createOverlay = $("#create-overlay");
   const shortOverlay = $("#short-overlay");
   const templateOverlay = $("#template-overlay");
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
+  if (next === "watch") sizeWatchFeed(watchFeed);
+  else clearWatchSize(watchFeed);
+  state.view = next;
   if (state.view !== "watch") closeOpenWatchInspect();
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine"].includes(state.view));
-  syncWatchFeed(watchFeed, state.view);
+  syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
@@ -154,7 +157,6 @@ function setView(view, options = {}) {
   if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
   if (state.view === "machine") renderMachineSheet();
-  if (state.view === "watch") renderWatchFeed({ focus: true, instant: Boolean(options.instant) });
   syncDocumentTitle();
 }
 
@@ -398,9 +400,8 @@ function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) 
   scroller.scrollTop = (real + offset) * h;
 }
 
-function afterWatchSnap() {
+function notifyActive() {
   const root = $("#watch-feed");
-  snapWatchFeed(root);
   const scroller = $("#watch-scroller");
   const h = watchPageHeight(root);
   if (!scroller || !(h > 0)) return;
@@ -414,24 +415,36 @@ function afterWatchSnap() {
   void hydrateWatchInspect(jobId);
 }
 
+function settleWatchFeed() {
+  if (state.view !== "watch") return;
+  const root = $("#watch-feed");
+  wrapWatchFeed(root);
+  notifyActive();
+  playWatchFeed(root);
+}
+
+function afterWatchSnap() {
+  const root = $("#watch-feed");
+  snapWatchFeed(root);
+  wrapWatchFeed(root);
+  notifyActive();
+  playWatchFeed(root);
+}
+
 function bindWatchScroller() {
   const scroller = $("#watch-scroller");
+  const root = $("#watch-feed");
   if (!scroller || scroller.dataset.bound) return;
   scroller.dataset.bound = "1";
+  scroller.addEventListener("scroll", () => {
+    if (state.view !== "watch") return;
+    playWatchFeed(root);
+  }, { passive: true });
+  scroller.addEventListener("scrollend", settleWatchFeed);
   scroller.addEventListener("wheel", (event) => {
     if (state.view !== "watch") return;
     if (event.target.closest?.(".watch-inspect")) return;
-    if (closeOpenWatchInspect()) {
-      event.preventDefault();
-      return;
-    }
-    if (Math.abs(event.deltaY) < 10) return;
-    event.preventDefault();
-    const now = Date.now();
-    if (now < state.watchLockUntil) return;
-    state.watchLockUntil = now + 520;
-    stepWatch(event.deltaY > 0 ? 1 : -1);
-    afterWatchSnap();
+    if (closeOpenWatchInspect()) event.preventDefault();
   }, { passive: false });
   let touchY = 0;
   scroller.addEventListener("touchstart", (event) => {
@@ -444,7 +457,6 @@ function bindWatchScroller() {
     if (event.target.closest?.(".watch-inspect")) return;
     const dy = (event.changedTouches[0]?.clientY || 0) - touchY;
     if (dy) closeOpenWatchInspect();
-    afterWatchSnap();
   }, { passive: true });
 }
 
@@ -527,7 +539,7 @@ function patchWatchSlide(job) {
   });
 }
 
-function renderWatchFeed({ focus = false, instant = false } = {}) {
+function mountWatchFeed({ focus = false, instant = false } = {}) {
   const scroller = $("#watch-scroller");
   const empty = $("#watch-empty");
   bindWatchFeed($("#watch-feed"), openHome);
@@ -561,7 +573,6 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
   } else {
     jobs.forEach(patchWatchSlide);
   }
-  if (focus || rebuilt) sizeWatchFeed($("#watch-feed"));
   if (focus || !document.querySelector(".watch-slide.active:not([data-loop])")) {
     const index = Math.max(0, watchIndexOf(state.selectedJobId));
     window.requestAnimationFrame(() => {
@@ -571,6 +582,10 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
   } else {
     placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
   }
+}
+
+function renderWatchFeed(options) {
+  return mountWatchFeed(options);
 }
 
 function openJob(jobId) {
@@ -1632,11 +1647,14 @@ async function refreshQuietly() {
 }
 
 function bindEvents() {
-  window.addEventListener("resize", () => {
-    sizeShortsGrid();
-    if (state.view !== "watch" || state.watchSwiping) return;
-    sizeWatchFeed($("#watch-feed"));
-    placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
+  window.addEventListener("resize", sizeShortsGrid);
+  window.addEventListener("orientationchange", () => {
+    if (state.view !== "watch") return;
+    sizeWatchFeed($("#watch-feed"), { force: true });
+    snapWatchFeed($("#watch-feed"));
+    wrapWatchFeed($("#watch-feed"));
+    notifyActive();
+    playWatchFeed($("#watch-feed"));
   });
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);

@@ -6,15 +6,37 @@ export function stopWatchFeed(root) {
   }
 }
 
-export function playWatchFeed(video) {
+function watchVideo(target) {
+  if (!target) return null;
+  if (typeof target.play === "function" && typeof target.querySelector !== "function") return target;
+  return selectedWatchSlide(target)?.querySelector?.("video")
+    || target.querySelector?.(".watch-slide.active:not([data-loop]) video")
+    || target.querySelector?.(".watch-slide.active video")
+    || target.querySelector?.("video")
+    || null;
+}
+
+export function playWatchFeed(target) {
+  const video = watchVideo(target);
   if (!video) return;
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   return video.play();
 }
 
-export function syncWatchFeed(root, surface) {
-  if (surface !== "watch") stopWatchFeed(root);
+export function clearWatchSize(root) {
+  if (root?.dataset) delete root.dataset.sized;
+}
+
+export function syncWatchFeed(root, surface, mountWatchFeed) {
+  if (surface !== "watch") {
+    clearWatchSize(root);
+    stopWatchFeed(root);
+    return;
+  }
+  sizeWatchFeed(root);
+  if (root) root.hidden = false;
+  if (typeof mountWatchFeed === "function") mountWatchFeed();
 }
 
 export function selectedWatchSlide(root, jobId) {
@@ -35,7 +57,7 @@ function parseWatchHeight(value) {
   return height > 0 ? Math.round(height) : 0;
 }
 
-export function watchPageHeight(root) {
+export function pageHeight(root) {
   if (!root) return 0;
   const fromInline = parseWatchHeight(root.style?.getPropertyValue?.("--watch-h"));
   if (fromInline > 0) return fromInline;
@@ -50,13 +72,18 @@ export function watchPageHeight(root) {
   return 0;
 }
 
-export function sizeWatchFeed(root) {
+export const watchPageHeight = pageHeight;
+
+export function sizeWatchFeed(root, { force = false } = {}) {
   if (!root) return 0;
-  const height = Math.round(root.clientHeight || 0);
+  if (root.dataset?.sized === "1" && !force) return pageHeight(root);
+  const fromWindow = typeof window !== "undefined" ? Number(window.innerHeight) || 0 : 0;
+  const height = Math.round(fromWindow || root.clientHeight || 0);
   if (height > 0 && typeof root.style?.setProperty === "function") {
     root.style.setProperty("--watch-h", `${height}px`);
   }
-  return height;
+  if (height > 0 && root.dataset) root.dataset.sized = "1";
+  return height || pageHeight(root);
 }
 
 function watchScroller(root) {
@@ -67,12 +94,11 @@ function watchScroller(root) {
   return root;
 }
 
-export function snapWatchFeed(root) {
+export function wrapWatchFeed(root) {
   const scroller = watchScroller(root);
   if (!scroller || typeof scroller.scrollTop !== "number") return;
-  const h = watchPageHeight(root);
+  const h = pageHeight(root);
   if (!(h > 0)) return;
-  scroller.scrollTop = Math.round(scroller.scrollTop / h) * h;
   const slides = typeof scroller.querySelectorAll === "function"
     ? [...scroller.querySelectorAll(".watch-slide")]
     : [];
@@ -87,16 +113,20 @@ export function snapWatchFeed(root) {
   }
 }
 
+export function snapWatchFeed(root) {
+  const scroller = watchScroller(root);
+  if (!scroller || typeof scroller.scrollTop !== "number") return;
+  const h = pageHeight(root);
+  if (!(h > 0)) return;
+  scroller.scrollTop = Math.round(scroller.scrollTop / h) * h;
+  wrapWatchFeed(root);
+}
+
 export function bindWatchFeed(root, onBack) {
   if (!root) return;
   if (root.dataset?.watchBound === "1") {
     if (globalThis.document?.body?.classList?.contains("watch-open")) {
-      playWatchFeed(
-        selectedWatchSlide(root)?.querySelector?.("video")
-          || root.querySelector(".watch-slide.active:not([data-loop]) video")
-          || root.querySelector(".watch-slide.active video")
-          || root.querySelector("video")
-      );
+      playWatchFeed(root);
     } else {
       stopWatchFeed(root);
     }

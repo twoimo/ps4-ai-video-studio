@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { bindWatchFeed, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight } from "../public/watch-feed.mjs";
+import { bindWatchFeed, clearWatchSize, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight, wrapWatchFeed } from "../public/watch-feed.mjs";
 
 function fakeVideo(time = 4) {
   return {
@@ -128,6 +128,7 @@ function fakeFeed(slides, scrollTop = 0, height = 640) {
   };
   return {
     clientHeight: height,
+    dataset: {},
     style: {
       getPropertyValue(name) { return props[name] || ""; },
       setProperty(name, value) { props[name] = value; }
@@ -154,7 +155,29 @@ test("sizeWatchFeed writes --watch-h from clientHeight once", () => {
   const root = fakeFeed([], 0, 711);
   assert.equal(sizeWatchFeed(root), 711);
   assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
+  assert.equal(root.dataset.sized, "1");
   assert.equal(watchPageHeight(root), 711);
+  root.clientHeight = 12;
+  assert.equal(sizeWatchFeed(root), 711);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
+});
+
+test("sizeWatchFeed prefers window.innerHeight and lock unless force", () => {
+  const previous = globalThis.window;
+  globalThis.window = { innerHeight: 812 };
+  const root = fakeFeed([], 0, 711);
+  assert.equal(sizeWatchFeed(root), 812);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "812px");
+  assert.equal(root.dataset.sized, "1");
+  globalThis.window.innerHeight = 400;
+  root.clientHeight = 12;
+  assert.equal(sizeWatchFeed(root), 812);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "812px");
+  assert.equal(sizeWatchFeed(root, { force: true }), 400);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "400px");
+  clearWatchSize(root);
+  assert.equal(root.dataset.sized, undefined);
+  globalThis.window = previous;
 });
 
 test("watchPageHeight uses measured px and ignores CSS 100svh", () => {
@@ -192,7 +215,7 @@ test("snapWatchFeed jumps head clone to real last and tail clone to real first",
   snapWatchFeed(head);
   assert.equal(head.scroller.scrollTop, 2 * 640);
   const tail = fakeFeed(slides, 3 * 640, 640);
-  snapWatchFeed(tail);
+  wrapWatchFeed(tail);
   assert.equal(tail.scroller.scrollTop, 1 * 640);
 });
 
@@ -245,13 +268,15 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(feed, /video\.pause\(\)/);
   assert.match(feed, /video\.currentTime = 0/);
   assert.match(feed, /export function syncWatchFeed/);
-  assert.match(feed, /surface !== "watch"\) stopWatchFeed\(root\)/);
+  assert.match(feed, /clearWatchSize\(root\);\s*stopWatchFeed\(root\)/);
+  assert.match(feed, /sizeWatchFeed\(root\);\s*if \(root\) root\.hidden = false;/);
+  assert.match(feed, /mountWatchFeed\(\)/);
   assert.match(feed, /export function bindWatchFeed/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(feed, /\.watch-close, \.watch-back/);
   assert.equal(feed.includes("letterbox"), false);
-  assert.match(app, /syncWatchFeed\(watchFeed, state\.view\)/);
+  assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /pagehide/);
   assert.match(app, /aria-valuenow/);
@@ -269,14 +294,38 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.equal(/touchend[\s\S]*scrollBy/.test(bindScroller), false);
   assert.equal(/touchend[\s\S]*stepWatch/.test(bindScroller), false);
   assert.match(bindScroller, /if \(dy\) closeOpenWatchInspect\(\)/);
-  assert.match(bindScroller, /afterWatchSnap\(\)/);
+  assert.equal(/touchend[\s\S]*snapWatchFeed/.test(bindScroller), false);
+  assert.equal(/touchend[\s\S]*afterWatchSnap/.test(bindScroller), false);
+  assert.match(bindScroller, /scrollend/);
+  assert.match(bindScroller, /settleWatchFeed|wrapWatchFeed/);
+  assert.match(bindScroller, /playWatchFeed\(root\)/);
   assert.equal(bindScroller.includes("setTimeout"), false);
+  assert.equal(bindScroller.includes('window.addEventListener("resize"'), false);
+  assert.equal(feed.includes('window.addEventListener("resize"'), false);
+  assert.equal(feed.includes("}, 80);"), false);
+  assert.equal(feed.includes("}, 40);"), false);
+  assert.equal(app.includes("}, 80);"), false);
+  assert.equal(app.includes("}, 40);"), false);
   assert.equal(app.includes("visualViewport"), false);
   assert.equal(app.includes("쇼츠 공장"), false);
   assert.match(feed, /export function sizeWatchFeed/);
   assert.match(feed, /export function snapWatchFeed/);
+  assert.match(feed, /export function wrapWatchFeed/);
+  assert.match(feed, /export function clearWatchSize/);
+  assert.match(feed, /dataset\.sized/);
+  assert.match(feed, /force = false/);
+  assert.match(feed, /window\.innerHeight/);
+  assert.match(app, /clearWatchSize\(watchFeed\)/);
+  assert.match(app, /sizeWatchFeed\(watchFeed\)/);
+  assert.match(app, /force:\s*true/);
+  assert.match(app, /orientationchange/);
+  assert.match(app, /function notifyActive/);
+  assert.match(app, /function mountWatchFeed/);
+  assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
+  assert.equal(/addEventListener\("resize", \(\) => \{[\s\S]*sizeWatchFeed/.test(app), false);
   assert.match(feed, /setProperty\("--watch-h"/);
   assert.equal(/function snapWatchFeed[\s\S]*setProperty\("--watch-h"/.test(feed), false);
+  assert.equal(/function snapWatchFeed[\s\S]*sizeWatchFeed/.test(feed), false);
   assert.match(feed, /scrollTop = Math\.round\(scroller\.scrollTop \/ h\) \* h/);
   assert.match(feed, /dataset\?\.loop === "head"/);
   assert.match(feed, /dataset\?\.loop === "tail"/);

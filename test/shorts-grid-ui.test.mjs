@@ -438,8 +438,14 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(/touchend[\s\S]*scrollBy/.test(bindScroller), false);
   assert.equal(/touchend[\s\S]*stepWatch/.test(bindScroller), false);
   assert.match(bindScroller, /if \(dy\) closeOpenWatchInspect\(\)/);
-  assert.match(bindScroller, /afterWatchSnap\(\)/);
+  assert.equal(/touchend[\s\S]*snapWatchFeed/.test(bindScroller), false);
+  assert.equal(/touchend[\s\S]*afterWatchSnap/.test(bindScroller), false);
+  assert.match(bindScroller, /scrollend/);
+  assert.match(bindScroller, /settleWatchFeed|wrapWatchFeed/);
   assert.equal(bindScroller.includes("setTimeout"), false);
+  assert.equal(bindScroller.includes('window.addEventListener("resize"'), false);
+  assert.equal(app.includes("}, 80);"), false);
+  assert.equal(app.includes("}, 40);"), false);
   assert.equal(app.includes("visualViewport"), false);
   assert.equal(app.includes("toggleWatchMute"), false);
   assert.equal(app.includes("syncMuteButtons"), false);
@@ -454,6 +460,12 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /activateWatchSlide/);
   assert.match(app, /sizeWatchFeed/);
   assert.match(app, /snapWatchFeed/);
+  assert.match(app, /wrapWatchFeed/);
+  assert.match(app, /clearWatchSize/);
+  assert.match(app, /force:\s*true/);
+  assert.match(app, /orientationchange/);
+  assert.match(app, /function notifyActive/);
+  assert.match(app, /function mountWatchFeed/);
   assert.match(app, /data-loop="head"/);
   assert.match(app, /data-loop="tail"/);
   assert.match(app, /:not\(\[data-loop\]\)/);
@@ -464,7 +476,7 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /video\.volume = active \? 1 : 0/);
   assert.match(app, /video\.volume = 0/);
   assert.match(app, /from "\.\/watch-feed\.mjs"/);
-  assert.match(app, /syncWatchFeed\(watchFeed, state\.view\)/);
+  assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
   assert.match(app, /bindWatchFeed\(\$\("#watch-feed"\), openHome\)/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*playWatchFeed/);
