@@ -123,8 +123,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /\.short-card-thumb\s*\{[^}]*height:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border-radius:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border:\s*0/);
-  assert.equal(css.includes("container-type: size"), false);
-  assert.equal(css.includes("100cqh"), false);
+  assert.match(css, /\.watch-feed\s*\{[^}]*container-type:\s*size/);
+  assert.match(css, /100cqh/);
+  assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
   assert.equal(css.includes("grid-template-rows: repeat(var(--n)"), false);
   assert.equal(/repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/.test(css), false);
   assert.equal(css.includes("short-card-body"), false);
@@ -342,13 +343,13 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(css.includes("scroll-snap"), false);
   assert.equal(css.includes("-webkit-overflow-scrolling"), false);
   assert.equal(css.includes("backface-visibility"), false);
-  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*var\(--watch-h\)/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100cqh/);
   assert.match(css, /\.watch-slide\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /\.watch-slide\s*\{[^}]*contain:\s*size layout/);
   assert.equal(/\.watch-slide\s*\{[^}]*isolation:\s*isolate/.test(css), false);
   assert.equal(/\.watch-slide\s*\{[^}]*height:\s*100dvh/.test(css), false);
   assert.match(css, /--watch-col:\s*min\(100vw,\s*calc\(100dvh \* 9 \/ 16\)\)/);
-  assert.match(css, /\.watch-stage\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*min\(100%,\s*calc\(100cqh \* 9 \/ 16\)\)/);
   assert.match(css, /\.watch-player\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.watch-player video\s*\{[^}]*object-fit:\s*contain/);
   assert.match(css, /\.watch-inspect\s*\{[^}]*height:\s*100%/);
@@ -439,7 +440,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /sizeWatchFeed/);
   assert.match(app, /wrapWatchFeed/);
   assert.match(app, /clearWatchSize/);
-  assert.match(app, /force:\s*true/);
+  assert.match(app, /sizeShortsGrid\(\)/);
+  assert.match(app, /requestAnimationFrame/);
   assert.match(app, /orientationchange/);
   assert.match(app, /function notifyActive/);
   assert.match(app, /function mountWatchFeed/);

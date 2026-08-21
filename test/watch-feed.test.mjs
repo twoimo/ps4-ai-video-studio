@@ -46,6 +46,10 @@ function fakeVideo(time = 4) {
     pause() {
       this.pauseCalls += 1;
       this.paused = true;
+    },
+    remove() {
+      this.removeCalls = (this.removeCalls || 0) + 1;
+      this.parentElement = null;
     }
   };
 }
@@ -143,7 +147,7 @@ function fakePager({ slides = [], height = 640, video = null } = {}) {
   return root;
 }
 
-test("stopWatchFeed pauses every video and seeks to the start", () => {
+test("stopWatchFeed pauses every video and removes the node", () => {
   const videos = [fakeVideo(8), fakeVideo(2.5)];
   stopWatchFeed(fakeRoot(videos));
   assert.equal(videos[0].pauseCalls, 1);
@@ -151,6 +155,8 @@ test("stopWatchFeed pauses every video and seeks to the start", () => {
   assert.equal(videos[0].currentTime, 0);
   assert.equal(videos[1].currentTime, 0);
   assert.equal(videos[0].paused, true);
+  assert.equal(videos[0].removeCalls, 1);
+  assert.equal(videos[1].removeCalls, 1);
 });
 
 test("syncWatchFeed stops videos when the surface is not watch", () => {
@@ -274,51 +280,32 @@ test("createWatchPlayer builds one video with createElement", () => {
   globalThis.document = previous;
 });
 
-test("sizeWatchFeed writes --watch-h from clientHeight once", () => {
-  const previous = globalThis.window;
-  globalThis.window = { visualViewport: { height: 844.4 }, innerHeight: 900 };
-  const root = fakePager({ height: 711 });
-  delete root.dataset.sized;
+test("sizeWatchFeed remasures clientHeight every call", () => {
+  const root = fakePager({ height: 589 });
   root.style.removeProperty("--watch-h");
-  assert.equal(sizeWatchFeed(root), 711);
-  assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
-  assert.equal(root.dataset.sized, "1");
-  assert.equal(watchPageHeight(root), 711);
-  assert.equal(pageHeight(root), 711);
-  globalThis.window.visualViewport.height = 700;
-  root.clientHeight = 12;
-  assert.equal(sizeWatchFeed(root), 711);
-  assert.equal(root.style.getPropertyValue("--watch-h"), "711px");
+  assert.equal(sizeWatchFeed(root), 589);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "589px");
+  assert.equal(root.dataset.sized, undefined);
+  root.clientHeight = 844;
+  assert.equal(sizeWatchFeed(root), 844);
+  assert.equal(root.style.getPropertyValue("--watch-h"), "844px");
+  assert.equal(pageHeight(root), 844);
   clearWatchSize(root);
   assert.equal(root.dataset.sized, undefined);
   assert.equal(root.style.getPropertyValue("--watch-h"), "");
-  globalThis.window = previous;
 });
 
-test("sizeWatchFeed falls back to visualViewport then innerHeight when clientHeight is 0", () => {
-  const previous = globalThis.window;
-  globalThis.window = { visualViewport: { height: 844.4 }, innerHeight: 812 };
-  const root = fakePager({ height: 0 });
-  delete root.dataset.sized;
-  root.style.removeProperty("--watch-h");
-  assert.equal(sizeWatchFeed(root), 844);
-  assert.equal(root.style.getPropertyValue("--watch-h"), "844px");
-  clearWatchSize(root);
-  root.clientHeight = 0;
-  globalThis.window = { innerHeight: 812 };
-  assert.equal(sizeWatchFeed(root, { force: true }), 812);
-  assert.equal(root.style.getPropertyValue("--watch-h"), "812px");
-  clearWatchSize(root);
-  assert.equal(root.dataset.sized, undefined);
-  globalThis.window = previous;
-});
-
-test("watchPageHeight uses measured px and ignores CSS 100svh", () => {
-  const root = fakePager({ height: 640 });
-  root.style.setProperty("--watch-h", "100svh");
-  assert.equal(watchPageHeight(root), 0);
-  root.style.setProperty("--watch-h", "640px");
-  assert.equal(watchPageHeight(root), 640);
+test("pageHeight and applyWatchTransform use live clientHeight not --watch-h", () => {
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
+  const root = fakePager({ slides, height: 844 });
+  root.style.setProperty("--watch-h", "589px");
+  assert.equal(pageHeight(root), 844);
+  assert.equal(watchPageHeight(root), 844);
+  goWatchIndex(root, 1);
+  assert.match(root.track.style.transform, /translate3d\(0,\s*-844px,\s*0\)/);
+  root.clientHeight = 711;
+  applyWatchTransform(root, { animate: false });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*-711px,\s*0\)/);
 });
 
 test("wrapWatchFeed jumps clone head to real last and tail to real first", () => {
@@ -394,6 +381,29 @@ test("pointer tap under 10px snaps back and does not change index", () => {
   assert.equal(paused.pauseCalls, 1);
 });
 
+test("hamburger chromeHit toggles inspect and never swallows", () => {
+  const slides = [{ dataset: { jobId: "a" } }];
+  const tokens = new Set();
+  const root = fakePager({ slides, height: 640 });
+  root.classList = {
+    toggle(name) {
+      if (tokens.has(name)) tokens.delete(name);
+      else tokens.add(name);
+    },
+    contains(name) { return tokens.has(name); }
+  };
+  bindWatchFeed(root, () => {});
+  const down = root.listeners.find((item) => item.type === "pointerdown").handler;
+  const up = root.listeners.find((item) => item.type === "pointerup").handler;
+  const click = root.listeners.find((item) => item.type === "click").handler;
+  const menu = { closest: (sel) => sel.includes(".watch-menu") || sel.includes(".watch-materials-toggle") ? {} : null };
+  down({ clientX: 10, clientY: 20, target: menu });
+  up({ clientX: 10, clientY: 20, target: menu });
+  click({ target: menu, preventDefault() {}, stopPropagation() {} });
+  assert.equal(tokens.has("inspect-open"), true);
+  assert.equal(getWatchIndex(root), 0);
+});
+
 test("pointer drag swallows the following click", () => {
   const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
   const video = fakeVideo(1);
@@ -438,7 +448,8 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(feed, /setAttribute\("webkit-playsinline"/);
   assert.match(feed, /document\.createElement\("video"\)/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
-  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*var\(--watch-h\)/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100cqh/);
+  assert.match(css, /\.watch-feed\s*\{[^}]*container-type:\s*size/);
   assert.match(css, /\.watch-track\s*\{[^}]*will-change:\s*transform/);
   assert.equal(/\.watch-slide\s*\{[^}]*will-change/.test(css), false);
   assert.equal(/\.watch-feed\s*\{[^}]*will-change/.test(css), false);
@@ -511,20 +522,21 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.equal(feed.includes("}, 40);"), false);
   assert.equal(app.includes("}, 80);"), false);
   assert.equal(app.includes("}, 40);"), false);
-  assert.match(feed, /visualViewport/);
+  assert.equal(feed.includes("visualViewport"), false);
+  assert.equal(feed.includes('dataset.sized = "1"'), false);
   assert.equal(app.includes("쇼츠 공장"), false);
   assert.match(feed, /export function sizeWatchFeed/);
   assert.match(feed, /export function wrapWatchFeed/);
   assert.match(feed, /export function clearWatchSize/);
   assert.match(feed, /export function pageHeight/);
-  assert.match(feed, /dataset\.sized/);
-  assert.match(feed, /force = false/);
   assert.match(feed, /root\.clientHeight/);
-  assert.match(feed, /window\.innerHeight/);
   assert.match(feed, /video\.play\(\)/);
+  assert.match(feed, /function toggleInspect/);
+  assert.match(feed, /chromeHit/);
   assert.match(app, /clearWatchSize\(watchFeed\)/);
   assert.match(app, /sizeWatchFeed\(watchFeed\)/);
-  assert.match(app, /force:\s*true/);
+  assert.match(app, /sizeShortsGrid\(\)/);
+  assert.match(app, /requestAnimationFrame/);
   assert.match(app, /orientationchange/);
   assert.match(app, /applyWatchTransform/);
   assert.match(app, /stepWatchFeed/);
@@ -555,7 +567,11 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /movement < 10/);
   assert.match(feed, /Math\.hypot/);
   const sizeFn = feed.slice(feed.indexOf("export function sizeWatchFeed"), feed.indexOf("export function wrapWatchFeed"));
-  assert.ok(sizeFn.indexOf("root.clientHeight") < sizeFn.indexOf("visualViewport"));
+  assert.match(sizeFn, /root\.clientHeight/);
+  assert.equal(sizeFn.includes("visualViewport"), false);
+  assert.equal(sizeFn.includes("dataset.sized"), false);
+  assert.match(css, /100cqh/);
+  assert.match(css, /container-type:\s*size/);
   assert.match(css, /\.watch-player\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.watch-chrome\s*\{[^}]*position:\s*fixed/);
   assert.match(css, /\.watch-chrome\s*\{[^}]*pointer-events:\s*none/);

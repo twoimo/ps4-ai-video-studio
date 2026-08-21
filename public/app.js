@@ -138,8 +138,19 @@ function setView(view, options = {}) {
   if (machineOverlay) machineOverlay.hidden = state.view !== "machine";
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
-  if (state.view === "watch") sizeWatchFeed(watchFeed);
+  const openingWatch = state.view === "watch";
+  if (openingWatch) sizeWatchFeed(watchFeed);
   syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
+  const afterPaint = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => fn();
+  if (openingWatch) {
+    afterPaint(() => {
+      sizeWatchFeed(watchFeed);
+      applyWatchTransform(watchFeed, { animate: false });
+    });
+  } else {
+    sizeShortsGrid();
+    afterPaint(() => sizeShortsGrid());
+  }
   if (!options.skipHash) {
     const nextHash = hashForView(state.view);
     if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
@@ -324,6 +335,7 @@ function bindWatchChrome() {
     if (play) play.then(() => setWatchPlayGate(false)).catch(() => setWatchPlayGate(true));
   });
   feed.querySelector(".watch-menu")?.addEventListener("click", (event) => {
+    event.preventDefault();
     event.stopPropagation();
     toggleWatchInspect();
   });
@@ -596,6 +608,9 @@ function openHome(event) {
   $("#library-more")?.removeAttribute("open");
   setView("grid");
   renderJobs();
+  sizeShortsGrid();
+  const afterPaint = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => fn();
+  afterPaint(() => sizeShortsGrid());
 }
 
 function renderShortCard(job) {
@@ -1507,7 +1522,7 @@ function bindEvents() {
   window.addEventListener("orientationchange", () => {
     if (state.view !== "watch") return;
     const root = $("#watch-feed");
-    sizeWatchFeed(root, { force: true });
+    sizeWatchFeed(root);
     applyWatchTransform(root, { animate: false });
     wrapWatchFeed(root);
     notifyActive();

@@ -57,6 +57,10 @@ export function currentWatchSlide(root) {
   return slides[currentIndex(root)] || selectedWatchSlide(root);
 }
 
+export function applyTrack(root, options) {
+  return applyWatchTransform(root, options);
+}
+
 export function applyWatchTransform(root, { animate = false, offset = 0 } = {}) {
   const track = watchTrack(root);
   const pager = pagerOf(root);
@@ -134,9 +138,13 @@ export function createWatchPlayer(root) {
 
 export function stopWatchFeed(root) {
   if (!root || typeof root.querySelectorAll !== "function") return;
-  for (const video of root.querySelectorAll("video")) {
+  for (const video of [...root.querySelectorAll("video")]) {
     video.pause();
     video.currentTime = 0;
+    if (typeof video.removeAttribute === "function") video.removeAttribute("src");
+    try { video.load?.(); } catch { /* ignore empty src */ }
+    if (typeof video.remove === "function") video.remove();
+    else video.parentElement?.removeChild?.(video);
   }
 }
 
@@ -188,38 +196,17 @@ export function selectedWatchSlide(root, jobId) {
     || root.querySelector(".watch-slide.active");
 }
 
-function parseWatchHeight(value) {
-  const text = String(value || "").trim();
-  if (!text.endsWith("px")) return 0;
-  const height = Number.parseFloat(text);
-  return height > 0 ? Math.round(height) : 0;
-}
-
 export function pageHeight(root) {
   if (!root) return 0;
-  const fromInline = parseWatchHeight(root.style?.getPropertyValue?.("--watch-h"));
-  if (fromInline > 0) return fromInline;
-  if (typeof getComputedStyle === "function") {
-    try {
-      const computed = parseWatchHeight(getComputedStyle(root).getPropertyValue("--watch-h"));
-      if (computed > 0) return computed;
-    } catch {
-      // jsdom-less tests have no computed style
-    }
-  }
-  return 0;
+  return Math.round(root.clientHeight || 0);
 }
 
 export const watchPageHeight = pageHeight;
 
-export function sizeWatchFeed(root, { force = false } = {}) {
+export function sizeWatchFeed(root) {
   if (!root) return 0;
-  if (root.dataset.sized === "1" && !force) return pageHeight(root);
-  const h = Math.round(root.clientHeight || window.visualViewport?.height || window.innerHeight || 0);
-  if (h > 0) {
-    root.style.setProperty("--watch-h", `${h}px`);
-    root.dataset.sized = "1";
-  }
+  const h = Math.round(root.clientHeight || 0);
+  if (h > 0) root.style.setProperty("--watch-h", `${h}px`);
   return h;
 }
 
@@ -248,8 +235,45 @@ function settleWatchPager(root) {
   playWatchFeed(root);
 }
 
-function chromeTarget(event) {
-  return event.target?.closest?.(".watch-chrome, .watch-inspect, .watch-inspect-dismiss, .watch-close, .watch-back, .watch-menu, .watch-play");
+function chromeHit(event) {
+  const closest = event.target?.closest?.bind(event.target);
+  if (!closest) return false;
+  return Boolean(
+    closest(".watch-inspect")
+    || closest(".watch-close")
+    || closest(".watch-back")
+    || closest(".watch-menu")
+    || closest(".watch-materials-toggle")
+    || closest(".watch-inspect-dismiss")
+    || closest(".watch-tap-play")
+    || closest(".watch-play")
+    || closest(".watch-dl")
+    || closest(".watch-inspect, .watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-inspect-dismiss, .watch-tap-play, .watch-play, .watch-dl")
+  );
+}
+
+function toggleInspect(root) {
+  root?.classList?.toggle("inspect-open");
+}
+
+function setSwiping(root, pager, value) {
+  pager.swiping = value;
+  if (root?.dataset) {
+    if (value) root.dataset.swiping = "1";
+    else delete root.dataset.swiping;
+  }
+}
+
+function bindWatchResize(root) {
+  if (!root || typeof ResizeObserver !== "function") return;
+  if (root.dataset?.resizeBound === "1") return;
+  if (root.dataset) root.dataset.resizeBound = "1";
+  const observer = new ResizeObserver(() => {
+    if (root.dataset?.swiping === "1" || pagerOf(root)?.swiping) return;
+    sizeWatchFeed(root);
+    applyWatchTransform(root, { animate: false });
+  });
+  observer.observe(root);
 }
 
 export function bindWatchFeed(root, onBack, onActive) {
@@ -266,23 +290,34 @@ export function bindWatchFeed(root, onBack, onActive) {
   }
   if (root.dataset) root.dataset.watchBound = "1";
   createWatchPlayer(root);
+  bindWatchResize(root);
   const track = watchTrack(root);
   root.addEventListener("click", (event) => {
+    if (chromeHit(event)) {
+      pager.swallowClick = false;
+      if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        toggleInspect(root);
+        return;
+      }
+      const close = event.target?.closest?.(".watch-close, .watch-back");
+      if (close) {
+        stopWatchFeed(root);
+        onBack?.(event);
+        return;
+      }
+      if (event.target?.closest?.(".watch-play, .watch-tap-play")) {
+        const play = playWatchFeed(root);
+        if (play && typeof play.catch === "function") play.catch(() => {});
+        return;
+      }
+      return;
+    }
     if (pager.swallowClick) {
       pager.swallowClick = false;
       event.preventDefault?.();
       event.stopPropagation?.();
-      return;
-    }
-    const close = event.target?.closest?.(".watch-close, .watch-back");
-    if (close) {
-      stopWatchFeed(root);
-      onBack?.(event);
-      return;
-    }
-    if (event.target?.closest?.(".watch-play")) {
-      const play = playWatchFeed(root);
-      if (play && typeof play.catch === "function") play.catch(() => {});
       return;
     }
     if (!event.target.closest(".watch-stage") && !event.target.closest("video")) return;
@@ -296,8 +331,11 @@ export function bindWatchFeed(root, onBack, onActive) {
     }
   });
   root.addEventListener("pointerdown", (event) => {
-    if (chromeTarget(event)) return;
-    pager.swiping = true;
+    if (chromeHit(event)) {
+      pager.swallowClick = false;
+      return;
+    }
+    setSwiping(root, pager, true);
     pager.swallowClick = false;
     pager.startX = event.clientX || 0;
     pager.startY = event.clientY || 0;
@@ -311,7 +349,10 @@ export function bindWatchFeed(root, onBack, onActive) {
   });
   root.addEventListener("pointermove", (event) => {
     if (!pager.swiping) return;
-    if (chromeTarget(event)) return;
+    if (chromeHit(event)) {
+      pager.swallowClick = false;
+      return;
+    }
     const x = event.clientX || 0;
     const y = event.clientY || 0;
     const now = Date.now();
@@ -324,9 +365,13 @@ export function bindWatchFeed(root, onBack, onActive) {
     applyWatchTransform(root, { animate: false, offset: pager.dy });
   });
   const endPointer = (event, cancel = false) => {
+    if (chromeHit(event)) {
+      pager.swallowClick = false;
+      setSwiping(root, pager, false);
+      return;
+    }
     if (!pager.swiping) return;
-    pager.swiping = false;
-    if (chromeTarget(event)) return;
+    setSwiping(root, pager, false);
     const movement = Math.hypot(pager.dx, pager.dy);
     if (cancel || movement < 10) {
       applyWatchTransform(root, { animate: false });
