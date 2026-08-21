@@ -136,6 +136,8 @@ function setView(view, options = {}) {
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   const machineOverlay = $("#machine-overlay");
   if (machineOverlay) machineOverlay.hidden = state.view !== "machine";
+  const menuOverlay = $("#menu-overlay");
+  if (menuOverlay && next !== "grid") menuOverlay.hidden = true;
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
   const openingWatch = state.view === "watch";
@@ -338,6 +340,12 @@ function bindWatchChrome() {
     event.stopPropagation();
     closeWatchInspect();
   });
+  feed.addEventListener("click", (event) => {
+    if (!event.target?.closest?.(".watch-inspect-close")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeWatchInspect();
+  });
 }
 
 function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) {
@@ -532,7 +540,7 @@ function renderWatchInspectPanel(job, prompts) {
   const frozen = state.health?.imagine?.frozen !== false;
   const shots = prompts?.shots || [];
   const files = inspectVideoDownloads(job).map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
-  return `<div class="inspect-stack"><label class="field-label" for="inspect-topic-${escapeHtml(job.id)}">제목</label><input id="inspect-topic-${escapeHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}${files ? `<div class="inspect-files">${files}</div>` : ""}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 다시 못 만들어요</p>` : ""}</div></div>`;
+  return `<div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2><button type="button" class="watch-inspect-close" aria-label="닫기">×</button></div><label class="field-label" for="inspect-topic-${escapeHtml(job.id)}">제목</label><input id="inspect-topic-${escapeHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}${files ? `<div class="inspect-files">${files}</div>` : ""}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 다시 못 만들어요</p>` : ""}</div></div>`;
 }
 
 async function saveInspectDraft(jobId, root) {
@@ -595,7 +603,7 @@ async function hydrateWatchInspect(jobId) {
 
 function openHome(event) {
   event?.preventDefault();
-  $("#library-more")?.removeAttribute("open");
+  closeMenu();
   setView("grid");
   renderJobs();
   sizeShortsGrid();
@@ -1005,15 +1013,16 @@ function renderJobDetail(job) {
     ? `<video controls playsinline preload="metadata" poster="${escapeHtml(preview.poster || still || "")}" src="${escapeHtml(preview.videoUrl)}"></video>`
     : still
       ? `<img class="preview-still" src="${escapeHtml(still)}" alt="" />`
-      : `<div class="preview-unavailable">${escapeHtml(status.label)}</div>`;
+      : "";
+  const previewMarkup = previewMedia ? `<div class="preview-wrap">${previewMedia}</div>` : "";
   const facts = (Array.isArray(job.facts) ? job.facts : []).map((fact) => String(fact).trim()).filter(Boolean);
   const factsMarkup = `<label class="field-label" for="detail-facts">사실</label><textarea id="detail-facts" data-draft-facts rows="4">${escapeHtml(facts.join("\n"))}</textarea>${facts.length ? `<ul class="draft-facts">${facts.slice(0, 4).map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>` : ""}`;
   const scriptText = String(job.scriptDraft || job.script?.oneLiner || "").trim();
-  const scriptMarkup = `<label class="field-label" for="detail-script">대본</label><textarea id="detail-script" class="draft-script" data-draft-script rows="4">${escapeHtml(scriptText)}</textarea>`;
+  const scriptMarkup = `<label class="field-label" for="detail-script">대본</label>${scriptText ? `<textarea id="detail-script" class="draft-script" data-draft-script rows="4">${escapeHtml(scriptText)}</textarea>` : `<p class="empty-note">대본 없음</p><textarea id="detail-script" class="draft-script" data-draft-script rows="4"></textarea>`}`;
   const slotEntries = Object.entries(job.worldSlots || {}).filter(([, value]) => String(value || "").trim());
   const slotsMarkup = slotEntries.length
-    ? `<dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><div class="slot-grid">${renderWorldSlotFields(slotEntries.map(([id, value]) => ({ id, label: id, value, editable: true })), { editable: true, namePrefix: "detail-slot" })}</div>`
-    : "";
+    ? `<label class="field-label">슬롯</label><dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><div class="slot-grid">${renderWorldSlotFields(slotEntries.map(([id, value]) => ({ id, label: id, value, editable: true })), { editable: true, namePrefix: "detail-slot" })}</div>`
+    : `<label class="field-label">슬롯</label><p class="empty-note">슬롯 없음</p><dl class="draft-slots"></dl>`;
   const frozen = state.health?.imagine?.frozen !== false;
   const saveDraft = `<button class="secondary-button" id="save-draft" type="button">저장</button>`;
   const runDraft = status.key === "draft"
@@ -1024,7 +1033,7 @@ function renderJobDetail(job) {
     : "";
   const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div><label class="field-label" for="detail-topic">주제</label><input id="detail-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" />${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${scriptMarkup}${slotsMarkup}${factsMarkup}${saveDraft}${runDraft}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(status.label)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div><label class="field-label" for="detail-topic">주제</label><input id="detail-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" />${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}${previewMarkup}${scriptMarkup}${slotsMarkup}${factsMarkup}${saveDraft}${runDraft}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
@@ -1228,7 +1237,7 @@ function openCreate(event) {
 function openBatch(event) {
   event?.preventDefault();
   rememberOpener(event);
-  $("#library-more")?.removeAttribute("open");
+  closeMenu();
   state.createMode = "batch";
   setView("create");
   void hydrateCreateSlots();
@@ -1292,7 +1301,7 @@ async function queueBatchJobs() {
 function openTemplate(event) {
   event?.preventDefault();
   rememberOpener(event);
-  $("#library-more")?.removeAttribute("open");
+  closeMenu();
   if (state.view === "watch") state.returnToWatch = true;
   setView("template");
 }
@@ -1300,7 +1309,7 @@ function openTemplate(event) {
 function openSettings(event) {
   event?.preventDefault();
   rememberOpener(event);
-  $("#library-more")?.removeAttribute("open");
+  closeMenu();
   if (state.view === "watch") state.returnToWatch = true;
   setView("settings");
 }
@@ -1308,7 +1317,7 @@ function openSettings(event) {
 function openMachine(event) {
   event?.preventDefault();
   rememberOpener(event);
-  $("#library-more")?.removeAttribute("open");
+  closeMenu();
   setView("machine");
 }
 
@@ -1319,7 +1328,7 @@ function renderMachineSheet() {
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
   const frozen = health.imagine?.frozen !== false;
-  root.innerHTML = `<h2 id="machine-title">머신</h2><p>grok ${grok ? "준비" : "없음"} · ffmpeg ${ffmpeg ? "준비" : "없음"} · Imagine ${frozen ? "402 동결" : "열림"}</p>`;
+  root.innerHTML = `<h2 id="machine-title">사양</h2><p>grok ${grok ? "준비" : "없음"} · ffmpeg ${ffmpeg ? "준비" : "없음"} · Imagine ${frozen ? "402 동결" : "열림"}</p>`;
 }
 
 function renderStudioChrome() {
@@ -1468,16 +1477,67 @@ async function draftScriptFromTopic() {
   }
 }
 
+function resetMenuCard() {
+  const title = $("#menu-title");
+  if (title) title.textContent = "메뉴";
+  const actions = $("#menu-actions");
+  const result = $("#menu-import-result");
+  if (actions) actions.hidden = false;
+  if (result) result.hidden = true;
+}
+
+function closeMenu(event) {
+  event?.preventDefault?.();
+  const overlay = $("#menu-overlay");
+  if (!overlay || overlay.hidden) return false;
+  overlay.hidden = true;
+  resetMenuCard();
+  if (!["create", "detail", "template", "settings", "machine"].includes(state.view)) {
+    document.body.classList.remove("overlay-open");
+    restoreOpener();
+  }
+  return true;
+}
+
+function openMenu(event) {
+  event?.preventDefault?.();
+  const overlay = $("#menu-overlay");
+  if (!overlay) return;
+  if (!overlay.hidden) {
+    closeMenu(event);
+    return;
+  }
+  rememberOpener(event);
+  resetMenuCard();
+  overlay.hidden = false;
+  document.body.classList.add("overlay-open");
+  trapOverlay("#menu-overlay");
+}
+
+function showImportResult(payload) {
+  const overlay = $("#menu-overlay");
+  if (overlay) overlay.hidden = false;
+  document.body.classList.add("overlay-open");
+  const title = $("#menu-title");
+  if (title) title.textContent = "가져오기";
+  const actions = $("#menu-actions");
+  const result = $("#menu-import-result");
+  const summary = $("#menu-import-summary");
+  const imported = payload.imported?.length || 0;
+  const seeded = payload.seeded?.length || 0;
+  const roots = payload.roots?.length || 0;
+  if (summary) summary.textContent = `가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`;
+  if (actions) actions.hidden = true;
+  if (result) result.hidden = false;
+  trapOverlay("#menu-overlay");
+}
+
 async function importLibrary(event) {
   event?.preventDefault();
-  $("#library-more")?.removeAttribute("open");
   try {
     const payload = await api("/api/library/import", { method: "POST" });
     await refreshJobs();
-    const imported = payload.imported?.length || 0;
-    const seeded = payload.seeded?.length || 0;
-    const roots = payload.roots?.length || 0;
-    showToast(`가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`);
+    showImportResult(payload);
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -1485,6 +1545,7 @@ async function importLibrary(event) {
 
 function closeOverlays(event) {
   event?.preventDefault();
+  if (closeMenu()) return;
   if (state.returnToWatch) {
     state.returnToWatch = false;
     setView("watch", { instant: true });
@@ -1498,7 +1559,7 @@ function closeOverlays(event) {
 }
 
 async function refreshQuietly() {
-  $("#library-more")?.removeAttribute("open");
+  closeMenu();
   try {
     await refreshJobs();
     showToast("목록을 갱신했습니다.");
@@ -1523,20 +1584,17 @@ function bindEvents() {
   syncProviderForm();
   $("#create-tile")?.addEventListener("click", openCreate);
   $("#menu-create")?.addEventListener("click", (event) => {
-    $("#library-more")?.removeAttribute("open");
+    closeMenu();
     if (state.view === "watch") state.returnToWatch = true;
     openCreate(event);
   });
   $("#menu-batch")?.addEventListener("click", openBatch);
   $("#batch-draft")?.addEventListener("click", () => { void saveBatchDrafts(); });
   $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
-  $("#library-more")?.addEventListener("toggle", () => {
-    const menu = $("#library-more");
-    if (menu?.open) {
-      rememberOpener({ currentTarget: menu.querySelector("summary") });
-      bindFocusTrap(menu);
-    }
-  });
+  $("#library-more")?.addEventListener("click", openMenu);
+  $("#close-menu")?.addEventListener("click", closeMenu);
+  $("#menu-import-ok")?.addEventListener("click", closeMenu);
+  $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome);
   $("#open-template")?.addEventListener("click", openTemplate);
@@ -1564,6 +1622,7 @@ function bindEvents() {
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (closeMenu()) return;
       if (state.view === "watch") {
         if (closeOpenWatchInspect()) return;
         stopWatchFeed($("#watch-feed"));

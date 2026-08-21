@@ -347,9 +347,10 @@ function chromeHit(event) {
     || closest(".watch-back")
     || closest(".watch-menu")
     || closest(".watch-materials-toggle")
-    || closest(".watch-inspect-dismiss")
+    ||     closest(".watch-inspect-dismiss")
+    || closest(".watch-inspect-close")
     || closest(".watch-dl")
-    || closest(".watch-inspect, .watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-inspect-dismiss, .watch-dl")
+    || closest(".watch-inspect, .watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-inspect-dismiss, .watch-inspect-close, .watch-dl")
   );
 }
 
@@ -397,6 +398,12 @@ export function bindWatchFeed(root, onBack, onActive) {
   root.addEventListener("click", (event) => {
     if (chromeHit(event)) {
       pager.swallowClick = false;
+      if (event.target?.closest?.(".watch-inspect-close, .watch-inspect-dismiss")) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        root?.classList?.remove("inspect-open");
+        return;
+      }
       if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
         event.preventDefault?.();
         event.stopPropagation?.();
