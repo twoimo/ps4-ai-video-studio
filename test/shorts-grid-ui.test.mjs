@@ -44,6 +44,23 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(isWatchableShort(job), true);
   assert.equal(isWatchableShort({ status: "draft", topic: "초안" }), false);
   assert.equal(isWatchableShort({ status: "completed", artifacts: [{ name: "hook.png", kind: "hook-lock", url: "/hook.png" }] }), false);
+  const playground = {
+    slug: "playground-cistern",
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/seed-playground-cistern/artifacts/master.mp4" },
+      { name: "chat.mp4", kind: "chat-video", url: "/api/jobs/seed-playground-cistern/artifacts/chat.mp4" }
+    ]
+  };
+  const refuge = {
+    slug: "refuge-floor",
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/seed-refuge-floor/artifacts/master.mp4" },
+      { name: "final.mp4", kind: "video", url: "/api/jobs/seed-refuge-floor/artifacts/final.mp4" }
+    ]
+  };
+  assert.equal(isWatchableShort(playground), true);
+  assert.equal(isWatchableShort(refuge), true);
+  assert.equal(shortPreview(playground).videoUrl, "/api/jobs/seed-playground-cistern/artifacts/chat.mp4");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -123,7 +140,13 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="library-more"/);
   assert.match(home, /더보기/);
   assert.match(home, /id="toggle-surface"/);
-  assert.match(home, />보기</);
+  assert.match(home, />라이브러리</);
+  assert.equal(home.includes(">보기<"), false);
+  assert.match(home, /id="home-brand"/);
+  assert.match(home, /href="#watch"/);
+  assert.match(home, /<body class="watch-open">/);
+  assert.match(html, /id="watch-feed">/);
+  assert.match(html, /id="shorts" hidden/);
   assert.match(home, /id="create-tile"/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
   assert.match(css, /--header:\s*52px/);
@@ -161,15 +184,21 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100dvh/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100dvh/);
   assert.match(css, /\.watch-stage video,\s*\.watch-stage \.watch-poster\s*\{[^}]*object-fit:\s*contain/);
+  assert.match(css, /body\.watch-open\s*\{[^}]*display:\s*block/);
+  assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*position:\s*fixed/);
   assert.match(app, /function isWatchableShort|isWatchableShort\(job\)/);
   assert.match(app, /#watch/);
   assert.match(app, /#shorts/);
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /setView\("detail"\)/);
-  assert.match(app, /hash === "watch"/);
+  assert.match(app, /!hash \|\| hash === "watch"/);
+  assert.match(app, /hash === "shorts"/);
   assert.match(app, /hash === "short"/);
-  assert.match(app, /button\.textContent = state\.view === "watch" \? "라이브러리" : "보기"/);
+  assert.match(app, /view: "watch"/);
+  assert.match(app, /button\.textContent = "라이브러리"/);
+  assert.match(app, /function openHome/);
+  assert.equal(app.includes('"보기"'), false);
   assert.match(app, /ArrowDown/);
   assert.match(app, /ArrowUp/);
   assert.match(app, /toggleWatchMute/);

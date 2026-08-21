@@ -8,7 +8,7 @@ const state = {
   jobs: [],
   selectedJobId: null,
   highlightJobId: null,
-  view: "grid",
+  view: "watch",
   template: null,
   createPreview: null,
   live: {},
@@ -72,11 +72,13 @@ function setView(view, options = {}) {
   const templateOverlay = $("#template-overlay");
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
+  const library = $("#shorts");
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
+  if (library) library.hidden = state.view === "watch";
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings"].includes(state.view));
   if (!options.skipHash) {
@@ -108,9 +110,8 @@ function syncDocumentTitle() {
 function syncSurfaceToggle() {
   const button = $("#toggle-surface");
   if (!button) return;
-  const hasWatch = watchableJobs().length > 0;
-  button.hidden = !hasWatch && state.view !== "watch";
-  button.textContent = state.view === "watch" ? "라이브러리" : "보기";
+  button.textContent = "라이브러리";
+  button.hidden = state.view !== "watch";
 }
 
 function applyHash() {
@@ -131,25 +132,17 @@ function applyHash() {
     setView("grid", { skipHash: true });
     return;
   }
-  if (hash === "watch") {
-    if (watchableJobs().length) {
-      setView("watch", { skipHash: true, instant: true });
-      return;
-    }
-    setView("grid", { skipHash: true });
-    return;
-  }
   if (hash === "short" || hash === "generation" || hash === "rendering") {
     if (state.selectedJobId && state.jobs.some((job) => job.id === state.selectedJobId)) {
       setView("detail", { skipHash: true });
       return;
     }
   }
-  if (!hash && watchableJobs().length) {
+  if (!hash || hash === "watch") {
     setView("watch", { skipHash: true, instant: true });
     return;
   }
-  setView("grid", { skipHash: true });
+  setView("watch", { skipHash: true, instant: true });
 }
 
 function createTileMarkup() {
@@ -318,11 +311,7 @@ function activateWatchSlide(jobId) {
 
 function goToWatchIndex(index, { instant = false } = {}) {
   const jobs = watchableJobs();
-  if (!jobs.length) {
-    setView("grid");
-    renderJobs();
-    return;
-  }
+  if (!jobs.length) return;
   const next = Math.max(0, Math.min(jobs.length - 1, index));
   const job = jobs[next];
   state.selectedJobId = job.id;
@@ -363,10 +352,6 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
   if (!jobs.length) {
     scroller.innerHTML = "";
     scroller.dataset.signature = "";
-    if (state.view === "watch") {
-      setView("grid");
-      renderJobs();
-    }
     return;
   }
   const signature = watchSignature();
@@ -400,17 +385,16 @@ function openDetail(jobId) {
   renderJobs();
 }
 
+function openHome(event) {
+  event?.preventDefault();
+  $("#library-more")?.removeAttribute("open");
+  setView("watch", { instant: true });
+}
+
 function toggleSurface() {
   $("#library-more")?.removeAttribute("open");
-  if (state.view === "watch") {
-    setView("grid");
-    renderJobs();
-    return;
-  }
-  const jobs = watchableJobs();
-  if (!jobs.length) return;
-  if (!isWatchableShort(selectedJob() || {})) state.selectedJobId = jobs[0].id;
-  setView("watch", { instant: true });
+  setView("grid");
+  renderJobs();
 }
 
 function renderShortCard(job) {
@@ -1017,7 +1001,7 @@ async function saveSettings(event) {
     state.settings = payload.settings;
     applySettingsToForm(payload.settings);
     showToast("설정을 저장했습니다.");
-    setView("grid");
+    closeOverlays();
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -1105,12 +1089,11 @@ async function importLibrary(event) {
 
 function closeOverlays(event) {
   event?.preventDefault();
-  if (state.returnToWatch && watchableJobs().length) {
+  if (state.returnToWatch) {
     state.returnToWatch = false;
     setView("watch", { instant: true });
     return;
   }
-  state.returnToWatch = false;
   state.selectedJobId = state.view === "detail" ? null : state.selectedJobId;
   setView("grid");
   renderJobs();
@@ -1137,6 +1120,7 @@ function bindEvents() {
     if (state.view === "watch") state.returnToWatch = true;
     openCreate(event);
   });
+  $("#home-brand")?.addEventListener("click", openHome);
   $("#toggle-surface")?.addEventListener("click", toggleSurface);
   $("#open-template")?.addEventListener("click", openTemplate);
   $("#open-settings")?.addEventListener("click", openSettings);
@@ -1211,7 +1195,7 @@ async function warnIfFactoryToolsMissing() {
     const health = await api("/api/health");
     if (!health.capabilities?.ffmpeg) showToast("ffmpeg가 없습니다.", "error");
   } catch {
-    // Home stays a grid even if health is unreachable.
+    // Home stays the watch feed even if health is unreachable.
   }
 }
 

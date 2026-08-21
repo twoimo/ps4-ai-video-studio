@@ -32,7 +32,7 @@ h1, h2, h3, p { margin-top: 0; }
 
 .studio-chrome { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 0; min-height: 36px; flex: 0 0 auto; position: relative; z-index: 8; }
 .studio-chrome-actions { display: flex; align-items: center; gap: 10px; }
-.library-brand { display: grid; gap: 1px; min-width: 0; }
+.library-brand { display: grid; gap: 1px; min-width: 0; color: inherit; }
 .library-brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; }
 .library-brand-sub { margin: 0; color: var(--muted); font-size: 11px; font-weight: 400; letter-spacing: -.01em; line-height: 1.2; }
 .surface-toggle { color: var(--muted); font-size: 13px; padding: 6px 2px; }
@@ -211,13 +211,14 @@ body.overlay-open { overflow: hidden; }
 .watch-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; }
 .watch-empty[hidden] { display: none; }
 
-body.watch-open { overflow: hidden; }
-body.watch-open .studio-chrome { position: fixed; top: 0; left: 0; right: 0; padding: 10px 12px 28px; background: linear-gradient(180deg, rgba(0,0,0,.58), transparent); pointer-events: none; }
+body.watch-open { display: block; overflow: hidden; }
+body.watch-open .studio-chrome { position: fixed; top: 0; left: 0; right: 0; min-height: 0; padding: 10px 12px 36px; background: linear-gradient(180deg, rgba(0,0,0,.58) 0%, rgba(0,0,0,.18) 62%, transparent 100%); pointer-events: none; }
 body.watch-open .studio-chrome > * { pointer-events: auto; }
 body.watch-open .library-brand h1,
+body.watch-open .library-brand-sub,
 body.watch-open .surface-toggle,
 body.watch-open .library-more summary { color: #f2f4f8; }
-body.watch-open .library { visibility: hidden; pointer-events: none; }
+body.watch-open .library { display: none; }
 
 .toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: 360px; transform: translateY(20px); opacity: 0; pointer-events: none; color: var(--text); background: var(--surface-3); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; transition: .25s ease; }
 .toast.visible { transform: translateY(0); opacity: 1; }
