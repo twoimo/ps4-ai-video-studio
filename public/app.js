@@ -21,6 +21,7 @@ const state = {
   watchObserver: null,
   feedObserver: null,
   watchLockUntil: 0,
+  watchSnapTimer: 0,
   createMode: "single",
   focusOpener: null
 };
@@ -377,10 +378,43 @@ function observeWatchSlides() {
   scroller.querySelectorAll(".watch-slide").forEach((slide) => state.watchObserver.observe(slide));
 }
 
+function sizeWatchFeed() {
+  const root = $("#watch-feed");
+  if (!root) return 0;
+  const height = Math.round(root.clientHeight);
+  if (height > 0) root.style.setProperty("--watch-h", `${height}px`);
+  return height;
+}
+
+function snapWatchFeed() {
+  const scroller = $("#watch-scroller");
+  if (!scroller) return;
+  const h = sizeWatchFeed();
+  if (!(h > 0)) return;
+  scroller.scrollTop = Math.round(scroller.scrollTop / h) * h;
+}
+
+function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) {
+  const scroller = $("#watch-scroller");
+  const h = sizeWatchFeed();
+  if (!scroller || !(h > 0)) return;
+  const last = Math.max(0, watchableJobs().length - 1);
+  scroller.scrollTop = Math.max(0, Math.min(last, index)) * h;
+}
+
 function bindWatchScroller() {
   const scroller = $("#watch-scroller");
   if (!scroller || scroller.dataset.bound) return;
   scroller.dataset.bound = "1";
+  const settle = () => {
+    if (state.view !== "watch") return;
+    snapWatchFeed();
+  };
+  scroller.addEventListener("scrollend", settle);
+  scroller.addEventListener("scroll", () => {
+    window.clearTimeout(state.watchSnapTimer);
+    state.watchSnapTimer = window.setTimeout(settle, 80);
+  }, { passive: true });
   scroller.addEventListener("wheel", (event) => {
     if (state.view !== "watch") return;
     if (event.target.closest?.(".watch-inspect")) return;
@@ -459,8 +493,7 @@ function goToWatchIndex(index, { instant = false } = {}) {
   const next = Math.max(0, Math.min(jobs.length - 1, index));
   const job = jobs[next];
   state.selectedJobId = job.id;
-  const slide = document.querySelector(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`);
-  slide?.scrollIntoView({ behavior: "auto", block: "start" });
+  placeWatchFeed(next);
   activateWatchSlide(job.id);
   replaceWatchHash(job.id);
   syncDocumentTitle();
@@ -470,7 +503,8 @@ function goToWatchIndex(index, { instant = false } = {}) {
 function stepWatch(delta) {
   const scroller = $("#watch-scroller");
   if (!scroller) return;
-  scroller.scrollBy({ top: delta * scroller.clientHeight, behavior: "auto" });
+  const h = sizeWatchFeed() || scroller.clientHeight;
+  scroller.scrollBy({ top: delta * h, behavior: "auto" });
 }
 
 function patchWatchSlide(job) {
@@ -511,9 +545,15 @@ function renderWatchFeed({ focus = false, instant = false } = {}) {
   } else {
     jobs.forEach(patchWatchSlide);
   }
+  sizeWatchFeed();
   if (focus || !document.querySelector(".watch-slide.active")) {
     const index = Math.max(0, watchIndexOf(state.selectedJobId));
-    window.requestAnimationFrame(() => goToWatchIndex(index, { instant }));
+    window.requestAnimationFrame(() => {
+      placeWatchFeed(index);
+      goToWatchIndex(index, { instant });
+    });
+  } else {
+    placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
   }
 }
 
@@ -1575,7 +1615,13 @@ async function refreshQuietly() {
 }
 
 function bindEvents() {
-  window.addEventListener("resize", sizeShortsGrid);
+  const onViewportResize = () => {
+    sizeShortsGrid();
+    if (state.view !== "watch") return;
+    placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
+  };
+  window.addEventListener("resize", onViewportResize);
+  window.visualViewport?.addEventListener("resize", onViewportResize);
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();

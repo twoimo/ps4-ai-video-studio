@@ -129,8 +129,9 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(app, /playsinline webkit-playsinline/);
   assert.match(app, /setAttribute\("webkit-playsinline"/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
-  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100svh/);
-  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100svh/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*var\(--watch-h,\s*100svh\)/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*var\(--watch-h,\s*100svh\)/);
+  assert.match(css, /--watch-h/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*right:\s*12px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
@@ -182,7 +183,12 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.equal(/touchend[\s\S]*scrollBy/.test(bindScroller), false);
   assert.equal(/touchend[\s\S]*stepWatch/.test(bindScroller), false);
   assert.match(bindScroller, /if \(dy\) closeOpenWatchInspect\(\)/);
-  assert.match(app, /scrollBy\(\{\s*top:\s*delta \* scroller\.clientHeight,\s*behavior:\s*"auto"\s*\}\)/);
+  assert.match(bindScroller, /scrollend/);
+  assert.match(app, /function sizeWatchFeed/);
+  assert.match(app, /function snapWatchFeed/);
+  assert.match(app, /setProperty\("--watch-h"/);
+  assert.match(app, /scrollTop = Math\.round\(scroller\.scrollTop \/ h\) \* h/);
+  assert.match(app, /scrollBy\(\{\s*top:\s*delta \* h,\s*behavior:\s*"auto"\s*\}\)/);
   const bindSlide = app.slice(app.indexOf("function bindWatchSlide"), app.indexOf("function observeWatchSlides"));
   assert.equal(bindSlide.includes("scrollIntoView"), false);
 });
