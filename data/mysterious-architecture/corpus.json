@@ -1,0 +1,82 @@
+{
+  "N": 288,
+  "analyzedOn": "2026-08-20",
+  "lockDate": "2026-08-21",
+  "lockId": "grok-imagine-2026-08-21",
+  "channel": "@60chtptkd",
+  "eras": {
+    "mature_explainer": 253,
+    "offtopic": 19,
+    "early_if": 16
+  },
+  "reds": {
+    "mixed": 191,
+    "floating": 49,
+    "none": 47,
+    "pinned_to_edges": 1
+  },
+  "labels": {
+    "both": 84,
+    "korean_banner": 106,
+    "english_short": 26,
+    "none": 72
+  },
+  "captions": {
+    "white_stroke_korean": 288
+  },
+  "letterbox": {
+    "no": 280,
+    "yes": 8
+  },
+  "motion": {
+    "yes": 254,
+    "unclear": 33,
+    "no": 1
+  },
+  "site": {
+    "yes": 206,
+    "no": 55,
+    "unclear": 27
+  },
+  "scale": {
+    "real": 206,
+    "toy": 76,
+    "na": 6
+  },
+  "park": {
+    "no": 260,
+    "yes": 28
+  },
+  "nums": {
+    "unclear": 3,
+    "no": 117,
+    "yes": 168
+  },
+  "lid": {
+    "na": 95,
+    "yes": 193
+  },
+  "setups": {
+    "n": 288,
+    "min": 5,
+    "max": 29,
+    "median": 13,
+    "mean": 13.89,
+    "mode": 13
+  },
+  "types": {
+    "hook_photoreal": { "videos": 177, "hits": 491 },
+    "interior_scale": { "videos": 107, "hits": 244 },
+    "massing_studio": { "videos": 173, "hits": 499 },
+    "spec_elevation": { "videos": 101, "hits": 156 },
+    "cutaway_site": { "videos": 163, "hits": 569 },
+    "cutaway_object": { "videos": 206, "hits": 653 },
+    "mechanism_arrows": { "videos": 167, "hits": 366 },
+    "compare_split": { "videos": 73, "hits": 98 },
+    "context_clay": { "videos": 151, "hits": 344 },
+    "map_3d": { "videos": 99, "hits": 240 },
+    "payoff_photoreal": { "videos": 146, "hits": 336 },
+    "live_action": { "videos": 218, "hits": 794 },
+    "other": { "videos": 153, "hits": 376 }
+  }
+}

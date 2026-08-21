@@ -129,7 +129,8 @@ function setView(view, options = {}) {
   state.view = next;
   if (state.view !== "watch") closeOpenWatchInspect();
   document.body.classList.toggle("watch-open", state.view === "watch");
-  document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine"].includes(state.view));
+  document.body.classList.toggle("template-open", state.view === "template");
+  document.body.classList.toggle("overlay-open", ["create", "detail", "settings", "machine"].includes(state.view));
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
@@ -139,7 +140,7 @@ function setView(view, options = {}) {
   const menuOverlay = $("#menu-overlay");
   if (menuOverlay && next !== "grid") menuOverlay.hidden = true;
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
-  if (library) library.hidden = state.view === "watch";
+  if (library) library.hidden = state.view === "watch" || state.view === "template";
   const openingWatch = state.view === "watch";
   if (openingWatch) {
     document.querySelectorAll(".preview-wrap video, .shorts-grid video, audio").forEach((media) => {
@@ -199,6 +200,11 @@ function applyHash() {
   }
   if (hash === "template") {
     setView("template", { skipHash: true });
+    return;
+  }
+  if (hash === "backlot" || hash.startsWith("backlot/")) {
+    const projectId = hash.startsWith("backlot/p/") ? hash.slice("backlot/p/".length) : hash.startsWith("backlot/") && hash !== "backlot/" ? hash.slice("backlot/".length) : "";
+    location.replace(projectId ? `/backlot/p/${encodeURIComponent(projectId)}` : "/backlot");
     return;
   }
   if (hash === "settings") {
@@ -932,16 +938,122 @@ function renderShotPromptList(shots = []) {
 
 function renderLockTable(locks = []) {
   if (!locks.length) return "";
-  return `<details class="template-locks"><summary>잠금 규칙</summary><div class="lock-table">${locks.map((lock) => `<div class="lock-row"><b>${escapeHtml(lock.label)}</b><small>${escapeHtml(lock.rule)}</small></div>`).join("")}</div></details>`;
+  return `<div class="lock-table">${locks.map((lock) => `<div class="lock-row"><b>${escapeHtml(lock.label)}</b> <code>${escapeHtml(lock.id || "")}</code><small>${escapeHtml(lock.rule)}</small></div>`).join("")}</div>`;
+}
+
+function specKv(label, value) {
+  return `<div class="spec-kv"><b>${escapeHtml(value)}</b><span>${escapeHtml(label)}</span></div>`;
+}
+
+function factoryClass(flag = "") {
+  if (flag === "yes") return "factory-yes";
+  if (flag === "optional") return "factory-optional";
+  return "factory-no";
+}
+
+function renderSpecTable(headers, rows) {
+  return `<table class="spec-table"><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
 async function loadTemplateSurface() {
   const root = $("#template-root");
   if (!root) return;
   try {
-    if (!state.template) state.template = await api("/api/grok-imagine/template");
-    const template = state.template;
-    root.innerHTML = `<h2 id="template-title">${escapeHtml(template.title)}</h2><p>슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다. 사람·자막 위치·금지 항목은 바꾸지 않습니다.</p><div class="slot-grid">${renderWorldSlotFields(template.slots)}</div>${renderLockTable(template.locks)}`;
+    if (!state.template || !state.template.tally) state.template = await api("/api/grok-imagine/template");
+    const spec = state.template;
+    const tally = spec.tally || {};
+    const title = $("#template-title");
+    if (title) title.textContent = spec.title || "잠긴 프롬프트";
+    const eraRows = Object.entries(tally.eras || spec.eras || {}).map(([key, value]) => [escapeHtml(key), escapeHtml(value)]);
+    const typeRows = (spec.types || []).map((type) => [
+      `<b>${escapeHtml(type.id)}</b>`,
+      escapeHtml(type.meaning || ""),
+      `<span class="${factoryClass(type.factory)}">${escapeHtml(type.factory || "")}</span>`,
+      escapeHtml(type.videos ?? ""),
+      escapeHtml(type.hits ?? "")
+    ]);
+    const skeleton = (spec.skeleton?.lines || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+    const forbidden = (spec.skeleton?.forbidden || spec.skeletonForbidden || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    const situation = (spec.situation || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    const fails = (spec.hardFails || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    const loop = (spec.loop || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    const clip = spec.clipCountLock || {};
+    const captions = spec.captions || {};
+    const setups = tally.setups || {};
+    root.innerHTML = `
+      <header class="spec-section" style="border-top:0">
+        <h2>${escapeHtml(spec.title)}</h2>
+        <p class="spec-lede">${escapeHtml(spec.id)} · ${escapeHtml(spec.date)}. 슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다. 잠금·코퍼스·스켈레톤은 읽기 전용입니다.</p>
+      </header>
+      <section class="spec-section" id="spec-corpus">
+        <h3>코퍼스 ${escapeHtml(tally.N ?? 288)}</h3>
+        <p class="spec-lede">${escapeHtml(spec.eraRule || "ignore early_if + offtopic; spec is mature_explainer 253")}</p>
+        <div class="spec-kvs">
+          ${specKv("N", tally.N ?? 288)}
+          ${specKv("mature_explainer", tally.eras?.mature_explainer ?? "")}
+          ${specKv("offtopic", tally.eras?.offtopic ?? "")}
+          ${specKv("early_if", tally.eras?.early_if ?? "")}
+          ${specKv("same site", `${tally.site?.yes ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("real scale", `${tally.scale?.real ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("toy (they)", tally.scale?.toy ?? "")}
+          ${specKv("no bars", `${(tally[`${"letter"}box`] || {}).no ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("motion in-hold", `${tally.motion?.yes ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("setups median", setups.median ?? 13)}
+          ${specKv("setups mean", setups.mean ?? 13.89)}
+          ${specKv("setups mode", setups.mode ?? 13)}
+          ${specKv("setups range", `${setups.min ?? 5}–${setups.max ?? 29}`)}
+        </div>
+        ${renderSpecTable(["era", "count"], eraRows)}
+      </section>
+      <section class="spec-section" id="spec-types">
+        <h3>샷 타입 13</h3>
+        ${renderSpecTable(["type", "meaning", "factory", "videos", "hits"], typeRows)}
+      </section>
+      <section class="spec-section" id="spec-graphics">
+        <h3>그래픽 문법</h3>
+        <div class="spec-kvs">
+          ${specKv("red mixed", tally.reds?.mixed ?? "")}
+          ${specKv("numbers on the line", tally.nums?.yes ?? "")}
+          ${specKv("park/sand box", tally.park?.yes ?? "")}
+          ${specKv("lid aligned", tally.lid?.yes ?? "")}
+          ${specKv("captions", captions.rule ? "MarginV=450" : "Alignment=2")}
+        </div>
+        <p class="spec-lede">${escapeHtml(spec.graphicsGrammar?.inSceneLabels || "")}</p>
+        <p class="spec-lede">${escapeHtml(spec.graphicsGrammar?.dialogue || "")}</p>
+        <p class="spec-lede">${escapeHtml(captions.rule || "")}</p>
+      </section>
+      <section class="spec-section" id="spec-slots">
+        <h3>월드 슬롯 10</h3>
+        <p class="spec-lede">sourced_si와 avoid는 잠금입니다. 값은 초안 만들기에서만 편집합니다.</p>
+        <div class="slot-grid">${renderWorldSlotFields(spec.slots)}</div>
+      </section>
+      <section class="spec-section" id="spec-skeleton">
+        <h3>샷 스켈레톤</h3>
+        <ol class="spec-list">${skeleton}</ol>
+        <h3>FORBIDDEN</h3>
+        <ul class="spec-list">${forbidden}</ul>
+      </section>
+      <section class="spec-section" id="spec-locks">
+        <h3>FACTORY_LOCKS</h3>
+        ${renderLockTable(spec.locks)}
+      </section>
+      <section class="spec-section" id="spec-situation">
+        <h3>상황 체크리스트</h3>
+        <ol class="spec-list">${situation}</ol>
+        <h3>Hard fails</h3>
+        <ul class="spec-list">${fails}</ul>
+      </section>
+      <section class="spec-section" id="spec-loop">
+        <h3>Reference-first loop</h3>
+        <ol class="spec-list">${loop}</ol>
+        <p class="spec-lede">${escapeHtml(clip.note || "")} Factory stays ${escapeHtml(clip.factoryStays || "6 unique sources / 7 holds")}.</p>
+        <pre class="spec-pre">${escapeHtml((spec.styleSheet && JSON.stringify(spec.styleSheet, null, 2)) || "")}</pre>
+      </section>
+      <section class="spec-section" id="spec-documents">
+        <h3>문서</h3>
+        <pre class="spec-pre">${escapeHtml(spec.documents?.spec || spec.document || "")}</pre>
+        <pre class="spec-pre">${escapeHtml(spec.documents?.template || "")}</pre>
+      </section>`;
   } catch (error) {
     root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><pre>${escapeHtml(error.message)}</pre></div>`;
   }
@@ -1306,6 +1418,12 @@ function openTemplate(event) {
   setView("template");
 }
 
+function openBoard(event) {
+  event?.preventDefault();
+  closeMenu();
+  location.assign("/backlot");
+}
+
 function openSettings(event) {
   event?.preventDefault();
   rememberOpener(event);
@@ -1598,6 +1716,8 @@ function bindEvents() {
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome);
   $("#open-template")?.addEventListener("click", openTemplate);
+  $("#open-board")?.addEventListener("click", openBoard);
+  $("#open-board-menu")?.addEventListener("click", openBoard);
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);

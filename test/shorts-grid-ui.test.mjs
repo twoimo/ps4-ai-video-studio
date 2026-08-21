@@ -182,7 +182,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /viewport-fit=cover/);
   assert.match(html, /class="studio-overlay feed-card" id="create-overlay"/);
   assert.match(html, /class="studio-overlay feed-card" id="settings-overlay"/);
-  assert.match(html, /class="studio-overlay feed-card" id="template-overlay"/);
+  assert.match(html, /class="template-studio" id="template-overlay"/);
   assert.match(html, /id="settings-bgm-songs"/);
   assert.equal(html.includes("gemini-browser"), false);
   assert.equal(html.includes("browser-start"), false);
@@ -289,6 +289,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /class="library-gear"/);
   assert.match(home, /<svg class="library-gear"/);
   assert.match(home, /id="import-library">가져오기</);
+  assert.match(home, /id="open-board"/);
   assert.match(home, /id="open-template">템플릿</);
   assert.match(home, /id="open-settings">설정</);
   assert.match(home, /id="refresh-all">새로고침</);

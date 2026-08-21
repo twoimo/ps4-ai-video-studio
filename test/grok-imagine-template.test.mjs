@@ -13,6 +13,7 @@ import {
   getLockedTemplate,
   sanitizeWorldSlotOverrides
 } from "../src/grok-imagine-template.mjs";
+import { getLockedSpec, SHOT_TYPE_IDS } from "../src/grok-imagine-spec.mjs";
 import { previewFactoryPrompts, stillPromptFor } from "../src/grok-imagine-factory.mjs";
 import { createJob } from "../src/pipeline.mjs";
 
@@ -104,7 +105,28 @@ test("createJob stores editable world slot overrides", async () => {
 test("studio HTML exposes a prompt template surface", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   assert.match(html, /id="template-overlay"/);
+  assert.match(html, /class="template-studio" id="template-overlay"/);
   assert.match(html, /id="open-template">템플릿</);
   assert.match(html, /id="create-world-slots"/);
   assert.equal(html.indexOf('id="shorts-grid"') < html.indexOf('id="template-overlay"'), true);
+});
+
+test("locked spec API payload has the 288 corpus and every factory lock", () => {
+  const spec = getLockedSpec();
+  assert.equal(spec.tally.N, 288);
+  assert.equal(spec.eras.mature_explainer, 253);
+  assert.deepEqual(spec.slots.map((slot) => slot.id), WORLD_SLOT_IDS);
+  assert.deepEqual(spec.types.map((type) => type.id), SHOT_TYPE_IDS);
+  const live = spec.types.find((type) => type.id === "live_action");
+  assert.equal(live.doNotClone, true);
+  assert.match(live.meaning, /do not clone/i);
+  assert.ok(FACTORY_LOCKS.every((lock) => spec.locks.some((item) => item.id === lock.id)));
+  assert.equal(spec.situation.length >= 8 && spec.situation.length <= 14, true);
+  assert.ok(spec.hardFails.length >= 8);
+  assert.ok(spec.loop.some((step) => /image_gen/.test(step)));
+  assert.equal(spec.clipCountLock.factoryHolds, 7);
+  assert.equal(spec.clipCountLock.uniqueSources, 6);
+  assert.match(spec.documents.spec, /mature_explainer 253/);
+  assert.match(spec.documents.template, /FORBIDDEN/);
+  assert.equal(JSON.stringify(spec).includes("쇼츠 공장"), false);
 });

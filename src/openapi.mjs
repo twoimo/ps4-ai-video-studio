@@ -133,7 +133,16 @@ export function studioOpenApi() {
         }
       },
       "/api/grok-imagine/template": {
-        get: { summary: "잠긴 공장 템플릿", operationId: "factoryTemplate", responses: { 200: { description: "슬롯과 잠금" } } }
+        get: { summary: "잠긴 공장 템플릿과 288 코퍼스 스펙", operationId: "factoryTemplate", responses: { 200: { description: "슬롯, 잠금, 코퍼스, 샷 타입" } } }
+      },
+      "/api/grok-imagine/spec": {
+        get: { summary: "잠긴 Claude-video 스펙", operationId: "factorySpec", responses: { 200: { description: "tally, types, locks, situation, loop" } } }
+      },
+      "/api/projects": {
+        get: { summary: "Backlot 프로젝트 목록", operationId: "backlotProjects", responses: { 200: { description: "라이브러리 카드" } } }
+      },
+      "/api/project/{id}/state": {
+        get: { summary: "Backlot 보드 상태", operationId: "backlotState", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 200: { description: "BoardState" } } }
       },
       "/api/grok-imagine/template/preview": {
         post: { summary: "공장 프롬프트 미리보기", operationId: "factoryPreview", responses: { 200: { description: "채워진 샷" } } }
