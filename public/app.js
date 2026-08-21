@@ -94,7 +94,6 @@ function setView(view, options = {}) {
   if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
   if (state.view === "watch") renderWatchFeed({ focus: true, instant: Boolean(options.instant) });
-  syncSurfaceToggle();
   syncDocumentTitle();
 }
 
@@ -105,14 +104,6 @@ function syncDocumentTitle() {
     return;
   }
   document.title = STUDIO_TITLE;
-}
-
-function syncSurfaceToggle() {
-  const button = $("#toggle-surface");
-  if (!button) return;
-  const hasWatch = watchableJobs().length > 0;
-  button.textContent = state.view === "watch" ? "라이브러리" : "보기";
-  button.hidden = state.view === "watch" ? false : !hasWatch;
 }
 
 function applyHash() {
@@ -401,19 +392,6 @@ function openHome(event) {
   renderJobs();
 }
 
-function toggleSurface() {
-  $("#library-more")?.removeAttribute("open");
-  if (state.view === "watch") {
-    setView("grid");
-    renderJobs();
-    return;
-  }
-  const jobs = watchableJobs();
-  if (!jobs.length) return;
-  if (!isWatchableShort(selectedJob() || {})) state.selectedJobId = jobs[0].id;
-  setView("watch", { instant: true });
-}
-
 function renderShortCard(job) {
   const status = shortStatus(job);
   const thumb = bust(shortThumbnail(job), job.updatedAt);
@@ -525,7 +503,6 @@ function renderJobs() {
     renderLiveFactory(selected);
     watchJobLive(selected);
   }
-  syncSurfaceToggle();
   syncDocumentTitle();
 }
 
@@ -848,7 +825,6 @@ async function refreshJobs() {
       renderLiveFactory(selected);
       watchJobLive(selected);
     }
-    syncSurfaceToggle();
     syncDocumentTitle();
   }
   syncPollTimer();
@@ -1138,7 +1114,6 @@ function bindEvents() {
     openCreate(event);
   });
   $("#home-brand")?.addEventListener("click", openHome);
-  $("#toggle-surface")?.addEventListener("click", toggleSurface);
   $("#open-template")?.addEventListener("click", openTemplate);
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
@@ -1164,7 +1139,7 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (state.view === "watch") {
-        toggleSurface();
+        openHome();
         return;
       }
       if (state.view !== "grid") closeOverlays();
