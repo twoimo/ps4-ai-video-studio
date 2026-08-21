@@ -144,6 +144,18 @@ function applyHash() {
   setView("grid", { skipHash: true });
 }
 
+function sizeShortsGrid() {
+  const grid = $("#shorts-grid");
+  if (!grid) return;
+  const gap = 2;
+  const width = grid.clientWidth;
+  if (!width) return;
+  const col = (window.innerHeight - 52 - gap) / 2 * 9 / 16;
+  if (!(col > 0)) return;
+  const n = Math.max(2, Math.ceil((width + gap) / (col + gap)));
+  grid.style.setProperty("--n", String(n));
+}
+
 function createTileMarkup() {
   return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
 }
@@ -444,6 +456,7 @@ function renderJobs() {
     grid.innerHTML = `${createTileMarkup()}${state.jobs.map(renderShortCard).join("")}`;
     $("#create-tile")?.addEventListener("click", openCreate);
     $$(".short-card[data-job-id]").forEach(bindShortCard);
+    sizeShortsGrid();
   }
   if (state.view === "watch") {
     renderWatchFeed();
@@ -1061,6 +1074,7 @@ async function refreshQuietly() {
 }
 
 function bindEvents() {
+  window.addEventListener("resize", sizeShortsGrid);
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();

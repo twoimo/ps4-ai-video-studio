@@ -105,7 +105,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /--rows:\s*2/);
   assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
-  assert.match(css, /--n:\s*max\(1,\s*round\(up,/);
+  assert.match(css, /--n:\s*4/);
+  assert.equal(css.includes("round(up"), false);
   assert.match(css, /grid-template-columns:\s*repeat\(var\(--n\),\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /grid-auto-rows:\s*auto/);
   assert.match(css, /\.shorts-grid\s*\{[^}]*overflow:\s*auto/);
@@ -126,8 +127,12 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(app.includes("short-card-body"), false);
   assert.match(app, /aria-label="새 쇼츠"/);
   assert.match(app, /aria-label="\$\{escapeHtml\(job\.topic \|\| "쇼츠"\)\}"/);
-  assert.equal(app.includes("setProperty(\"--n\""), false);
-  assert.equal(app.includes("sizeShortsGrid"), false);
+  assert.match(app, /function sizeShortsGrid/);
+  assert.match(app, /grid\.clientWidth/);
+  assert.match(app, /Math\.max\(2,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
+  assert.match(app, /innerHeight - 52 - gap/);
+  assert.match(app, /sizeShortsGrid\(\)/);
+  assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
   assert.equal(app.includes("syncShortsGridSize"), false);
   assert.equal(app.includes("shortsGridN"), false);
   assert.match(css, /\.thumb-fallback\s*\{[^}]*font-size:\s*13px/);

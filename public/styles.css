@@ -54,7 +54,7 @@ h1, h2, h3, p { margin-top: 0; }
   --chrome: 52px;
   --thumb-h: calc((100dvh - var(--chrome) - var(--gap)) / var(--rows));
   --col: calc(var(--thumb-h) * 9 / 16);
-  --n: max(1, round(up, calc((100% + var(--gap)) / (var(--col) + var(--gap))), 1));
+  --n: 4;
   display: grid;
   grid-template-columns: repeat(var(--n), minmax(0, 1fr));
   grid-auto-rows: auto;
