@@ -63,6 +63,9 @@ h1, h2, h3, p { margin-top: 0; }
   min-height: 0;
 }
 .short-card { display: flex; flex-direction: column; width: 100%; text-align: left; color: var(--text); padding: 0; overflow: visible; }
+.short-card-open { display: flex; flex-direction: column; width: 100%; text-align: left; color: inherit; padding: 0; }
+.short-card-detail { align-self: flex-start; margin: 2px 1px 0; padding: 0; color: var(--muted); font-size: 12px; }
+.short-card-detail:hover { color: var(--text); }
 .short-card-thumb { position: relative; aspect-ratio: 9 / 16; background: #080a0f; overflow: hidden; border-radius: 6px; border: 1px solid var(--line); }
 .short-card:hover .short-card-thumb, .short-card.selected .short-card-thumb { border-color: rgba(183,243,107,.42); }
 .short-card.just-created .short-card-thumb { box-shadow: 0 0 0 3px rgba(183,243,107,.16); }

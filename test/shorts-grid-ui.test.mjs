@@ -123,6 +123,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="library-more"/);
   assert.match(home, /더보기/);
   assert.match(home, /id="toggle-surface"/);
+  assert.match(home, />보기</);
   assert.match(home, /id="create-tile"/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
   assert.match(css, /--header:\s*52px/);
@@ -166,6 +167,9 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /setView\("detail"\)/);
+  assert.match(app, /hash === "watch"/);
+  assert.match(app, /hash === "short"/);
+  assert.match(app, /button\.textContent = state\.view === "watch" \? "라이브러리" : "보기"/);
   assert.match(app, /ArrowDown/);
   assert.match(app, /ArrowUp/);
   assert.match(app, /toggleWatchMute/);
@@ -175,6 +179,9 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /watch-sheet/);
   assert.match(app, /다시 실행/);
   assert.match(app, /openJob/);
+  assert.match(app, /function openDetail/);
+  assert.match(app, /short-card-detail/);
+  assert.match(app, />상세</);
   assert.equal(app.includes("drawbox"), false);
   assert.equal(app.includes("drawtext"), false);
   assert.equal(/imagine/i.test(app.slice(app.indexOf("function renderWatchSlide"), app.indexOf("function bindWatchSlide"))), false);

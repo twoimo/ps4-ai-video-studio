@@ -110,7 +110,7 @@ function syncSurfaceToggle() {
   if (!button) return;
   const hasWatch = watchableJobs().length > 0;
   button.hidden = !hasWatch && state.view !== "watch";
-  button.textContent = state.view === "watch" ? "라이브러리" : "쇼츠 보기";
+  button.textContent = state.view === "watch" ? "라이브러리" : "보기";
 }
 
 function applyHash() {
@@ -131,17 +131,16 @@ function applyHash() {
     setView("grid", { skipHash: true });
     return;
   }
-  if (hash === "watch" || hash === "short" || hash === "generation" || hash === "rendering") {
-    const selected = selectedJob();
-    if (selected && !isWatchableShort(selected)) {
-      setView("detail", { skipHash: true });
-      return;
-    }
+  if (hash === "watch") {
     if (watchableJobs().length) {
       setView("watch", { skipHash: true, instant: true });
       return;
     }
-    if (selected) {
+    setView("grid", { skipHash: true });
+    return;
+  }
+  if (hash === "short" || hash === "generation" || hash === "rendering") {
+    if (state.selectedJobId && state.jobs.some((job) => job.id === state.selectedJobId)) {
       setView("detail", { skipHash: true });
       return;
     }
@@ -179,7 +178,7 @@ function renderWatchSlide(job) {
   const retry = job.status === "failed"
     ? `<button class="secondary-button watch-retry" type="button" data-job-id="${escapeHtml(job.id)}">다시 실행</button>`
     : "";
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop muted preload="none"></video><div class="watch-progress" aria-hidden="true"><i></i></div></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2><div class="watch-meta-row"><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="watch-duration">${escapeHtml(duration)}</span></div></div><div class="watch-actions"><button type="button" class="watch-mute" aria-pressed="${state.muted}">${state.muted ? "소리 켜기" : "음소거"}</button><details class="watch-sheet"><summary>작업</summary><div class="watch-sheet-body">${downloads || "<p class=\"download-note\">내려받을 파일이 없습니다</p>"}${retry}</div></details></div></div></article>`;
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop muted preload="none"></video><div class="watch-progress" aria-hidden="true"><i></i></div></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2><div class="watch-meta-row"><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="watch-duration">${escapeHtml(duration)}</span></div></div><div class="watch-actions"><button type="button" class="watch-mute" aria-pressed="${state.muted}">${state.muted ? "소리 켜기" : "음소거"}</button><details class="watch-sheet"><summary>작업</summary><div class="watch-sheet-body"><button type="button" class="watch-detail">상세</button>${downloads || "<p class=\"download-note\">내려받을 파일이 없습니다</p>"}${retry}</div></details></div></div></article>`;
 }
 
 function bindWatchSlide(slide) {
@@ -208,6 +207,10 @@ function bindWatchSlide(slide) {
     event.stopPropagation();
     state.selectedJobId = slide.dataset.jobId;
     void runSelectedJob();
+  });
+  slide.querySelector(".watch-detail")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openDetail(slide.dataset.jobId);
   });
 }
 
@@ -390,6 +393,13 @@ function openJob(jobId) {
   renderJobs();
 }
 
+function openDetail(jobId) {
+  state.selectedJobId = jobId;
+  if (state.view === "watch") state.returnToWatch = true;
+  setView("detail");
+  renderJobs();
+}
+
 function toggleSurface() {
   $("#library-more")?.removeAttribute("open");
   if (state.view === "watch") {
@@ -417,7 +427,7 @@ function renderShortCard(job) {
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<button type="button" class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && state.view === "detail"}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3></div></button>`;
+  return `<article class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-pressed="${job.id === state.selectedJobId && (state.view === "detail" || state.view === "watch")}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div><div class="short-card-body"><h3>${escapeHtml(job.topic)}</h3></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">상세</button></article>`;
 }
 
 function upsertJob(partial) {
@@ -431,8 +441,13 @@ function upsertJob(partial) {
   return state.jobs[0];
 }
 
-function bindShortCard(button) {
-  button.addEventListener("click", () => openJob(button.dataset.jobId));
+function bindShortCard(card) {
+  const jobId = card.dataset.jobId;
+  card.querySelector(".short-card-open")?.addEventListener("click", () => openJob(jobId));
+  card.querySelector(".short-card-detail")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openDetail(jobId);
+  });
 }
 
 function patchGridCard(job) {
