@@ -273,9 +273,13 @@ body.overlay-open { overflow: hidden; }
 .prompt-subhead { margin: 12px 0 6px; font-size: 13px; }
 
 #watch-feed,
+#watch-feed.watch-feed,
 .watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
+body.watch-open #watch-feed,
+body.watch-open #watch-feed.watch-feed,
+body.watch-open .watch-feed { display: block; }
 #watch-feed .watch-column { position: relative; height: 100%; width: 100%; min-height: 100%; max-width: calc(100cqh * 9 / 16); margin-inline: auto; overflow: hidden; }
 #watch-feed .watch-track { position: absolute; left: 0; right: 0; top: 0; width: 100%; will-change: transform; }
 .watch-track { position: absolute; left: 0; right: 0; top: 0; width: 100%; will-change: transform; }

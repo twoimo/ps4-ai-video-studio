@@ -797,6 +797,14 @@ test("leave watch pauses leftover preview grid and audio", () => {
   globalThis.document = previous;
 });
 
+test("watch-open beats the #watch-feed.watch-feed hide rule", async () => {
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(css, /body\.watch-open #watch-feed/);
+  assert.match(css, /body\.watch-open #watch-feed\.watch-feed/);
+  assert.match(css, /body\.watch-open \.watch-feed\s*\{[^}]*display:\s*block/);
+  assert.match(css, /#watch-feed\.watch-feed[\s\S]*display:\s*none/);
+});
+
 test("wheel stays on the watch feed root", () => {
   const slides = [{ dataset: { jobId: "a", src: "/a.mp4" } }, { dataset: { jobId: "b", src: "/b.mp4" } }];
   const root = fakePager({ slides, video: fakeVideo(1), height: 640 });
