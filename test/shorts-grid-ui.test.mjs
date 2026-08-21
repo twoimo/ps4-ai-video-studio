@@ -135,7 +135,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
   assert.equal(app.includes("syncShortsGridSize"), false);
   assert.equal(app.includes("shortsGridN"), false);
-  assert.match(app, /function jobCardsMarkup/);
+  assert.match(app, /function jobCardsMarkup\(\) \{\s*return state\.jobs\.map\(renderShortCard\)\.join\(""\)/);
   assert.match(app, /function appendFeedPage/);
   assert.match(app, /function bindFeedScroll/);
   assert.match(app, /<div class="feed-sentinel"><\/div>/);
