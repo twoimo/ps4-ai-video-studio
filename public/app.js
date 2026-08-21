@@ -8,7 +8,7 @@ const state = {
   jobs: [],
   selectedJobId: null,
   highlightJobId: null,
-  view: "watch",
+  view: "grid",
   template: null,
   createPreview: null,
   live: {},
@@ -110,8 +110,9 @@ function syncDocumentTitle() {
 function syncSurfaceToggle() {
   const button = $("#toggle-surface");
   if (!button) return;
-  button.textContent = "라이브러리";
-  button.hidden = state.view !== "watch";
+  const hasWatch = watchableJobs().length > 0;
+  button.textContent = state.view === "watch" ? "라이브러리" : "보기";
+  button.hidden = state.view === "watch" ? false : !hasWatch;
 }
 
 function applyHash() {
@@ -128,7 +129,11 @@ function applyHash() {
     setView("settings", { skipHash: true });
     return;
   }
-  if (hash === "shorts") {
+  if (hash === "watch") {
+    if (watchableJobs().length) {
+      setView("watch", { skipHash: true, instant: true });
+      return;
+    }
     setView("grid", { skipHash: true });
     return;
   }
@@ -138,11 +143,11 @@ function applyHash() {
       return;
     }
   }
-  if (!hash || hash === "watch") {
-    setView("watch", { skipHash: true, instant: true });
+  if (!hash || hash === "shorts") {
+    setView("grid", { skipHash: true });
     return;
   }
-  setView("watch", { skipHash: true, instant: true });
+  setView("grid", { skipHash: true });
 }
 
 function createTileMarkup() {
@@ -388,13 +393,21 @@ function openDetail(jobId) {
 function openHome(event) {
   event?.preventDefault();
   $("#library-more")?.removeAttribute("open");
-  setView("watch", { instant: true });
+  setView("grid");
+  renderJobs();
 }
 
 function toggleSurface() {
   $("#library-more")?.removeAttribute("open");
-  setView("grid");
-  renderJobs();
+  if (state.view === "watch") {
+    setView("grid");
+    renderJobs();
+    return;
+  }
+  const jobs = watchableJobs();
+  if (!jobs.length) return;
+  if (!isWatchableShort(selectedJob() || {})) state.selectedJobId = jobs[0].id;
+  setView("watch", { instant: true });
 }
 
 function renderShortCard(job) {
@@ -1195,7 +1208,7 @@ async function warnIfFactoryToolsMissing() {
     const health = await api("/api/health");
     if (!health.capabilities?.ffmpeg) showToast("ffmpeg가 없습니다.", "error");
   } catch {
-    // Home stays the watch feed even if health is unreachable.
+    // Home stays the library grid even if health is unreachable.
   }
 }
 
