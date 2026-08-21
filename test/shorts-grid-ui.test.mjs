@@ -6,6 +6,7 @@ import {
   channelOneLiner,
   DEFAULT_CREATE_PROVIDER,
   formatClock,
+  inspectVideoDownloads,
   isPlaceholderThumbnail,
   isWatchableShort,
   shortDurationSeconds,
@@ -171,7 +172,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /pagehide/);
   assert.match(app, /aria-valuenow/);
   assert.match(app, /preload = "auto"/);
-  assert.match(app, /class="watch-dl"/);
+  assert.equal(app.includes('class="watch-dl"'), false);
   assert.match(html, /id="studio-chips"/);
   assert.match(html, /id="feed-banner"/);
   assert.match(html, /id="machine-overlay"/);
@@ -199,7 +200,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /min-height:\s*44px/);
   assert.match(css, /safe-area-inset-top/);
   assert.match(css, /\.live-stages\s*\{/);
-  assert.match(css, /\.watch-dl\s*\{/);
+  assert.match(css, /\.inspect-files\s*\{/);
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
@@ -344,13 +345,13 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
   assert.equal(/\.watch-back\s*\{[^}]*border-radius:\s*999px/.test(css), false);
   assert.equal(/\.watch-back\s*\{[^}]*background:\s*rgba/.test(css), false);
-  assert.match(css, /\.watch-dl\s*\{[^}]*top:\s*64px/);
   assert.match(css, /@media \(max-width:\s*860px\)/);
   assert.match(css, /60dvh/);
   assert.equal(css.includes(".watch-mute"), false);
   assert.equal(css.includes(".watch-actions"), false);
   assert.equal(css.includes(".watch-sheet"), false);
-  const watchSlide = app.slice(app.indexOf("function renderWatchSlide"), app.indexOf("function bindWatchSlide"));
+  const watchSlide = app.slice(app.indexOf("function watchSlideMarkup"), app.indexOf("function setWatchPlayGate"));
+  assert.equal(watchSlide.includes("watch-dl"), false);
   assert.match(app, /watch-close watch-back[\s\S]*watch-slide-chrome[\s\S]*watch-inspect[\s\S]*<\/article>/);
   assert.match(app, /class="watch-close watch-back"/);
   assert.match(app, /class="watch-close watch-back"[^>]*aria-label="닫기">×</);
@@ -420,20 +421,27 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(watchSlide.includes("완벽"), false);
   assert.equal(app.includes("drawbox"), false);
   assert.equal(app.includes("drawtext"), false);
-  assert.equal(/imagine/i.test(app.slice(app.indexOf("function renderWatchSlide"), app.indexOf("function bindWatchSlide"))), false);
+  assert.equal(/imagine/i.test(app.slice(app.indexOf("function watchSlideMarkup"), app.indexOf("function setWatchPlayGate"))), false);
 });
 
 test("completed short lists master chat parts and ASS downloads", () => {
-  const downloads = shortDownloads({
-    artifacts: [
-      { name: "master.mp4", kind: "master-video", url: "/api/jobs/a/artifacts/master.mp4" },
-      { name: "chat.mp4", kind: "chat-video", url: "/api/jobs/a/artifacts/chat.mp4" },
-      { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-01.mp4" },
-      { name: "captions.ass", kind: "captions-ass", url: "/api/jobs/a/artifacts/captions.ass" }
-    ]
-  });
-  assert.deepEqual(downloads.map((item) => item.label), ["마스터", "채팅용", "파트 1", "자막 ASS"]);
+  const artifacts = [
+    { name: "master.mp4", kind: "master-video", url: "/api/jobs/a/artifacts/master.mp4" },
+    { name: "chat.mp4", kind: "chat-video", url: "/api/jobs/a/artifacts/chat.mp4" },
+    { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-01.mp4" },
+    { name: "parts/part-02.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-02.mp4" },
+    { name: "captions.ass", kind: "captions-ass", url: "/api/jobs/a/artifacts/captions.ass" }
+  ];
+  const downloads = shortDownloads({ artifacts });
+  assert.deepEqual(downloads.map((item) => item.label), ["마스터", "채팅용", "파트 1", "파트 2", "자막 ASS"]);
   assert.ok(downloads.every((item) => item.href.includes("download=1")));
+  assert.deepEqual(inspectVideoDownloads({ artifacts }).map((item) => item.label), ["마스터", "채팅용 1", "채팅용 2"]);
+  assert.deepEqual(inspectVideoDownloads({
+    artifacts: [
+      { name: "master.mp4", url: "/api/jobs/a/artifacts/master.mp4" },
+      { name: "chat.mp4", url: "/api/jobs/a/artifacts/chat.mp4" }
+    ]
+  }).map((item) => item.label), ["마스터", "채팅용"]);
 });
 
 test("watch inspector saves drafts and freezes regen", async () => {
@@ -445,7 +453,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /hydrateWatchInspect/);
   assert.match(app, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/prompts/);
   assert.match(app, /method: "PATCH"/);
-  const inspectFn = app.slice(app.indexOf("function renderInspectMarkup"), app.indexOf("async function saveInspectDraft"));
+  const inspectFn = app.slice(app.indexOf("function renderWatchInspectPanel"), app.indexOf("async function saveInspectDraft"));
+  assert.match(app, /function renderWatchInspectPanel/);
+  assert.match(app, /inspectVideoDownloads\(job\)/);
+  assert.match(app, /class="inspect-files"/);
   assert.match(app, /class="inspect-topic"/);
   assert.match(app, /class="inspect-facts"/);
   assert.match(app, /class="inspect-script"/);
@@ -459,6 +470,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, />제목</);
   assert.match(app, />대본</);
   assert.match(app, />자막</);
+  assert.match(inspectFn, /inspect-files/);
+  assert.equal(inspectFn.includes("자막 ASS"), false);
+  assert.equal(inspectFn.includes("captions.ass"), false);
   assert.match(app, /class="primary-button inspect-save"[^>]*>저장</);
   assert.match(app, /class="secondary-button inspect-regen"[\s\S]*다시 만들기/);
   assert.match(app, /지금은 다시 못 만들어요/);
@@ -472,6 +486,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(app.includes("hook_photoreal"), false);
   assert.match(css, /\.inspect-stack\s*\{[^}]*gap/);
   assert.match(css, /\.inspect-caption\s*\{[^}]*grid-template-columns:\s*1\.5rem/);
+  assert.match(css, /\.inspect-files\s*\{/);
   assert.match(app, /health\?\.imagine\?\.frozen !== false/);
   assert.match(app, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/run/);
   assert.match(css, /\.watch-inspect\s*\{[^}]*360px/);

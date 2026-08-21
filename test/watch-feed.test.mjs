@@ -136,7 +136,6 @@ test("watch hash uses #watch/ and close is × top-right", async () => {
   assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
   assert.equal(/\.watch-close\s*\{[^}]*border-radius:\s*50%/.test(css), false);
   assert.equal(/\.watch-close\s*\{[^}]*background:\s*rgba/.test(css), false);
-  assert.match(css, /\.watch-dl\s*\{[^}]*top:\s*64px/);
 });
 
 test("rejected play shows tap-to-play on the slide", async () => {
@@ -165,5 +164,7 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(app, /aria-valuenow/);
   assert.match(app, /Math\.abs\(dy\) > 50/);
   assert.match(app, /preload = "auto"/);
-  assert.match(app, /class="watch-dl"/);
+  const watchSlide = app.slice(app.indexOf("function watchSlideMarkup"), app.indexOf("function setWatchPlayGate"));
+  assert.equal(watchSlide.includes("watch-dl"), false);
+  assert.equal(app.includes('class="watch-dl"'), false);
 });

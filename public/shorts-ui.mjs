@@ -139,6 +139,27 @@ export function shortDownloads(job = {}) {
   return picks;
 }
 
+export function inspectVideoDownloads(job = {}) {
+  const artifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+  const href = (artifact) => `${artifact.url}${artifact.url.includes("?") ? "&" : "?"}download=1`;
+  const picks = [];
+  const master = artifacts.find((artifact) => artifact?.url && /(?:^|\/)master\.mp4$/i.test(artifact.name || ""));
+  if (master) picks.push({ ...master, label: "마스터", href: href(master) });
+  const parts = artifacts
+    .filter((artifact) => artifact?.url && (/(?:^|\/)parts\/part-\d+\.mp4$/i.test(artifact.name || "") || artifact.kind === "part"))
+    .sort((left, right) => Number((left.name || "").match(/part-(\d+)/i)?.[1] || 0) - Number((right.name || "").match(/part-(\d+)/i)?.[1] || 0));
+  if (parts.length) {
+    for (const part of parts) {
+      const number = Number((part.name || "").match(/part-(\d+)/i)?.[1] || picks.length);
+      picks.push({ ...part, label: `채팅용 ${number}`, href: href(part) });
+    }
+    return picks;
+  }
+  const chat = artifacts.find((artifact) => artifact?.url && /(?:^|\/)chat\.mp4$/i.test(artifact.name || ""));
+  if (chat) picks.push({ ...chat, label: "채팅용", href: href(chat) });
+  return picks;
+}
+
 export function shortUploadPack(job = {}) {
   const downloads = shortDownloads(job);
   const facts = Array.isArray(job.facts) ? job.facts.map((item) => String(item).trim()).filter(Boolean) : [];

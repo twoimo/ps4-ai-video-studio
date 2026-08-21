@@ -1,4 +1,4 @@
-import { formatClock, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { bindWatchFeed, playWatchFeed, stopWatchFeed, syncWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
@@ -252,11 +252,14 @@ function watchSignature() {
   return watchableJobs().map((job) => `${job.id}:${shortPreview(job).videoUrl}`).join("\n");
 }
 
-function renderWatchSlide(job) {
+function watchSlideMarkup(job) {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
-  const downloads = shortDownloads(job).map((item) => `<a class="watch-dl-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div>${downloads ? `<div class="watch-dl">${downloads}</div>` : ""}<button type="button" class="watch-materials">재료</button></div><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div><button type="button" class="watch-materials">재료</button></div><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+}
+
+function renderWatchSlide(job) {
+  return watchSlideMarkup(job);
 }
 
 function setWatchPlayGate(slide, show) {
@@ -540,10 +543,11 @@ function youtubePrepMarkup(job) {
   return `<section class="upload-pack"><h3>업로드 준비</h3><p class="inspect-hint">유튜브에 아직 올리지 않아요</p><p class="pack-title">${escapeHtml(pack.title || job.topic || "")}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
 }
 
-function renderInspectMarkup(job, prompts) {
+function renderWatchInspectPanel(job, prompts) {
   const frozen = state.health?.imagine?.frozen !== false;
   const shots = prompts?.shots || [];
-  return `<div class="inspect-stack"><label class="field-label" for="inspect-topic-${escapeHtml(job.id)}">제목</label><input id="inspect-topic-${escapeHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 다시 못 만들어요</p>` : ""}</div></div>`;
+  const files = inspectVideoDownloads(job).map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
+  return `<div class="inspect-stack"><label class="field-label" for="inspect-topic-${escapeHtml(job.id)}">제목</label><input id="inspect-topic-${escapeHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}${files ? `<div class="inspect-files">${files}</div>` : ""}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 다시 못 만들어요</p>` : ""}</div></div>`;
 }
 
 async function saveInspectDraft(jobId, root) {
@@ -598,7 +602,7 @@ async function hydrateWatchInspect(jobId) {
     prompts = null;
   }
   if (!job) return;
-  panel.innerHTML = renderInspectMarkup(job, prompts);
+  panel.innerHTML = renderWatchInspectPanel(job, prompts);
   panel.dataset.ready = jobId;
   bindInspectActions(panel, jobId);
 }
