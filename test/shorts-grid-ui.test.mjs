@@ -251,9 +251,15 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("소리 켬"), false);
   assert.equal(app.includes("음소거"), false);
   assert.match(app, /activateWatchSlide/);
-  assert.match(app, /video\.muted = true/);
+  assert.match(app, /function playWatchFeed/);
+  assert.match(app, /video\.muted = false/);
+  assert.equal(app.includes("video.muted = true"), false);
+  assert.equal(watchSlide.includes(" muted"), false);
   assert.match(app, /video\.removeAttribute\("src"\)/);
-  assert.match(app, /playsinline loop muted/);
+  assert.match(app, /playsinline loop preload/);
+  assert.equal(app.includes("playsinline loop muted"), false);
+  assert.match(app, /#watch-feed[\s\S]*closest\("\.watch-stage"\)[\s\S]*openHome/);
+  assert.match(app, /slide\.addEventListener\("click"[\s\S]*closest\("\.watch-stage"\)[\s\S]*openHome/);
   assert.match(app, /다시 실행/);
   assert.match(app, /openJob/);
   assert.match(app, /function openDetail/);

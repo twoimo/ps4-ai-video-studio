@@ -164,17 +164,27 @@ function watchSignature() {
 function renderWatchSlide(job) {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop muted preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" aria-hidden="true"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div></article>`;
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" aria-hidden="true"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div></article>`;
+}
+
+function playWatchFeed(video) {
+  if (!video) return;
+  video.muted = false;
+  return video.play();
 }
 
 function bindWatchSlide(slide) {
   const stage = slide.querySelector(".watch-stage");
   const video = slide.querySelector("video");
+  slide.addEventListener("click", (event) => {
+    if (event.target.closest(".watch-stage")) return;
+    openHome(event);
+  });
   stage?.addEventListener("click", (event) => {
     if (event.target.closest("button, details, a")) return;
     if (!slide.classList.contains("active") || !video) return;
     if (video.paused) {
-      video.play().catch(() => {});
+      playWatchFeed(video)?.catch(() => {});
       slide.classList.remove("paused");
     } else {
       video.pause();
@@ -250,13 +260,9 @@ function activateWatchSlide(jobId) {
         video.playsInline = true;
         video.loop = true;
       }
-      video.muted = true;
-      const play = video.play();
+      const play = playWatchFeed(video);
       if (play) {
-        play.catch(() => {
-          video.muted = true;
-          return video.play().catch(() => {});
-        }).finally(() => slide.classList.remove("paused"));
+        play.catch(() => playWatchFeed(video)?.catch(() => {})).finally(() => slide.classList.remove("paused"));
       }
     } else {
       video.pause();
@@ -1066,6 +1072,11 @@ function bindEvents() {
     openCreate(event);
   });
   $("#home-brand")?.addEventListener("click", openHome);
+  $("#watch-feed")?.addEventListener("click", (event) => {
+    if (state.view !== "watch") return;
+    if (event.target.closest(".watch-stage")) return;
+    openHome(event);
+  });
   $("#open-template")?.addEventListener("click", openTemplate);
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
@@ -1113,7 +1124,7 @@ function bindEvents() {
       const slide = document.querySelector(".watch-slide.active");
       if (!video || !slide) return;
       if (video.paused) {
-        video.play().catch(() => {});
+        playWatchFeed(video)?.catch(() => {});
         slide.classList.remove("paused");
       } else {
         video.pause();
