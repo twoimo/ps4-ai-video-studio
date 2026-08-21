@@ -26,7 +26,7 @@ test("lock doc declares handoff and the pinned pattern stack", async () => {
   assert.match(lock, /Consumer reference record: consumer-reference\/ps4-justdoit\.json/);
   assert.match(lock, /9049f132426006661ac44aea4714d07426c432e5/);
   assert.match(lock, /stylegallery@0\.1\.4/);
-  assert.match(lock, /Library scroll \.library: sticky-header \+ card-grid \+ frame 9\/16/);
+  assert.match(lock, /Library scroll `?\.library`?: sticky-header \+ card-grid \+ frame 9\/16/);
   assert.match(lock, /Watch scroll none: cover \+ frame 9\/16 \+ overlay-stack; `body\.watch-open #watch-feed \{ display:block \}`; no scroll-snap/);
   assert.match(lock, /Overlays scroll on card: super-center \+ clamped-card `min\(400px, calc\(100vw - 40px\)\)`; no right drawer/);
   assert.match(lock, /scroll-snap on watch/);
