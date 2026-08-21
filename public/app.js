@@ -751,13 +751,17 @@ function renderJobDetail(job) {
     ? `<video controls playsinline preload="metadata" poster="${escapeHtml(preview.poster || still || "")}" src="${escapeHtml(preview.videoUrl)}"></video>`
     : still
       ? `<img class="preview-still" src="${escapeHtml(still)}" alt="" />`
-      : `<div class="preview-unavailable">${running ? "화면을 준비하는 중" : "아직 영상이 없습니다"}</div>`;
+      : `<div class="preview-unavailable">${escapeHtml(status.label)}</div>`;
+  const facts = (Array.isArray(job.facts) ? job.facts : []).map((fact) => String(fact).trim()).filter(Boolean).slice(0, 4);
+  const factsMarkup = facts.length
+    ? `<ul class="draft-facts">${facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>`
+    : "";
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status)
     ? `<div class="upload-box"><label for="detail-upload"><span>클립을 올리세요</span><small>MP4, MOV, WebM</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local" type="button">업로드한 클립으로 편집</button></div>`
     : "";
   const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}<p class="download-note">업로드는 나중에</p></div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${factsMarkup}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}<p class="download-note">업로드는 나중에</p></div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
