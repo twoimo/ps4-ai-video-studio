@@ -4,23 +4,36 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b0e14" />
-    <title>쇼츠</title>
+    <title>건축사전 공장</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="library" id="shorts">
-      <header class="library-bar">
-        <h1 class="sr-only">쇼츠</h1>
+    <header class="studio-chrome" id="studio-chrome">
+      <div class="library-brand">
+        <h1>건축사전</h1>
+        <p class="library-brand-sub">쇼츠 공장</p>
+      </div>
+      <div class="studio-chrome-actions">
+        <button type="button" class="surface-toggle" id="toggle-surface" hidden>쇼츠 보기</button>
         <details class="library-more" id="library-more">
           <summary>더보기</summary>
           <div class="library-menu">
+            <button type="button" id="menu-create">새 쇼츠</button>
             <button type="button" id="import-library">이미 만든 편 가져오기</button>
             <button type="button" id="open-template">프롬프트 템플릿</button>
             <button type="button" id="open-settings">설정</button>
             <button type="button" id="refresh-all">새로고침</button>
           </div>
         </details>
-      </header>
+      </div>
+    </header>
+
+    <section class="watch-feed" id="watch-feed" hidden>
+      <div class="watch-scroller" id="watch-scroller" tabindex="0" aria-label="쇼츠 재생"></div>
+      <p class="watch-empty" id="watch-empty" hidden>재생할 영상이 없습니다. 라이브러리에서 초안을 확인하세요.</p>
+    </section>
+
+    <main class="library" id="shorts">
       <div class="shorts-grid" id="shorts-grid" aria-live="polite" aria-label="쇼츠">
         <button type="button" class="short-card short-create-tile" id="create-tile">
           <div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div>

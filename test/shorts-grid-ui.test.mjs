@@ -7,6 +7,7 @@ import {
   DEFAULT_CREATE_PROVIDER,
   formatClock,
   isPlaceholderThumbnail,
+  isWatchableShort,
   shortDurationSeconds,
   shortDownloads,
   shortPreview,
@@ -40,6 +41,9 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(shortDurationSeconds(job), 70);
   assert.equal(formatClock(70), "1:10");
   assert.deepEqual(shortPreview(job), { videoUrl: "/chat.mp4", poster: "/hook.png" });
+  assert.equal(isWatchableShort(job), true);
+  assert.equal(isWatchableShort({ status: "draft", topic: "초안" }), false);
+  assert.equal(isWatchableShort({ status: "completed", artifacts: [{ name: "hook.png", kind: "hook-lock", url: "/hook.png" }] }), false);
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -89,7 +93,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
 test("library and overlays fill the viewport instead of a phone column", async () => {
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   assert.match(css, /html,\s*body\s*\{[^}]*width:\s*100%[^}]*height:\s*100%/);
-  assert.match(css, /\.library\s*\{[^}]*width:\s*100%[^}]*min-height:\s*100dvh/);
+  assert.match(css, /\.library\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /\.watch-feed\s*\{[^}]*height:\s*100dvh/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.match(css, /\.overlay-panel\s*\{[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.equal(css.includes("min(720px"), false);
@@ -103,14 +108,27 @@ test("library and overlays fill the viewport instead of a phone column", async (
 
 test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
   const homeEnd = html.indexOf('id="create-overlay"');
   const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
+  assert.match(html, /<title>건축사전 공장<\/title>/);
   assert.match(home, /id="shorts-grid"/);
-  assert.match(home, /<h1 class="sr-only">쇼츠<\/h1>/);
+  assert.match(home, /id="watch-feed"/);
+  assert.match(home, /class="library-brand"/);
+  assert.match(home, /<h1>건축사전<\/h1>/);
+  assert.match(home, /쇼츠 공장/);
   assert.equal(home.includes("<h1>쇼츠</h1>"), false);
+  assert.equal(home.includes('class="sr-only">쇼츠'), false);
   assert.match(home, /id="library-more"/);
   assert.match(home, /더보기/);
+  assert.match(home, /id="toggle-surface"/);
   assert.match(home, /id="create-tile"/);
+  assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
+  assert.match(css, /--header:\s*52px/);
+  assert.match(app, /const STUDIO_TITLE = "건축사전 공장"/);
+  assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{STUDIO_TITLE\}` : STUDIO_TITLE/);
+  assert.match(app, /document\.title = STUDIO_TITLE/);
   assert.equal(home.includes("class=\"sidebar\""), false);
   assert.equal(home.includes("WORKSPACE"), false);
   assert.equal(home.includes("id=\"health-capabilities\""), false);
@@ -126,6 +144,40 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(html.includes("PIPELINE MONITOR"), false);
   assert.equal(html.includes("id=\"generation\""), false);
   assert.equal(home.includes("id=\"health-capabilities\""), false);
+});
+
+test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => {
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const watch = html.slice(html.indexOf('id="watch-feed"'), html.indexOf('id="shorts"'));
+  assert.match(html, /id="watch-scroller"/);
+  assert.match(html, /id="shorts-grid"/);
+  assert.match(watch, /aria-label="쇼츠 재생"/);
+  assert.equal(watch.includes("내려받기"), false);
+  assert.equal(watch.includes("다시 실행"), false);
+  assert.match(css, /\.watch-scroller\s*\{[^}]*scroll-snap-type:\s*y\s+mandatory/);
+  assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100dvh/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100dvh/);
+  assert.match(css, /\.watch-stage video,\s*\.watch-stage \.watch-poster\s*\{[^}]*object-fit:\s*contain/);
+  assert.match(app, /function isWatchableShort|isWatchableShort\(job\)/);
+  assert.match(app, /#watch/);
+  assert.match(app, /#shorts/);
+  assert.match(app, /setView\("watch"/);
+  assert.match(app, /setView\("grid"\)/);
+  assert.match(app, /setView\("detail"\)/);
+  assert.match(app, /ArrowDown/);
+  assert.match(app, /ArrowUp/);
+  assert.match(app, /toggleWatchMute/);
+  assert.match(app, /activateWatchSlide/);
+  assert.match(app, /video\.removeAttribute\("src"\)/);
+  assert.match(app, /playsinline loop muted/);
+  assert.match(app, /watch-sheet/);
+  assert.match(app, /다시 실행/);
+  assert.match(app, /openJob/);
+  assert.equal(app.includes("drawbox"), false);
+  assert.equal(app.includes("drawtext"), false);
+  assert.equal(/imagine/i.test(app.slice(app.indexOf("function renderWatchSlide"), app.indexOf("function bindWatchSlide"))), false);
 });
 
 test("completed short lists master chat parts and ASS downloads", () => {

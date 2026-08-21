@@ -90,6 +90,10 @@ export function shortPreview(job = {}) {
   };
 }
 
+export function isWatchableShort(job = {}) {
+  return Boolean(shortPreview(job).videoUrl);
+}
+
 export function channelOneLiner(job = {}, editorial = null) {
   const fact = Array.isArray(job.facts) ? job.facts.find(Boolean) : "";
   if (fact) return String(fact).replace(/\s+/g, " ").trim();
