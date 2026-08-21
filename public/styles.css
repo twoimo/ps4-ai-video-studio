@@ -193,10 +193,10 @@ body.overlay-open { overflow: hidden; }
 .live-stages { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .live-stage { display: grid; gap: 2px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
 .live-stage b { font-size: 12px; }
-.watch-menu { position: absolute; top: 12px; right: 12px; z-index: 8; min-width: 44px; min-height: 44px; padding: 0; margin: 0; display: grid; place-items: center; background: none; border: 0; border-radius: 0; color: #fff; appearance: none; -webkit-appearance: none; text-shadow: 0 1px 6px rgba(0,0,0,.75); }
+.watch-menu { position: fixed; top: 12px; right: 12px; z-index: 8; min-width: 44px; min-height: 44px; padding: 0; margin: 0; display: grid; place-items: center; background: none; border: 0; border-radius: 0; color: #fff; appearance: none; -webkit-appearance: none; text-shadow: 0 1px 6px rgba(0,0,0,.75); pointer-events: auto; }
 .watch-menu svg { display: block; width: 22px; height: 22px; }
-.watch-play { position: absolute; left: 50%; top: 50%; z-index: 5; transform: translate(-50%, -50%); min-height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(8,10,15,.82); color: #fff; font-size: 14px; }
-.watch-inspect { width: 360px; max-width: 100%; height: var(--watch-h, 100%); overflow: auto; background: var(--surface); color: var(--text); padding: 14px 14px 24px; }
+.watch-play { position: fixed; left: 50%; top: 50%; z-index: 5; transform: translate(-50%, -50%); min-height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(8,10,15,.82); color: #fff; font-size: 14px; pointer-events: auto; }
+.watch-inspect { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100%; height: 100%; overflow: auto; background: var(--surface); color: var(--text); padding: 14px 14px 24px; z-index: 7; }
 .watch-inspect .inspect-stack { display: grid; gap: 10px; }
 .watch-inspect .field-label { margin: 0; }
 .watch-inspect .inspect-caption { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 8px; align-items: start; }
@@ -275,44 +275,28 @@ body.overlay-open { overflow: hidden; }
 .shot-prompt pre, .slot-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .prompt-subhead { margin: 12px 0 6px; font-size: 13px; }
 
-.watch-feed { --watch-h: 100%; position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 5; width: 100%; background: #000; overscroll-behavior: none; }
+.watch-feed { position: fixed; inset: 0; overflow: hidden; height: 100%; z-index: 5; width: 100%; background: #000; }
 .watch-feed[hidden] { display: none; }
-.watch-scroller { display: flex; flex-direction: column; height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; scroll-snap-stop: always; scroll-behavior: auto; overscroll-behavior-y: contain; touch-action: pan-y; scrollbar-width: none; }
-.watch-scroller::-webkit-scrollbar { display: none; }
-.watch-slide { position: relative; height: var(--watch-h, 100%); min-height: var(--watch-h, 100%); max-height: var(--watch-h, 100%); flex: 0 0 auto; overflow: hidden; contain: layout paint; isolation: isolate; backface-visibility: hidden; scroll-snap-align: start; scroll-snap-stop: always; display: grid; grid-template-columns: minmax(0, var(--watch-col)) minmax(0, 360px); justify-content: center; justify-items: stretch; align-items: stretch; background: #000; overscroll-behavior: none; }
-.watch-stage { position: relative; height: var(--watch-h, 100%); min-height: var(--watch-h, 100%); max-height: var(--watch-h, 100%); flex: 0 0 auto; overflow: hidden; width: auto; max-width: 100%; aspect-ratio: 9 / 16; background: #000; justify-self: center; overscroll-behavior: none; }
-.watch-stage video, .watch-stage .watch-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
-.watch-slide video { backface-visibility: hidden; }
+.watch-track { position: absolute; left: 0; right: 0; top: 0; width: 100%; will-change: transform; }
+.watch-slide { height: var(--watch-h); width: 100%; overflow: hidden; position: relative; contain: size layout; margin: 0; padding: 0; background: #000; }
+.watch-slide .watch-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.watch-player { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.watch-player .watch-stage { position: absolute; inset: 0; width: min(100%, calc(var(--watch-h) * 9 / 16)); max-width: 100%; height: var(--watch-h); margin: 0 auto; left: 0; right: 0; aspect-ratio: 9 / 16; }
+.watch-player video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: auto; }
+.watch-chrome { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
 .watch-close,
-.watch-back { position: absolute; top: 12px; right: 12px; left: auto; z-index: 5; min-width: 44px; min-height: 44px; padding: 0; margin: 0; background: none; border: 0; border-radius: 0; color: #fff; font-size: 22px; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,.75); appearance: none; -webkit-appearance: none; }
+.watch-back { position: fixed; top: 12px; right: 12px; left: auto; z-index: 5; min-width: 44px; min-height: 44px; padding: 0; margin: 0; background: none; border: 0; border-radius: 0; color: #fff; font-size: 22px; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,.75); appearance: none; -webkit-appearance: none; pointer-events: auto; }
 .watch-close { background: none; border: 0; border-radius: 0; }
 .watch-close:focus-visible,
 .watch-back:focus-visible { background: none; border: 0; border-radius: 0; box-shadow: none; }
-.watch-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255,255,255,.16); z-index: 2; }
+.watch-progress { position: fixed; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255,255,255,.16); z-index: 2; pointer-events: none; }
 .watch-progress i { display: block; height: 100%; width: 0; background: #fff; }
-.watch-slide-chrome { position: absolute; left: 12px; right: 12px; bottom: 68px; z-index: 3; pointer-events: none; }
-.watch-inspect-dismiss { display: none; position: absolute; inset: 0; z-index: 6; width: 100%; height: 100%; padding: 0; margin: 0; background: rgba(0,0,0,.45); border: 0; border-radius: 0; }
-.watch-slide.inspect-open .watch-inspect-dismiss { display: block; }
+.watch-slide-chrome { position: fixed; left: 12px; right: 12px; bottom: 68px; z-index: 3; pointer-events: none; }
+.watch-inspect-dismiss { display: none; position: fixed; inset: 0; z-index: 6; width: 100%; height: 100%; padding: 0; margin: 0; background: rgba(0,0,0,.45); border: 0; border-radius: 0; }
+.watch-feed.inspect-open .watch-inspect-dismiss { display: block; }
 @media (max-width: 860px) {
-  .watch-feed,
-  .watch-scroller {
-    width: 100%;
-    overscroll-behavior: none;
-  }
-  .watch-scroller { height: 100%; }
-  .watch-slide,
-  .watch-stage {
-    width: 100%;
-    height: var(--watch-h, 100%);
-    min-height: var(--watch-h, 100%);
-    max-height: var(--watch-h, 100%);
-    flex: 0 0 auto;
-    overflow: hidden;
-  }
-  .watch-slide { display: block; grid-template-columns: none; grid-template-rows: none; }
-  .watch-stage { width: 100%; max-width: 100%; aspect-ratio: auto; }
-  .watch-stage video,
-  .watch-stage .watch-poster { object-fit: cover; }
+  .watch-player .watch-stage { width: 100%; max-width: 100%; aspect-ratio: auto; }
+  .watch-player video { object-fit: cover; }
   .watch-close,
   .watch-back {
     top: max(12px, env(safe-area-inset-top));
@@ -329,11 +313,12 @@ body.overlay-open { overflow: hidden; }
     bottom: max(18px, env(safe-area-inset-bottom));
   }
   .watch-inspect {
-    position: absolute;
+    position: fixed;
     top: 0;
     right: 0;
+    bottom: 0;
     width: min(360px, 86vw);
-    height: var(--watch-h, 100%);
+    height: 100%;
     z-index: 7;
     transform: translateX(100%);
     visibility: hidden;
@@ -342,7 +327,7 @@ body.overlay-open { overflow: hidden; }
     padding-right: max(14px, env(safe-area-inset-right));
     padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
-  .watch-slide.inspect-open .watch-inspect {
+  .watch-feed.inspect-open .watch-inspect {
     transform: translateX(0);
     visibility: visible;
     pointer-events: auto;
@@ -354,10 +339,10 @@ body.overlay-open { overflow: hidden; }
 }
 .watch-meta { min-width: 0; }
 .watch-meta h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.03em; text-shadow: 0 1px 10px rgba(0,0,0,.72); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.watch-empty { position: absolute; left: 50%; top: 0; width: calc(100dvh * 9 / 16); max-width: 100vw; height: 100dvh; transform: translateX(-50%); display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; }
+.watch-empty { position: absolute; left: 50%; top: 0; width: calc(100dvh * 9 / 16); max-width: 100vw; height: 100dvh; transform: translateX(-50%); display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; z-index: 3; }
 .watch-empty[hidden] { display: none; }
 
-body.watch-open { display: block; overflow: hidden; }
+body.watch-open { display: block; overflow: hidden; overflow-x: hidden; overscroll-behavior-y: none; }
 body.watch-open .studio-chrome { display: none; }
 body.watch-open .library { display: none; }
 

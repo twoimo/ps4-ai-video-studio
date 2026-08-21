@@ -1,5 +1,5 @@
 import { formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
-import { bindWatchFeed, clearWatchSize, playWatchFeed, selectedWatchSlide, sizeWatchFeed, snapWatchFeed, stopWatchFeed, syncWatchFeed, watchPageHeight, wrapWatchFeed } from "./watch-feed.mjs";
+import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -260,7 +260,11 @@ function watchSlideMarkup(job, loop = "") {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
   const loopAttr = loop === "head" ? ' data-loop="head"' : loop === "tail" ? ' data-loop="tail"' : "";
-  return `<article class="watch-slide"${loopAttr} data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline webkit-playsinline loop preload="none"></video><button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div><button type="button" class="watch-inspect-dismiss" aria-label="닫기"></button><aside class="watch-inspect" data-job-id="${escapeHtml(job.id)}"></aside></article>`;
+  return `<article class="watch-slide"${loopAttr} data-job-id="${escapeHtml(job.id)}" data-src="${escapeHtml(preview.videoUrl)}" data-video-url="${escapeHtml(preview.videoUrl)}" data-poster="${escapeHtml(poster)}">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}</article>`;
+}
+
+function watchChromeMarkup() {
+  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><button type="button" class="watch-play" hidden>탭해서 재생</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>`;
 }
 
 function watchFeedMarkup(jobs) {
@@ -270,72 +274,37 @@ function watchFeedMarkup(jobs) {
   return jobs.map((job) => watchSlideMarkup(job)).join("");
 }
 
-function closeWatchInspect(slide) {
-  if (!slide?.classList.contains("inspect-open")) return false;
-  slide.classList.remove("inspect-open");
+function closeWatchInspect() {
+  const feed = $("#watch-feed");
+  if (!feed?.classList.contains("inspect-open")) return false;
+  feed.classList.remove("inspect-open");
   return true;
 }
 
 function closeOpenWatchInspect() {
-  let closed = false;
-  $$(".watch-slide.inspect-open").forEach((slide) => {
-    slide.classList.remove("inspect-open");
-    closed = true;
-  });
-  return closed;
+  return closeWatchInspect();
 }
 
-function toggleWatchInspect(slide) {
-  slide?.classList.toggle("inspect-open");
+function toggleWatchInspect() {
+  $("#watch-feed")?.classList.toggle("inspect-open");
 }
 
 function renderWatchSlide(job) {
   return watchSlideMarkup(job);
 }
 
-function setWatchPlayGate(slide, show) {
-  const button = slide?.querySelector(".watch-play");
+function setWatchPlayGate(show) {
+  const button = $("#watch-feed .watch-play");
   if (button) button.hidden = !show;
 }
 
-function primeWatchVideo(video) {
-  if (!video) return;
-  video.playsInline = true;
-  video.setAttribute("playsinline", "");
-  video.setAttribute("webkit-playsinline", "");
-  video.loop = true;
-  video.preload = "auto";
-  video.muted = false;
-  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
-  const paint = () => {
-    if (video.currentTime === 0) video.currentTime = 0.05;
-  };
-  if (video.readyState >= 1) paint();
-  else video.addEventListener("loadeddata", paint, { once: true });
-}
-
-function bindWatchSlide(slide) {
-  const stage = slide.querySelector(".watch-stage");
-  const video = slide.querySelector("video");
-  const feed = slide.closest("#watch-feed") || $("#watch-feed");
-  stage?.addEventListener("click", (event) => {
-    if (event.target.closest("button, details, a, .watch-inspect")) return;
-    if (!slide.classList.contains("active") || !video) return;
-    if (video.paused) {
-      const play = document.body.classList.contains("watch-open") ? playWatchFeed(video) : null;
-      if (play) {
-        play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
-      } else {
-        stopWatchFeed(feed);
-      }
-      slide.classList.remove("paused");
-    } else {
-      video.pause();
-      slide.classList.add("paused");
-    }
-  });
+function bindWatchChrome() {
+  const feed = $("#watch-feed");
+  if (!feed || feed.dataset.chromeBound === "1") return;
+  feed.dataset.chromeBound = "1";
+  const video = createWatchPlayer(feed);
   video?.addEventListener("timeupdate", () => {
-    const progress = slide.querySelector(".watch-progress");
+    const progress = feed.querySelector(".watch-progress");
     const bar = progress?.querySelector("i");
     if (video.duration) {
       const value = Math.round((video.currentTime / video.duration) * 100);
@@ -343,173 +312,70 @@ function bindWatchSlide(slide) {
       progress?.setAttribute("aria-valuenow", String(value));
     }
   });
-  slide.querySelector(".watch-close")?.addEventListener("click", (event) => {
+  feed.querySelector(".watch-close")?.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (closeWatchInspect(slide) || closeOpenWatchInspect()) return;
+    if (closeOpenWatchInspect()) return;
     stopWatchFeed(feed);
     openHome(event);
   });
-  slide.querySelector(".watch-play")?.addEventListener("click", (event) => {
+  feed.querySelector(".watch-play")?.addEventListener("click", (event) => {
     event.stopPropagation();
-    const play = playWatchFeed(video);
-    if (play) play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
+    const play = playWatchFeed(feed);
+    if (play) play.then(() => setWatchPlayGate(false)).catch(() => setWatchPlayGate(true));
   });
-  slide.querySelector(".watch-menu")?.addEventListener("click", (event) => {
+  feed.querySelector(".watch-menu")?.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleWatchInspect(slide);
+    toggleWatchInspect();
   });
-  slide.querySelector(".watch-inspect-dismiss")?.addEventListener("click", (event) => {
+  feed.querySelector(".watch-inspect-dismiss")?.addEventListener("click", (event) => {
     event.stopPropagation();
-    closeWatchInspect(slide);
+    closeWatchInspect();
   });
-}
-
-function observeWatchSlides() {
-  const scroller = $("#watch-scroller");
-  if (!scroller) return;
-  if (!state.watchObserver) {
-    state.watchObserver = new IntersectionObserver((entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.6)
-        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
-      if (!visible || state.view !== "watch") return;
-      const jobId = visible.target.dataset.jobId;
-      if (!jobId) return;
-      if (state.selectedJobId !== jobId) {
-        state.selectedJobId = jobId;
-        syncDocumentTitle();
-      }
-      replaceWatchHash(jobId);
-      activateWatchSlide(jobId);
-      void hydrateWatchInspect(jobId);
-    }, { root: scroller, threshold: [0.6, 0.85, 1] });
-  }
-  state.watchObserver.disconnect();
-  scroller.querySelectorAll(".watch-slide").forEach((slide) => state.watchObserver.observe(slide));
 }
 
 function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) {
   const root = $("#watch-feed");
-  const scroller = $("#watch-scroller");
-  const h = watchPageHeight(root);
-  if (!scroller || !(h > 0)) return;
   const jobs = watchableJobs();
   const last = Math.max(0, jobs.length - 1);
   const real = Math.max(0, Math.min(last, index));
   const offset = jobs.length >= 2 ? 1 : 0;
-  scroller.scrollTop = (real + offset) * h;
+  goWatchIndex(root, real + offset, { animate: false });
 }
 
-function notifyActive() {
-  const root = $("#watch-feed");
-  const scroller = $("#watch-scroller");
-  const h = watchPageHeight(root);
-  if (!scroller || !(h > 0)) return;
-  const slides = [...scroller.querySelectorAll(".watch-slide")];
-  const landed = slides[Math.round(scroller.scrollTop / h)];
-  const jobId = landed?.dataset.jobId;
-  if (!jobId) return;
-  state.selectedJobId = jobId;
-  replaceWatchHash(jobId);
-  activateWatchSlide(jobId);
-  void hydrateWatchInspect(jobId);
-}
-
-function settleWatchFeed() {
-  if (state.view !== "watch") return;
+function notifyActive(jobId) {
   const root = $("#watch-feed");
   wrapWatchFeed(root);
-  notifyActive();
-  playWatchFeed(root);
-}
-
-function afterWatchSnap() {
-  const root = $("#watch-feed");
-  snapWatchFeed(root);
-  wrapWatchFeed(root);
-  notifyActive();
-  playWatchFeed(root);
-}
-
-function bindWatchScroller() {
-  const scroller = $("#watch-scroller");
-  const root = $("#watch-feed");
-  if (!scroller || scroller.dataset.bound) return;
-  scroller.dataset.bound = "1";
-  scroller.addEventListener("scroll", () => {
-    if (state.view !== "watch") return;
-    playWatchFeed(root);
-  }, { passive: true });
-  scroller.addEventListener("scrollend", settleWatchFeed);
-  scroller.addEventListener("wheel", (event) => {
-    if (state.view !== "watch") return;
-    if (event.target.closest?.(".watch-inspect")) return;
-    if (closeOpenWatchInspect()) event.preventDefault();
-  }, { passive: false });
-  let touchY = 0;
-  scroller.addEventListener("touchstart", (event) => {
-    state.watchSwiping = true;
-    touchY = event.touches[0]?.clientY || 0;
-  }, { passive: true });
-  scroller.addEventListener("touchend", (event) => {
-    state.watchSwiping = false;
-    if (state.view !== "watch") return;
-    if (event.target.closest?.(".watch-inspect")) return;
-    const dy = (event.changedTouches[0]?.clientY || 0) - touchY;
-    if (dy) closeOpenWatchInspect();
-  }, { passive: true });
+  const slide = currentWatchSlide(root);
+  const id = jobId || slide?.dataset?.jobId;
+  if (!id) return;
+  state.selectedJobId = id;
+  replaceWatchHash(id);
+  activateWatchSlide(id);
+  void hydrateWatchInspect(id);
 }
 
 function activateWatchSlide(jobId) {
-  const jobs = watchableJobs();
-  const index = jobs.findIndex((job) => job.id === jobId);
-  const neighborIds = new Set([jobs[index - 1]?.id, jobs[index + 1]?.id].filter(Boolean));
-  if (jobs.length >= 2 && index >= 0) {
-    if (index === 0) neighborIds.add(jobs[jobs.length - 1].id);
-    if (index === jobs.length - 1) neighborIds.add(jobs[0].id);
-  }
   $$(".watch-slide").forEach((slide) => {
-    const video = slide.querySelector("video");
-    const active = slide.dataset.jobId === jobId && !slide.dataset.loop;
-    const neighbor = neighborIds.has(slide.dataset.jobId);
-    slide.classList.toggle("active", active);
-    if (!video) return;
-    if (active || neighbor) {
-      const url = slide.dataset.videoUrl;
-      if (url && video.getAttribute("src") !== url) video.src = url;
-      primeWatchVideo(video);
-      video.muted = false;
-      if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
-      video.volume = active ? 1 : 0;
+    slide.classList.toggle("active", slide.dataset.jobId === jobId && !slide.dataset.loop);
+  });
+  const title = $("#watch-feed .watch-meta h2");
+  const job = state.jobs.find((item) => item.id === jobId);
+  if (title) title.textContent = job?.topic || "쇼츠";
+  const feed = $("#watch-feed");
+  if (!document.body.classList.contains("watch-open")) {
+    stopWatchFeed(feed);
+    return;
+  }
+  const play = playWatchFeed(feed);
+  if (play) {
+    play.then(() => setWatchPlayGate(false)).catch(() => {
       if (!document.body.classList.contains("watch-open")) {
-        if (active) stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
-        else video.pause();
+        stopWatchFeed(feed);
         return;
       }
-      if (active) {
-        const play = playWatchFeed(video);
-        if (play) {
-          play.then(() => setWatchPlayGate(slide, false)).catch(() => {
-            if (!document.body.classList.contains("watch-open")) {
-              stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
-              return;
-            }
-            setWatchPlayGate(slide, true);
-          }).finally(() => slide.classList.remove("paused"));
-        }
-      } else {
-        video.pause();
-      }
-    } else {
-      video.pause();
-      video.volume = 0;
-      slide.classList.remove("paused");
-      if (video.getAttribute("src")) {
-        video.removeAttribute("src");
-        video.load();
-      }
-    }
-  });
+      setWatchPlayGate(true);
+    });
+  }
 }
 
 function goToWatchIndex(index, { instant = false } = {}) {
@@ -525,62 +391,50 @@ function goToWatchIndex(index, { instant = false } = {}) {
   void hydrateWatchInspect(job.id);
 }
 
-function stepWatch(delta) {
-  const scroller = $("#watch-scroller");
-  if (!scroller) return;
-  const h = watchPageHeight($("#watch-feed")) || scroller.clientHeight;
-  scroller.scrollBy({ top: delta * h, behavior: "auto" });
-}
-
 function patchWatchSlide(job) {
   document.querySelectorAll(`.watch-slide[data-job-id="${CSS.escape(job.id)}"]`).forEach((slide) => {
-    const title = slide.querySelector(".watch-meta h2");
-    if (title) title.textContent = job.topic || "쇼츠";
     const preview = shortPreview(job);
-    if (preview.videoUrl) slide.dataset.videoUrl = preview.videoUrl;
+    if (preview.videoUrl) {
+      slide.dataset.src = preview.videoUrl;
+      slide.dataset.videoUrl = preview.videoUrl;
+    }
+    if (preview.poster) slide.dataset.poster = bust(preview.poster, job.updatedAt);
+    const img = slide.querySelector(".watch-poster");
+    if (img && slide.dataset.poster) img.src = slide.dataset.poster;
   });
+  if (state.selectedJobId === job.id) {
+    const title = $("#watch-feed .watch-meta h2");
+    if (title) title.textContent = job.topic || "쇼츠";
+  }
 }
 
 function mountWatchFeed({ focus = false, instant = false } = {}) {
-  const scroller = $("#watch-scroller");
+  const root = $("#watch-feed");
+  const track = $("#watch-track");
   const empty = $("#watch-empty");
-  bindWatchFeed($("#watch-feed"), openHome);
-  if (!scroller) return;
+  bindWatchFeed(root, openHome, (jobId) => notifyActive(jobId));
+  bindWatchChrome();
+  createWatchPlayer(root);
+  if (!track) return;
   const jobs = watchableJobs();
   if (empty) empty.hidden = jobs.length > 0;
   if (!jobs.length) {
-    scroller.innerHTML = "";
-    scroller.dataset.signature = "";
+    track.innerHTML = "";
+    track.dataset.signature = "";
     return;
   }
   const signature = watchSignature();
-  const rebuilt = scroller.dataset.signature !== signature;
+  const rebuilt = track.dataset.signature !== signature;
   if (rebuilt) {
-    scroller.dataset.signature = signature;
-    scroller.innerHTML = watchFeedMarkup(jobs);
-    $$(".watch-slide").forEach(bindWatchSlide);
-    const prime = [
-      ...$$(".watch-slide:not([data-loop])").slice(0, 2),
-      ...$$(".watch-slide[data-loop]")
-    ];
-    prime.forEach((slide) => {
-      const video = slide.querySelector("video");
-      const url = slide.dataset.videoUrl;
-      if (!video || !url) return;
-      if (video.getAttribute("src") !== url) video.src = url;
-      primeWatchVideo(video);
-    });
-    observeWatchSlides();
-    bindWatchScroller();
+    track.dataset.signature = signature;
+    track.innerHTML = watchFeedMarkup(jobs);
   } else {
     jobs.forEach(patchWatchSlide);
   }
   if (focus || !document.querySelector(".watch-slide.active:not([data-loop])")) {
     const index = Math.max(0, watchIndexOf(state.selectedJobId));
-    window.requestAnimationFrame(() => {
-      placeWatchFeed(index);
-      goToWatchIndex(index, { instant });
-    });
+    placeWatchFeed(index);
+    goToWatchIndex(index, { instant });
   } else {
     placeWatchFeed(Math.max(0, watchIndexOf(state.selectedJobId)));
   }
@@ -715,9 +569,9 @@ function bindInspectActions(root, jobId) {
 }
 
 async function hydrateWatchInspect(jobId) {
-  const panel = document.querySelector(`.watch-slide:not([data-loop]) .watch-inspect[data-job-id="${CSS.escape(jobId)}"]`)
-    || document.querySelector(`.watch-inspect[data-job-id="${CSS.escape(jobId)}"]`);
+  const panel = $("#watch-inspect");
   if (!panel || panel.dataset.ready === jobId) return;
+  panel.dataset.jobId = jobId;
   let job = state.jobs.find((item) => item.id === jobId) || null;
   let prompts = null;
   try {
@@ -1652,11 +1506,12 @@ function bindEvents() {
   window.addEventListener("resize", sizeShortsGrid);
   window.addEventListener("orientationchange", () => {
     if (state.view !== "watch") return;
-    sizeWatchFeed($("#watch-feed"), { force: true });
-    snapWatchFeed($("#watch-feed"));
-    wrapWatchFeed($("#watch-feed"));
+    const root = $("#watch-feed");
+    sizeWatchFeed(root, { force: true });
+    applyWatchTransform(root, { animate: false });
+    wrapWatchFeed(root);
     notifyActive();
-    playWatchFeed($("#watch-feed"));
+    playWatchFeed(root);
   });
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);
@@ -1715,33 +1570,25 @@ function bindEvents() {
     }
     if (state.view !== "watch") return;
     if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
-    if (event.key === "ArrowDown") {
+    const feed = $("#watch-feed");
+    if (event.key === "ArrowDown" || event.key === "j" || event.key === "PageDown") {
       event.preventDefault();
-      const scroller = $("#watch-scroller");
-      const h = watchPageHeight($("#watch-feed")) || scroller?.clientHeight;
-      if (scroller && h) scroller.scrollBy({ top: h, behavior: "auto" });
-      afterWatchSnap();
+      stepWatchFeed(feed, 1, { animate: true });
     }
-    if (event.key === "ArrowUp") {
+    if (event.key === "ArrowUp" || event.key === "k" || event.key === "PageUp") {
       event.preventDefault();
-      const scroller = $("#watch-scroller");
-      const h = watchPageHeight($("#watch-feed")) || scroller?.clientHeight;
-      if (scroller && h) scroller.scrollBy({ top: -h, behavior: "auto" });
-      afterWatchSnap();
+      stepWatchFeed(feed, -1, { animate: true });
     }
     if (event.key === " ") {
       event.preventDefault();
-      const slide = selectedWatchSlide($("#watch-feed")) || document.querySelector(".watch-slide.active:not([data-loop])") || document.querySelector(".watch-slide.active");
-      const video = slide?.querySelector("video");
-      if (!video || !slide) return;
+      const video = feed?.querySelector(".watch-player video") || feed?.querySelector("video");
+      if (!video) return;
       if (video.paused) {
-        const play = document.body.classList.contains("watch-open") ? playWatchFeed(video) : null;
-        if (play) play.then(() => setWatchPlayGate(slide, false)).catch(() => setWatchPlayGate(slide, true));
-        else stopWatchFeed($("#watch-feed"));
-        slide.classList.remove("paused");
+        const play = document.body.classList.contains("watch-open") ? playWatchFeed(feed) : null;
+        if (play) play.then(() => setWatchPlayGate(false)).catch(() => setWatchPlayGate(true));
+        else stopWatchFeed(feed);
       } else {
         video.pause();
-        slide.classList.add("paused");
       }
     }
   });

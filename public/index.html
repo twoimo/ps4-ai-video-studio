@@ -9,7 +9,16 @@
   </head>
   <body>
     <section class="watch-feed" id="watch-feed" hidden>
-      <div class="watch-scroller" id="watch-scroller" tabindex="0" aria-label="쇼츠 재생"></div>
+      <div class="watch-track" id="watch-track" tabindex="0" aria-label="쇼츠 재생"></div>
+      <div class="watch-chrome" id="watch-chrome">
+        <button type="button" class="watch-close watch-back" aria-label="닫기">×</button>
+        <button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
+        <button type="button" class="watch-play" hidden>탭해서 재생</button>
+        <div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+        <div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>
+      </div>
+      <button type="button" class="watch-inspect-dismiss" aria-label="닫기"></button>
+      <aside class="watch-inspect" id="watch-inspect"></aside>
       <p class="watch-empty" id="watch-empty" hidden>재생할 영상이 없습니다. 라이브러리에서 초안을 확인하세요.</p>
     </section>
 
