@@ -140,7 +140,14 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(home.includes("<h1>쇼츠</h1>"), false);
   assert.equal(home.includes('class="sr-only">쇼츠'), false);
   assert.match(home, /id="library-more"/);
-  assert.match(home, /더보기/);
+  assert.equal(home.includes("더보기"), false);
+  assert.match(home, /aria-label="설정"/);
+  assert.match(home, /class="library-gear"/);
+  assert.match(home, /<svg class="library-gear"/);
+  assert.match(home, /id="import-library"/);
+  assert.match(home, /id="open-template"/);
+  assert.match(home, /id="open-settings"/);
+  assert.match(home, /id="refresh-all"/);
   assert.equal(home.includes('id="toggle-surface"'), false);
   assert.equal(home.includes(">보기<"), false);
   assert.equal(home.includes("surface-toggle"), false);
@@ -152,9 +159,9 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="create-tile"/);
   assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
   assert.match(css, /--header:\s*52px/);
-  assert.match(app, /const STUDIO_TITLE = "PS4_JUSTDOIT"/);
-  assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{STUDIO_TITLE\}` : STUDIO_TITLE/);
-  assert.match(app, /document\.title = STUDIO_TITLE/);
+  assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
+  assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{APP_TITLE\}` : APP_TITLE/);
+  assert.match(app, /document\.title = APP_TITLE/);
   assert.equal(home.includes("class=\"sidebar\""), false);
   assert.equal(home.includes("WORKSPACE"), false);
   assert.equal(home.includes("id=\"health-capabilities\""), false);

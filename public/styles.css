@@ -39,9 +39,11 @@ h1, h2, h3, p { margin-top: 0; }
 .library { width: 100%; min-height: 0; flex: 1; height: 100%; margin: 0; padding: 8px 10px 10px; display: grid; }
 .library-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; min-height: 36px; }
 .library-more { position: relative; }
-.library-more summary { list-style: none; cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 2px; }
+.library-more summary { list-style: none; cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; padding: 6px; line-height: 0; }
 .library-more summary::-webkit-details-marker { display: none; }
+.library-more summary::marker { content: ""; }
 .library-more summary:hover { color: var(--text); }
+.library-gear { display: block; width: 18px; height: 18px; }
 .library-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 188px; display: grid; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.35); }
 .library-menu button { text-align: left; padding: 10px 12px; border-radius: 7px; color: var(--text); font-size: 13px; }
 .library-menu button:hover { background: var(--surface-2); }

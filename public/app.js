@@ -2,7 +2,7 @@ import { formatClock, isWatchableShort, shortDownloads, shortDurationSeconds, sh
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const STUDIO_TITLE = "PS4_JUSTDOIT";
+const APP_TITLE = "PS4_JUSTDOIT";
 const VIEWS = ["create", "detail", "template", "settings", "watch", "grid"];
 const state = {
   jobs: [],
@@ -100,10 +100,10 @@ function setView(view, options = {}) {
 function syncDocumentTitle() {
   if (state.view === "watch" || state.view === "detail") {
     const shortTitle = String(selectedJob()?.topic || "").trim();
-    document.title = shortTitle ? `${shortTitle} · ${STUDIO_TITLE}` : STUDIO_TITLE;
+    document.title = shortTitle ? `${shortTitle} · ${APP_TITLE}` : APP_TITLE;
     return;
   }
-  document.title = STUDIO_TITLE;
+  document.title = APP_TITLE;
 }
 
 function applyHash() {
