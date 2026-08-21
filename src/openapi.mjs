@@ -128,8 +128,8 @@ export function studioOpenApi() {
         post: {
           summary: "주제에서 한국어 대본 초안",
           operationId: "scriptDraft",
-          description: "공식 grok CLI 텍스트만. Gemini로 대체하지 않습니다. 마지막 문장 「이렇게 설계된 겁니다.」",
-          responses: { 200: { description: "대본" }, 400: { description: "grok 텍스트 실패" } }
+          description: "OpenMontage explainer Script Director + locked grok-imagine-2026-08-21 brief. Official grok CLI text only. Never Gemini. Returns structured script: title, facts, worldSlots, segments (7 holds: first image_gen, rest image_edit). Last line 「이렇게 설계된 겁니다.」 Never invent SI.",
+          responses: { 200: { description: "구조화된 대본" }, 400: { description: "grok 텍스트 실패" } }
         }
       },
       "/api/grok-imagine/template": {

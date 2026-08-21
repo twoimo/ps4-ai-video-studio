@@ -532,7 +532,8 @@ function hiddenInspectFields(job, prompts) {
 function renderInspectCaptions(shots = []) {
   return shots.map((shot, offset) => {
     const index = Number(shot.index || offset + 1);
-    return `<div class="inspect-caption" data-shot-index="${index}"><b>${index}</b><textarea class="inspect-shot-caption" data-shot-caption data-shot-index="${index}" rows="2">${escapeHtml(shot.caption || "")}</textarea></div>`;
+    const kind = shot.type || shot.role || "";
+    return `<div class="inspect-caption" data-shot-index="${index}"><b>${index}${kind ? `<i>${escapeHtml(kind)}</i>` : ""}</b><textarea class="inspect-shot-caption" data-shot-caption data-shot-index="${index}" rows="2">${escapeHtml(shot.caption || shot.narration || "")}</textarea></div>`;
   }).join("");
 }
 
@@ -1086,7 +1087,12 @@ async function refreshCreatePreview() {
     state.createPreview = await api("/api/grok-imagine/template/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ topic: topic.trim() || "빈 현장의 숨은 원리", facts, worldSlots })
+      body: JSON.stringify({
+        topic: topic.trim() || "빈 현장의 숨은 원리",
+        facts,
+        worldSlots,
+        scriptDraft: $("#script-draft")?.value.trim() || ""
+      })
     });
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = `${renderWorldSlotFields(state.createPreview.worldSlots)}<h4 class="prompt-subhead">채워진 샷</h4>${renderShotPromptList(state.createPreview.shots)}`;
@@ -1561,6 +1567,33 @@ async function previewVoice(buttonId, audioId, providerId, voiceId) {
   }
 }
 
+function applyDraftWorldSlots(worldSlots = {}) {
+  if (!worldSlots || typeof worldSlots !== "object") return;
+  for (const [id, value] of Object.entries(worldSlots)) {
+    if (id === "sourced_si" || id === "avoid") continue;
+    const input = document.querySelector(`#create-world-slots [data-world-slot="${CSS.escape(id)}"]`);
+    if (input && "value" in input) input.value = String(value || "");
+  }
+}
+
+function renderScriptSegmentPreview(segments = []) {
+  const list = $("#script-segment-preview");
+  if (!list) return;
+  if (!Array.isArray(segments) || !segments.length) {
+    list.hidden = true;
+    list.innerHTML = "";
+    return;
+  }
+  list.hidden = false;
+  list.innerHTML = segments.map((segment, offset) => {
+    const index = Number.isInteger(segment.index) ? segment.index : offset + 1;
+    const kind = segment.type || segment.role || "";
+    const meta = [kind, segment.tool || "", segment.label || ""].filter(Boolean).join(" · ");
+    const line = segment.narration || segment.caption || "";
+    return `<li><b>${index}</b><div>${meta ? `<small>${escapeHtml(meta)}</small>` : ""}<p>${escapeHtml(line)}</p></div></li>`;
+  }).join("");
+}
+
 async function draftScriptFromTopic() {
   const button = $("#draft-script");
   const errorBox = $("#script-draft-error");
@@ -1583,6 +1616,9 @@ async function draftScriptFromTopic() {
       area.value = payload.draft;
     }
     if (label) label.hidden = false;
+    applyDraftWorldSlots(payload.worldSlots);
+    renderScriptSegmentPreview(payload.segments || payload.script?.segments);
+    await refreshCreatePreview().catch(() => {});
     showToast("대본 초안을 넣었습니다.");
   } catch (error) {
     if (errorBox) {
