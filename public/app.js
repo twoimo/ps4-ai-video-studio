@@ -474,50 +474,41 @@ function openDetail(jobId) {
   renderJobs();
 }
 
-const INSPECT_WORLD_SLOTS = [
-  { id: "site", label: "장소", hint: "영상에 나오는 빈 장소" },
-  { id: "weather", label: "날씨", hint: "그날의 날씨. 출처에 없으면 꾸미지 마세요" },
-  { id: "everyday_thing", label: "흔한 물건", hint: "그 자리에 원래 있는 흔한 물건" },
-  { id: "hidden_thing", label: "숨은 장치", hint: "이 편이 보여주는 숨은 장치. 사람은 넣지 마세요" },
-  { id: "materials", label: "쓰는 것", hint: "출처에 적힌 재료만 적으세요" },
-  { id: "wear", label: "낡은 자국", hint: "녹, 얼룩처럼 낡은 자국" },
-  { id: "trace", label: "남은 흔적", hint: "물때, 볼트 그림자처럼 남은 흔적" },
-  { id: "palette", label: "색감", hint: "화면의 색감" }
-];
+const INSPECT_WORLD_SLOT_IDS = ["site", "weather", "everyday_thing", "hidden_thing", "materials", "wear", "trace", "palette"];
 
-const INSPECT_SHOT_ROLES = {
-  hook: "첫 장면",
-  surface: "가까운 면",
-  cutaway: "자른 면",
-  system: "흐름",
-  scale: "넓이",
-  proof: "장치",
-  hold: "같은 장면"
-};
-
-function collectShotOverrides(root) {
-  const overrides = {};
-  root?.querySelectorAll("[data-shot-index]").forEach((node) => {
+function collectInspectPayload(root) {
+  const shots = {};
+  root?.querySelectorAll(".inspect-shot[data-shot-index]").forEach((node) => {
     const index = Number(node.dataset.shotIndex);
     if (!Number.isInteger(index)) return;
-    overrides[index] = {
+    shots[index] = {
       index,
       prompt: node.querySelector("[data-shot-prompt], .inspect-shot-prompt")?.value || "",
       animatePrompt: node.querySelector("[data-shot-animate], .inspect-shot-animate")?.value || "",
       caption: node.querySelector("[data-shot-caption], .inspect-shot-caption")?.value || ""
     };
   });
-  return overrides;
-}
-
-function collectDraftFields(root) {
+  root?.querySelectorAll(".inspect-caption [data-shot-caption], .inspect-caption .inspect-shot-caption").forEach((input) => {
+    const index = Number(input.dataset.shotIndex || input.closest("[data-shot-index]")?.dataset.shotIndex);
+    if (!Number.isInteger(index)) return;
+    shots[index] = {
+      index,
+      prompt: shots[index]?.prompt || "",
+      animatePrompt: shots[index]?.animatePrompt || "",
+      caption: input.value || ""
+    };
+  });
   return {
     topic: root.querySelector("[data-draft-topic], .inspect-topic")?.value || "",
     facts: (root.querySelector("[data-draft-facts], .inspect-facts")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
     scriptDraft: root.querySelector("[data-draft-script], .inspect-script")?.value || "",
     worldSlots: Object.fromEntries([...root.querySelectorAll("[data-world-slot]")].map((input) => [input.dataset.worldSlot, input.value]).filter(([, value]) => String(value || "").trim())),
-    shotOverrides: collectShotOverrides(root)
+    shotOverrides: shots
   };
+}
+
+function collectDraftFields(root) {
+  return collectInspectPayload(root);
 }
 
 function inspectSlotValue(slots, id, job) {
@@ -526,27 +517,24 @@ function inspectSlotValue(slots, id, job) {
   return job?.worldSlots?.[id] || "";
 }
 
-function renderInspectWorldSlots(job, prompts) {
-  const slots = prompts?.worldSlots || [];
-  return INSPECT_WORLD_SLOTS.map((slot) => {
-    const value = inspectSlotValue(slots, slot.id, job);
-    return `<label class="slot-card editable"><span><b>${escapeHtml(slot.label)}</b></span><small>${escapeHtml(slot.hint)}</small><textarea class="inspect-slot" data-world-slot="${escapeHtml(slot.id)}" rows="2">${escapeHtml(value)}</textarea></label>`;
+function hiddenInspectFields(job, prompts) {
+  const facts = Array.isArray(job.facts) ? job.facts.join("\n") : "";
+  const slots = INSPECT_WORLD_SLOT_IDS.map((id) => `<textarea hidden class="inspect-slot" data-world-slot="${escapeHtml(id)}">${escapeHtml(inspectSlotValue(prompts?.worldSlots, id, job))}</textarea>`).join("");
+  const shots = (prompts?.shots || []).map((shot, offset) => {
+    const index = Number(shot.index || offset + 1);
+    return `<article hidden class="inspect-shot" data-shot-index="${index}"><textarea class="inspect-shot-prompt" data-shot-prompt>${escapeHtml(shot.prompt || "")}</textarea><textarea class="inspect-shot-animate" data-shot-animate>${escapeHtml(shot.animatePrompt || "")}</textarea></article>`;
   }).join("");
+  return `<textarea hidden class="inspect-facts" data-draft-facts>${escapeHtml(facts)}</textarea>${slots}${shots}`;
 }
 
-function inspectShotTitle(shot, index) {
-  const role = INSPECT_SHOT_ROLES[shot.role] || INSPECT_SHOT_ROLES[shot.type] || (index === 1 ? "첫 장면" : `장면 ${index}`);
-  return `장면 ${index} · ${role}`;
-}
-
-function renderInspectShots(shots = []) {
+function renderInspectCaptions(shots = []) {
   return shots.map((shot, offset) => {
     const index = Number(shot.index || offset + 1);
-    return `<article class="shot-edit inspect-shot" data-shot-index="${index}"><b>${escapeHtml(inspectShotTitle(shot, index))}</b><label class="field-label">화면에 뜨는 자막</label><textarea class="inspect-shot-caption" data-shot-caption rows="2">${escapeHtml(shot.caption || "")}</textarea><details><summary>그림 설명</summary><textarea class="inspect-shot-prompt" data-shot-prompt rows="3">${escapeHtml(shot.prompt || "")}</textarea></details><details><summary>움직임</summary><textarea class="inspect-shot-animate" data-shot-animate rows="2">${escapeHtml(shot.animatePrompt || "")}</textarea></details></article>`;
+    return `<div class="inspect-caption" data-shot-index="${index}"><b>${index}</b><textarea class="inspect-shot-caption" data-shot-caption data-shot-index="${index}" rows="2">${escapeHtml(shot.caption || "")}</textarea></div>`;
   }).join("");
 }
 
-function renderUploadPack(job) {
+function youtubePrepMarkup(job) {
   const pack = shortUploadPack(job);
   const links = pack.links.map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
   return `<section class="upload-pack"><h3>업로드 준비</h3><p class="inspect-hint">유튜브에 아직 올리지 않아요</p><p class="pack-title">${escapeHtml(pack.title || job.topic || "")}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
@@ -554,16 +542,12 @@ function renderUploadPack(job) {
 
 function renderInspectMarkup(job, prompts) {
   const frozen = state.health?.imagine?.frozen !== false;
-  const facts = Array.isArray(job.facts) ? job.facts.join("\n") : "";
   const shots = prompts?.shots || [];
-  const artifacts = (job.artifacts || []).map((item) => `<a class="artifact-link" href="${escapeHtml(item.url || "")}" download>${escapeHtml(item.name || "")}</a>`).join("");
-  const captionDownloads = shortDownloads(job).filter((item) => /자막/.test(item.label)).map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
-  const files = `${captionDownloads}${artifacts}`;
-  return `<h3>이 영상은 이렇게 만들었어요</h3><p class="inspect-lead">왼쪽 영상을 만든 글이에요. 고친 뒤 저장하면 글만 남고, 영상 다시 만들기를 눌러야 새 영상이 나와요.</p><div class="inspect-section"><label class="field-label" for="inspect-topic-${escapeHtml(job.id)}">제목</label><p class="inspect-hint">목록에 보이는 이름</p><input id="inspect-topic-${escapeHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /></div><div class="inspect-section"><label class="field-label">확인할 사실</label><p class="inspect-hint">출처에 있는 숫자만. 없는 숫자는 만들지 마세요</p><textarea class="inspect-facts" data-draft-facts rows="4">${escapeHtml(facts)}</textarea></div><div class="inspect-section"><label class="field-label">목소리 대본</label><p class="inspect-hint">영상에 읽는 말</p><textarea class="inspect-script" data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea></div><details class="inspect-world"><summary>같은 장소 분위기</summary><div class="slot-grid">${renderInspectWorldSlots(job, prompts)}</div></details>${shots.length ? `<div class="inspect-section"><h4>장면마다</h4>${renderInspectShots(shots)}</div>` : ""}<details class="inspect-files"><summary>받은 파일</summary>${files || "<p class=\"inspect-hint\">아직 받은 파일이 없어요</p>"}</details>${renderUploadPack(job)}<div class="inspect-actions"><button type="button" class="primary-button" data-inspect-save>글만 저장</button><button type="button" class="secondary-button" data-inspect-regen${frozen ? " disabled" : ""}>영상 다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 크레딧이 없어서 새 영상을 못 만들어요. 글은 저장할 수 있어요.</p>` : ""}</div>`;
+  return `<div class="inspect-stack"><label class="field-label" for="inspect-topic-${escapeHtml(job.id)}">제목</label><input id="inspect-topic-${escapeHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 다시 못 만들어요</p>` : ""}</div></div>`;
 }
 
 async function saveInspectDraft(jobId, root) {
-  const body = collectDraftFields(root);
+  const body = collectInspectPayload(root);
   const payload = await api(`/api/jobs/${encodeURIComponent(jobId)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -574,7 +558,7 @@ async function saveInspectDraft(jobId, root) {
 }
 
 function bindInspectActions(root, jobId) {
-  root.querySelector("[data-inspect-save]")?.addEventListener("click", async () => {
+  root.querySelector(".inspect-save, [data-inspect-save]")?.addEventListener("click", async () => {
     try {
       await saveInspectDraft(jobId, root);
       showToast("초안을 저장했습니다.");
@@ -582,7 +566,7 @@ function bindInspectActions(root, jobId) {
       showToast(error.message, "error");
     }
   });
-  root.querySelector("[data-inspect-regen]")?.addEventListener("click", async () => {
+  root.querySelector(".inspect-regen, [data-inspect-regen]")?.addEventListener("click", async () => {
     if (state.health?.imagine?.frozen !== false) {
       showToast("크레딧 402", "error");
       return;
