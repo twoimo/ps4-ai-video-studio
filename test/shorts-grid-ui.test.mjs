@@ -103,14 +103,25 @@ test("library and overlays fill the viewport instead of a phone column", async (
 
 test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
   const homeEnd = html.indexOf('id="create-overlay"');
   const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
+  assert.match(html, /<title>건축사전 공장<\/title>/);
   assert.match(home, /id="shorts-grid"/);
-  assert.match(home, /<h1 class="sr-only">쇼츠<\/h1>/);
+  assert.match(home, /class="library-brand"/);
+  assert.match(home, /<h1>건축사전<\/h1>/);
+  assert.match(home, /쇼츠 공장/);
   assert.equal(home.includes("<h1>쇼츠</h1>"), false);
+  assert.equal(home.includes('class="sr-only">쇼츠'), false);
   assert.match(home, /id="library-more"/);
   assert.match(home, /더보기/);
   assert.match(home, /id="create-tile"/);
+  assert.match(css, /\.library-bar\s*\{[^}]*justify-content:\s*space-between/);
+  assert.match(css, /--header:\s*52px/);
+  assert.match(app, /const STUDIO_TITLE = "건축사전 공장"/);
+  assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{STUDIO_TITLE\}` : STUDIO_TITLE/);
+  assert.match(app, /document\.title = STUDIO_TITLE/);
   assert.equal(home.includes("class=\"sidebar\""), false);
   assert.equal(home.includes("WORKSPACE"), false);
   assert.equal(home.includes("id=\"health-capabilities\""), false);

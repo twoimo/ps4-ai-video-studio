@@ -2,6 +2,7 @@ import { formatClock, shortDownloads, shortDurationSeconds, shortPreview, shortS
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const STUDIO_TITLE = "건축사전 공장";
 const state = { jobs: [], selectedJobId: null, highlightJobId: null, view: "grid", template: null, createPreview: null, live: {}, sse: null, livePoll: null, poll: null };
 
 function escapeHtml(value = "") {
@@ -52,6 +53,17 @@ function setView(view, options = {}) {
   }
   if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
+  syncDocumentTitle();
+}
+
+function syncDocumentTitle() {
+  if (state.view === "detail") {
+    const selected = state.jobs.find((job) => job.id === state.selectedJobId);
+    const shortTitle = String(selected?.topic || "").trim();
+    document.title = shortTitle ? `${shortTitle} · ${STUDIO_TITLE}` : STUDIO_TITLE;
+    return;
+  }
+  document.title = STUDIO_TITLE;
 }
 
 function applyHash() {
@@ -192,6 +204,7 @@ function renderJobs() {
     renderLiveFactory(selected);
     watchJobLive(selected);
   }
+  syncDocumentTitle();
 }
 
 function defaultFactoryStages() {
