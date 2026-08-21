@@ -183,10 +183,16 @@ test("watch feed snaps 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(watch.includes("다시 실행"), false);
   assert.match(css, /\.watch-scroller\s*\{[^}]*scroll-snap-type:\s*y\s+mandatory/);
   assert.match(css, /\.watch-slide\s*\{[^}]*height:\s*100dvh/);
+  assert.match(css, /--watch-col:\s*min\(100vw,\s*calc\(100dvh \* 9 \/ 16\)\)/);
+  assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*var\(--watch-col\)/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100dvh/);
   assert.match(css, /\.watch-stage video,\s*\.watch-stage \.watch-poster\s*\{[^}]*object-fit:\s*contain/);
   assert.match(css, /body\.watch-open\s*\{[^}]*display:\s*block/);
   assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*position:\s*fixed/);
+  assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*width:\s*var\(--watch-col\)/);
+  assert.equal(/body\.watch-open \.studio-chrome\s*\{[^}]*left:\s*0/.test(css), false);
+  assert.equal(/body\.watch-open \.studio-chrome\s*\{[^}]*right:\s*0/.test(css), false);
+  assert.match(app, /watch-progress[\s\S]*watch-slide-chrome[\s\S]*<\/div><\/div><\/article>/);
   assert.match(app, /function isWatchableShort|isWatchableShort\(job\)/);
   assert.match(app, /#watch/);
   assert.match(app, /#shorts/);

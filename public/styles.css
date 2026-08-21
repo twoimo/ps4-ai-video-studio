@@ -15,6 +15,7 @@
   --danger: #ff786d;
   --amber: #f0bd68;
   --sans: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+  --watch-col: min(100vw, calc(100dvh * 9 / 16));
 }
 
 * { box-sizing: border-box; }
@@ -189,8 +190,8 @@ body.overlay-open { overflow: hidden; }
 .watch-feed[hidden] { display: none; }
 .watch-scroller { height: 100dvh; overflow-y: auto; scroll-snap-type: y mandatory; scroll-snap-stop: always; overscroll-behavior-y: contain; touch-action: pan-y; scrollbar-width: none; }
 .watch-scroller::-webkit-scrollbar { display: none; }
-.watch-slide { position: relative; height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; background: #000; }
-.watch-stage { position: relative; width: 100%; height: 100dvh; background: #000; }
+.watch-slide { position: relative; height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; display: grid; place-items: center; background: #000; }
+.watch-stage { position: relative; width: var(--watch-col); height: 100dvh; background: #000; }
 .watch-stage video, .watch-stage .watch-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .watch-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255,255,255,.16); z-index: 2; }
 .watch-progress i { display: block; height: 100%; width: 0; background: #fff; }
@@ -208,11 +209,11 @@ body.overlay-open { overflow: hidden; }
 .watch-sheet-body { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 4; min-width: 188px; display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.35); }
 .watch-sheet-body .artifact-link, .watch-sheet-body button { text-align: left; padding: 10px 12px; border-radius: 7px; color: var(--text); font-size: 13px; }
 .watch-sheet-body button:hover, .watch-sheet-body .artifact-link:hover { background: var(--surface-2); }
-.watch-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; }
+.watch-empty { position: absolute; left: 50%; top: 0; width: var(--watch-col); height: 100dvh; transform: translateX(-50%); display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; }
 .watch-empty[hidden] { display: none; }
 
 body.watch-open { display: block; overflow: hidden; }
-body.watch-open .studio-chrome { position: fixed; top: 0; left: 0; right: 0; min-height: 0; padding: 10px 12px 36px; background: linear-gradient(180deg, rgba(0,0,0,.58) 0%, rgba(0,0,0,.18) 62%, transparent 100%); pointer-events: none; }
+body.watch-open .studio-chrome { position: fixed; top: 0; left: 50%; width: var(--watch-col); transform: translateX(-50%); min-height: 0; padding: 10px 12px 36px; background: linear-gradient(180deg, rgba(0,0,0,.58) 0%, rgba(0,0,0,.18) 62%, transparent 100%); pointer-events: none; }
 body.watch-open .studio-chrome > * { pointer-events: auto; }
 body.watch-open .library-brand h1,
 body.watch-open .library-brand-sub,
