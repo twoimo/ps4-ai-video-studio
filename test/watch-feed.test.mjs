@@ -552,7 +552,7 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /#watch-feed \.watch-inspect/);
   assert.match(css, /\.watch-inspect\s*\{[^}]*position:\s*fixed/);
   assert.match(css, /\.watch-inspect\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /\.watch-inspect \.inspect-stack[\s\S]*min\(440px,\s*calc\(100vw - 32px\)\)/);
+  assert.match(css, /\.watch-inspect \.inspect-stack[\s\S]*min\(400px,\s*calc\(100vw - 40px\)\)/);
   assert.equal(css.includes("translateX(100%)"), false);
   assert.match(html, /<\/div>\s*<button type="button" class="watch-inspect-dismiss"/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
@@ -566,6 +566,24 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
   assert.equal(/\.watch-close\s*\{[^}]*border-radius:\s*50%/.test(css), false);
   assert.equal(/\.watch-close\s*\{[^}]*background:\s*rgba/.test(css), false);
+});
+
+test("watch caption is 15/600 plus muted 12 and materials use field skeletons", async () => {
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*font-size:\s*15px/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*font-weight:\s*600/);
+  assert.match(css, /\.watch-caption-muted\s*\{[^}]*font-size:\s*12px/);
+  assert.match(html, /class="watch-caption-muted"/);
+  assert.match(app, /class="watch-caption-muted"/);
+  assert.match(app, /inspectSkeletonMarkup/);
+  assert.match(app, /skel skel-download/);
+  assert.equal(app.includes("재료를 불러오는 중"), false);
+  assert.equal(app.includes("탭해서 재생"), false);
+  assert.equal(css.includes(".watch-player .skel"), false);
+  assert.match(css, /body\.watch-open #watch-feed/);
+  assert.match(css, /body\.watch-open \.watch-feed\s*\{[^}]*display:\s*block/);
 });
 
 test("watch chrome has no tap-to-play overlay", async () => {

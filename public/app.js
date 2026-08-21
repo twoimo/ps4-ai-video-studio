@@ -1,4 +1,4 @@
-import { formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { channelOneLiner, formatClock, inspectVideoDownloads, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
@@ -23,7 +23,8 @@ const state = {
   watchLockUntil: 0,
   watchSwiping: false,
   createMode: "single",
-  focusOpener: null
+  focusOpener: null,
+  jobsReady: false
 };
 
 function escapeHtml(value = "") {
@@ -237,8 +238,22 @@ function sizeShortsGrid() {
   const col = (window.innerHeight - 52 - gap) * 9 / 16;
   if (!(col > 0)) return;
   const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
-  const n = Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));
+  const n = window.innerWidth < 720
+    ? 2
+    : Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));
   grid.style.setProperty("--n", String(n));
+}
+
+function gridSkeletonMarkup() {
+  return Array.from({ length: 6 }, () => `<article class="short-card short-skel" aria-hidden="true"><div class="short-card-thumb"><span class="skel"></span></div></article>`).join("");
+}
+
+function fieldSkeletonMarkup(title) {
+  return `<h2 id="${title === "사양" ? "machine-title" : title === "템플릿" ? "template-title" : "short-detail-title"}">${escapeHtml(title)}</h2><div class="skel skel-title"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div>`;
+}
+
+function inspectSkeletonMarkup() {
+  return `<div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2><button type="button" class="watch-inspect-close" aria-label="닫기">×</button></div><div class="skel skel-title"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-line"></div><div class="skel skel-download"></div></div>`;
 }
 
 function createTileMarkup() {
@@ -282,7 +297,7 @@ function watchSlideMarkup(job, loop = "") {
 }
 
 function watchChromeMarkup() {
-  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>`;
+  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2><p class="watch-caption-muted"></p></div></div>`;
 }
 
 function watchFeedMarkup(jobs) {
@@ -374,8 +389,10 @@ function activateWatchSlide(jobId) {
     slide.classList.toggle("active", slide.dataset.jobId === jobId && !slide.dataset.loop);
   });
   const title = $("#watch-feed .watch-meta h2");
+  const muted = $("#watch-feed .watch-caption-muted");
   const job = state.jobs.find((item) => item.id === jobId);
   if (title) title.textContent = job?.topic || "쇼츠";
+  if (muted) muted.textContent = job ? channelOneLiner(job) : "";
   const feed = $("#watch-feed");
   if (!document.body.classList.contains("watch-open")) {
     stopWatchFeed(feed);
@@ -411,7 +428,9 @@ function patchWatchSlide(job) {
   });
   if (state.selectedJobId === job.id) {
     const title = $("#watch-feed .watch-meta h2");
+    const muted = $("#watch-feed .watch-caption-muted");
     if (title) title.textContent = job.topic || "쇼츠";
+    if (muted) muted.textContent = channelOneLiner(job);
   }
 }
 
@@ -582,6 +601,7 @@ async function hydrateWatchInspect(jobId) {
   const panel = $("#watch-inspect");
   if (!panel || panel.dataset.ready === jobId) return;
   panel.dataset.jobId = jobId;
+  panel.innerHTML = inspectSkeletonMarkup();
   let job = state.jobs.find((item) => item.id === jobId) || null;
   let prompts = null;
   try {
@@ -619,9 +639,12 @@ function renderShortCard(job) {
   const selected = job.id === state.selectedJobId && state.view === "detail" ? " selected" : "";
   const progress = Number(job.progress || 0);
   const fallback = escapeHtml(status.label);
+  const emptyLabel = status.key === "running" ? "생성중" : status.key === "draft" ? "초안" : fallback;
   const media = thumb
     ? `<img src="${escapeHtml(thumb)}" alt="" />`
-    : `<div class="thumb-fallback" aria-hidden="true"><span>${fallback}</span></div>`;
+    : status.key === "running"
+      ? `<div class="thumb-fallback skel" aria-hidden="true"></div>`
+      : `<div class="thumb-fallback" aria-hidden="true"><span>${escapeHtml(emptyLabel)}</span></div>`;
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
@@ -939,7 +962,10 @@ async function loadTemplateSurface() {
   const root = $("#template-root");
   if (!root) return;
   try {
-    if (!state.template) state.template = await api("/api/grok-imagine/template");
+    if (!state.template) {
+      root.innerHTML = fieldSkeletonMarkup("템플릿");
+      state.template = await api("/api/grok-imagine/template");
+    }
     const template = state.template;
     root.innerHTML = `<h2 id="template-title">${escapeHtml(template.title)}</h2><p>슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다. 사람·자막 위치·금지 항목은 바꾸지 않습니다.</p><div class="slot-grid">${renderWorldSlotFields(template.slots)}</div>${renderLockTable(template.locks)}`;
   } catch (error) {
@@ -1024,9 +1050,9 @@ function renderJobDetail(job) {
     ? `<label class="field-label">슬롯</label><dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><div class="slot-grid">${renderWorldSlotFields(slotEntries.map(([id, value]) => ({ id, label: id, value, editable: true })), { editable: true, namePrefix: "detail-slot" })}</div>`
     : `<label class="field-label">슬롯</label><p class="empty-note">슬롯 없음</p><dl class="draft-slots"></dl>`;
   const frozen = state.health?.imagine?.frozen !== false;
-  const saveDraft = `<button class="secondary-button" id="save-draft" type="button">저장</button>`;
+  const saveDraft = `<button class="primary-button" id="save-draft" type="button">저장</button>`;
   const runDraft = status.key === "draft"
-    ? `<button class="primary-button" id="run-draft" type="button"${frozen ? " disabled" : ""}>공장 시작</button>${frozen ? `<p class="inspect-frozen">크레딧 402</p>` : ""}`
+    ? `<button class="secondary-button" id="run-draft" type="button"${frozen ? " disabled" : ""}>공장 시작</button>${frozen ? `<p class="inspect-frozen">크레딧 402</p>` : ""}`
     : "";
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status)
     ? `<div class="upload-box"><label for="detail-upload"><span>클립을 올리세요</span><small>MP4, MOV, WebM</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local" type="button">업로드한 클립으로 편집</button></div>`
@@ -1096,6 +1122,7 @@ function syncPollTimer() {
 
 async function refreshJobs() {
   const payload = await api("/api/jobs");
+  state.jobsReady = true;
   const previousIds = state.jobs.map((job) => job.id).join("\n");
   const nextIds = payload.jobs.map((job) => job.id).join("\n");
   const selectedId = state.selectedJobId;
@@ -1324,6 +1351,10 @@ function openMachine(event) {
 function renderMachineSheet() {
   const root = $("#machine-root");
   if (!root) return;
+  if (!state.health) {
+    root.innerHTML = fieldSkeletonMarkup("사양");
+    return;
+  }
   const health = state.health || {};
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
@@ -1583,6 +1614,7 @@ function bindEvents() {
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
   $("#create-tile")?.addEventListener("click", openCreate);
+  $("#short-create")?.addEventListener("click", openCreate);
   $("#menu-create")?.addEventListener("click", (event) => {
     closeMenu();
     if (state.view === "watch") state.returnToWatch = true;
