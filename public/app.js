@@ -4,7 +4,7 @@ import { bindWatchFeed, playWatchFeed, stopWatchFeed, syncWatchFeed } from "./wa
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const APP_TITLE = "PS4_JUSTDOIT";
-const VIEWS = ["create", "detail", "template", "settings", "watch", "grid"];
+const VIEWS = ["create", "detail", "template", "settings", "machine", "watch", "grid"];
 const state = {
   jobs: [],
   selectedJobId: null,
@@ -13,6 +13,7 @@ const state = {
   template: null,
   createPreview: null,
   live: {},
+  health: null,
   sse: null,
   livePoll: null,
   poll: null,
@@ -73,12 +74,14 @@ function setView(view, options = {}) {
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
   document.body.classList.toggle("watch-open", state.view === "watch");
-  document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings"].includes(state.view));
+  document.body.classList.toggle("overlay-open", ["create", "detail", "template", "settings", "machine"].includes(state.view));
   syncWatchFeed(watchFeed, state.view);
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
   if (templateOverlay) templateOverlay.hidden = state.view !== "template";
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
+  const machineOverlay = $("#machine-overlay");
+  if (machineOverlay) machineOverlay.hidden = state.view !== "machine";
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
   if (!options.skipHash) {
@@ -92,6 +95,7 @@ function setView(view, options = {}) {
   }
   if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
+  if (state.view === "machine") renderMachineSheet();
   if (state.view === "watch") renderWatchFeed({ focus: true, instant: Boolean(options.instant) });
   syncDocumentTitle();
 }
@@ -152,7 +156,8 @@ function sizeShortsGrid() {
   if (!width) return;
   const col = (window.innerHeight - 52 - gap) * 9 / 16;
   if (!(col > 0)) return;
-  const n = Math.max(1, Math.ceil((width + gap) / (col + gap)));
+  const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
+  const n = Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));
   grid.style.setProperty("--n", String(n));
 }
 
@@ -164,19 +169,6 @@ function jobCardsMarkup() {
   return state.jobs.map(renderShortCard).join("");
 }
 
-function appendFeedPage() {
-  const grid = $("#shorts-grid");
-  const sentinel = grid?.querySelector(".feed-sentinel");
-  if (!grid || !sentinel || !state.jobs.length) return;
-  const copies = grid.querySelectorAll(".short-card[data-job-id]").length / state.jobs.length;
-  if (copies >= 12) return;
-  const slot = document.createElement("template");
-  slot.innerHTML = jobCardsMarkup();
-  const cards = [...slot.content.querySelectorAll(".short-card[data-job-id]")];
-  sentinel.before(slot.content);
-  cards.forEach(bindShortCard);
-}
-
 function bindFeedScroll() {
   const grid = $("#shorts-grid");
   state.feedObserver?.disconnect();
@@ -184,7 +176,7 @@ function bindFeedScroll() {
   const sentinel = grid?.querySelector(".feed-sentinel");
   if (!grid || !sentinel) return;
   state.feedObserver = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) appendFeedPage();
+    if (entries.some((entry) => entry.isIntersecting)) grid.scrollTo({ top: 0, behavior: "smooth" });
   }, { root: grid, rootMargin: "600px" });
   state.feedObserver.observe(sentinel);
 }
@@ -205,7 +197,8 @@ function watchSignature() {
 function renderWatchSlide(job) {
   const preview = shortPreview(job);
   const poster = bust(preview.poster, job.updatedAt);
-  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" aria-hidden="true"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div></div></article>`;
+  const downloads = shortDownloads(job).map((item) => `<a class="watch-dl-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
+  return `<article class="watch-slide" data-job-id="${escapeHtml(job.id)}" data-video-url="${escapeHtml(preview.videoUrl)}"><div class="watch-stage">${poster ? `<img class="watch-poster" src="${escapeHtml(poster)}" alt="" />` : ""}<video playsinline loop preload="none"></video><button type="button" class="watch-back" aria-label="뒤로">←</button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2>${escapeHtml(job.topic || "쇼츠")}</h2></div></div>${downloads ? `<div class="watch-dl">${downloads}</div>` : ""}</div></article>`;
 }
 
 function bindWatchSlide(slide) {
@@ -230,8 +223,13 @@ function bindWatchSlide(slide) {
     }
   });
   video?.addEventListener("timeupdate", () => {
-    const bar = slide.querySelector(".watch-progress i");
-    if (bar && video.duration) bar.style.width = `${(video.currentTime / video.duration) * 100}%`;
+    const progress = slide.querySelector(".watch-progress");
+    const bar = progress?.querySelector("i");
+    if (video.duration) {
+      const value = Math.round((video.currentTime / video.duration) * 100);
+      if (bar) bar.style.width = `${value}%`;
+      progress?.setAttribute("aria-valuenow", String(value));
+    }
   });
   slide.querySelector(".watch-back")?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -275,22 +273,36 @@ function bindWatchScroller() {
     state.watchLockUntil = now + 520;
     stepWatch(event.deltaY > 0 ? 1 : -1);
   }, { passive: false });
+  let touchY = 0;
+  scroller.addEventListener("touchstart", (event) => {
+    touchY = event.touches[0]?.clientY || 0;
+  }, { passive: true });
+  scroller.addEventListener("touchend", (event) => {
+    if (state.view !== "watch") return;
+    const dy = (event.changedTouches[0]?.clientY || 0) - touchY;
+    if (Math.abs(dy) > 50) stepWatch(dy < 0 ? 1 : -1);
+  }, { passive: true });
 }
 
 function activateWatchSlide(jobId) {
+  const jobs = watchableJobs();
+  const index = jobs.findIndex((job) => job.id === jobId);
+  const nextId = index >= 0 ? jobs[index + 1]?.id : null;
   $$(".watch-slide").forEach((slide) => {
     const video = slide.querySelector("video");
     const active = slide.dataset.jobId === jobId;
+    const preloadNext = slide.dataset.jobId === nextId;
     slide.classList.toggle("active", active);
     if (!video) return;
-    if (active) {
+    if (active || preloadNext) {
       const url = slide.dataset.videoUrl;
       if (video.getAttribute("src") !== url) {
         video.src = url;
         video.playsInline = true;
         video.loop = true;
+        video.preload = "auto";
       }
-      if (document.body.classList.contains("watch-open")) {
+      if (active && document.body.classList.contains("watch-open")) {
         const play = playWatchFeed(video);
         if (play) {
           play.catch(() => {
@@ -301,8 +313,10 @@ function activateWatchSlide(jobId) {
             playWatchFeed(video)?.catch(() => {});
           }).finally(() => slide.classList.remove("paused"));
         }
-      } else {
+      } else if (active) {
         stopWatchFeed(slide.closest("#watch-feed") || $("#watch-feed"));
+      } else {
+        video.pause();
       }
     } else {
       video.pause();
@@ -405,7 +419,7 @@ function renderShortCard(job) {
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<article class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.topic || "쇼츠")}" aria-pressed="${job.id === state.selectedJobId && (state.view === "detail" || state.view === "watch")}"><div class="short-card-thumb">${media}<span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span>${generating}</div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">상세</button></article>`;
+  return `<article class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.topic || "쇼츠")}" aria-pressed="${job.id === state.selectedJobId && (state.view === "detail" || state.view === "watch")}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">상세</button></article>`;
 }
 
 function upsertJob(partial) {
@@ -419,12 +433,46 @@ function upsertJob(partial) {
   return state.jobs[0];
 }
 
+function canDeleteJob(job) {
+  return job && ["draft", "failed", "queued"].includes(job.status);
+}
+
+async function deleteJob(jobId) {
+  const job = state.jobs.find((item) => item.id === jobId);
+  if (!canDeleteJob(job)) return;
+  if (!window.confirm(`삭제할까요? ${job.topic || "쇼츠"}`)) return;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    state.jobs = state.jobs.filter((item) => item.id !== jobId);
+    if (state.selectedJobId === jobId) {
+      state.selectedJobId = null;
+      setView("grid");
+    }
+    renderJobs();
+    showToast("삭제했습니다.");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 function bindShortCard(card) {
   const jobId = card.dataset.jobId;
   card.querySelector(".short-card-open")?.addEventListener("click", () => openJob(jobId));
   card.querySelector(".short-card-detail")?.addEventListener("click", (event) => {
     event.stopPropagation();
     openDetail(jobId);
+  });
+  let hold = 0;
+  const startHold = () => {
+    hold = window.setTimeout(() => deleteJob(jobId), 520);
+  };
+  const cancelHold = () => window.clearTimeout(hold);
+  card.addEventListener("pointerdown", startHold);
+  card.addEventListener("pointerup", cancelHold);
+  card.addEventListener("pointerleave", cancelHold);
+  card.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    void deleteJob(jobId);
   });
 }
 
@@ -489,6 +537,7 @@ function renderJobs() {
     $$(".short-card[data-job-id]").forEach(bindShortCard);
     bindFeedScroll();
     sizeShortsGrid();
+    renderStudioChrome();
   }
   if (state.view === "watch") {
     renderWatchFeed();
@@ -535,7 +584,9 @@ function renderLiveFactory(job) {
   }
   root.hidden = false;
   const still = currentStillUrl(job);
-  root.innerHTML = `<p class="live-now">${escapeHtml(currentStageText(job))}</p>${still ? `<div class="live-still-wrap"><img class="live-still" src="${escapeHtml(still)}" alt="" /></div>` : ""}`;
+  const timeline = state.live[job.id]?.timeline?.length ? state.live[job.id].timeline : defaultFactoryStages();
+  const stages = `<ol class="live-stages">${timeline.map((stage) => `<li class="live-stage status-${escapeHtml(String(stage.status || "WAIT").toLowerCase())}"><b>${escapeHtml(stage.label || stage.id)}</b><span>${escapeHtml(stage.message || stage.status || "")}</span></li>`).join("")}</ol>`;
+  root.innerHTML = `<p class="live-now">${escapeHtml(currentStageText(job))}</p>${still ? `<div class="live-still-wrap"><img class="live-still" src="${escapeHtml(still)}" alt="" /></div>` : ""}${stages}`;
 }
 
 function applyLiveSnapshot(jobId, payload) {
@@ -558,8 +609,13 @@ function applyLiveSnapshot(jobId, payload) {
     job.updatedAt = payload.job.updatedAt || job.updatedAt;
   }
   const selected = state.jobs.find((item) => item.id === jobId);
-  renderLiveFactory(selected);
-  patchDetailProgress(selected);
+  if (state.view === "detail" && selected && ["completed", "failed"].includes(selected.status)) {
+    renderJobDetail(selected);
+    renderLiveFactory(selected);
+  } else {
+    renderLiveFactory(selected);
+    patchDetailProgress(selected);
+  }
   patchGridCard(selected);
 }
 
@@ -756,15 +812,26 @@ function renderJobDetail(job) {
   const factsMarkup = facts.length
     ? `<ul class="draft-facts">${facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>`
     : "";
+  const scriptText = String(job.scriptDraft || job.script?.oneLiner || "").trim();
+  const scriptMarkup = scriptText ? `<pre class="draft-script">${escapeHtml(scriptText)}</pre>` : "";
+  const slotEntries = Object.entries(job.worldSlots || {}).filter(([, value]) => String(value || "").trim());
+  const slotsMarkup = slotEntries.length
+    ? `<dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`
+    : "";
+  const frozen = state.health?.imagine?.frozen !== false;
+  const runDraft = status.key === "draft"
+    ? `<button class="primary-button" id="run-draft" type="button"${frozen ? " disabled" : ""}>공장 시작</button>`
+    : "";
   const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status)
     ? `<div class="upload-box"><label for="detail-upload"><span>클립을 올리세요</span><small>MP4, MOV, WebM</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local" type="button">업로드한 클립으로 편집</button></div>`
     : "";
   const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
   const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${factsMarkup}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}<p class="download-note">업로드는 나중에</p></div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
+  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(job.topic)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div>${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}<div class="preview-wrap">${previewMedia}</div>${scriptMarkup}${slotsMarkup}${factsMarkup}${runDraft}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
   $("#detail-upload")?.addEventListener("change", uploadLocalClips);
   $("#run-local")?.addEventListener("click", runSelectedJob);
   $("#retry-job")?.addEventListener("click", runSelectedJob);
+  $("#run-draft")?.addEventListener("click", runSelectedJob);
 }
 
 async function uploadLocalClips(event) {
@@ -846,7 +913,7 @@ async function createProduction(event) {
   const scriptDraft = $("#script-draft")?.value.trim() || "";
   const ttsProvider = $("#create-tts-provider")?.value || "edge";
   const ttsVoice = $("#create-tts-voice")?.value || "";
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked };
+  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked, draftOnly: true };
   if (ttsVoice) {
     void api("/api/settings", {
       method: "PUT",
@@ -859,10 +926,9 @@ async function createProduction(event) {
       }
     }).catch(() => {});
   }
-  if (provider === "gemini-browser" || provider === "grok-imagine") body.autoStart = true;
   const button = event.submitter;
   button.disabled = true;
-  button.querySelector("span").textContent = "시작하는 중…";
+  button.querySelector("span").textContent = "저장 중…";
   try {
     const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     state.selectedJobId = payload.job.id;
@@ -872,29 +938,12 @@ async function createProduction(event) {
       if (state.highlightJobId === payload.job.id) state.highlightJobId = null;
       document.querySelector(`[data-job-id="${CSS.escape(payload.job.id)}"]`)?.classList.remove("just-created");
     }, 4200);
-    if (provider === "grok-imagine") {
-      setView("detail");
-      renderJobs();
-      watchJobLive(payload.job);
-    } else {
-      setView("grid");
-    }
+    setView("detail");
+    renderJobs();
     await refreshJobs();
-    showToast(provider === "grok-imagine" ? "공장을 시작했습니다." : provider === "gemini-browser" ? "Gemini 작업을 시작했습니다." : provider === "local-video" ? "로컬 영상 작업을 만들었습니다." : "로컬 클립 작업을 만들었습니다.");
+    showToast("초안을 저장했습니다.");
   } catch (error) { showToast(error.message, "error"); }
-  finally { button.disabled = false; button.querySelector("span").textContent = "시작"; }
-}
-
-async function connectBrowser() {
-  const button = $("#browser-start");
-  if (!button) return;
-  button.disabled = true;
-  button.textContent = "Chrome 시작 중…";
-  try {
-    const result = await api("/api/browser/start", { method: "POST" });
-    showToast(result.started ? "전용 Chrome을 시작했습니다." : "Chrome 연결을 확인했습니다.");
-  } catch (error) { showToast(error.message, "error"); }
-  finally { button.disabled = false; button.textContent = "Gemini Chrome 연결"; }
+  finally { button.disabled = false; button.querySelector("span").textContent = "초안 저장"; }
 }
 
 function syncProviderForm() {
@@ -904,18 +953,14 @@ function syncProviderForm() {
   const voiceover = $("#voiceover");
   const clipCount = $("#clip-count");
   const format = $("#format");
-  const browser = $("#browser-start");
   if (factsField) factsField.hidden = provider !== "grok-imagine";
   if (help) {
     help.textContent = provider === "grok-imagine"
       ? "Grok Imagine 공장은 PATH의 grok 또는 ~/.grok/bin/grok와 이미 되어 있는 SuperGrok OAuth만 사용합니다. XAI_API_KEY와 grok login/logout은 쓰지 않으며 Gemini로 대체하지 않습니다."
       : provider === "local-video"
         ? "로컬 영상 모델은 설정된 생성기 명령이 필요합니다."
-        : provider === "local"
-          ? "업로드한 로컬 클립만 편집합니다."
-          : "Gemini는 전용 Chrome 세션을 재사용합니다. 로그인·CAPTCHA는 우회하지 않습니다.";
+        : "업로드한 로컬 클립만 편집합니다.";
   }
-  if (browser) browser.hidden = provider !== "gemini-browser";
   if (voiceover) {
     if (provider === "grok-imagine") {
       voiceover.checked = false;
@@ -955,6 +1000,45 @@ function openSettings(event) {
   setView("settings");
 }
 
+function openMachine(event) {
+  event?.preventDefault();
+  $("#library-more")?.removeAttribute("open");
+  setView("machine");
+}
+
+function renderMachineSheet() {
+  const root = $("#machine-root");
+  if (!root) return;
+  const health = state.health || {};
+  const grok = Boolean(health.capabilities?.grokCli);
+  const ffmpeg = Boolean(health.capabilities?.ffmpeg);
+  const frozen = health.imagine?.frozen !== false;
+  root.innerHTML = `<h2 id="machine-title">머신</h2><p>grok ${grok ? "준비" : "없음"} · ffmpeg ${ffmpeg ? "준비" : "없음"} · Imagine ${frozen ? "402 동결" : "열림"}</p>`;
+}
+
+function renderStudioChrome() {
+  const health = state.health || {};
+  const grok = Boolean(health.capabilities?.grokCli);
+  const ffmpeg = Boolean(health.capabilities?.ffmpeg);
+  const frozen = health.imagine?.frozen !== false;
+  const chips = $("#studio-chips");
+  if (chips) {
+    chips.hidden = false;
+    chips.innerHTML = `<button type="button" class="studio-chip${grok ? "" : " warn"}" data-open-machine>grok</button><button type="button" class="studio-chip${ffmpeg ? "" : " warn"}" data-open-machine>ffmpeg</button><button type="button" class="studio-chip${frozen ? " danger" : ""}" data-open-machine>402</button>`;
+    chips.querySelectorAll("[data-open-machine]").forEach((button) => button.addEventListener("click", openMachine));
+  }
+  const banner = $("#feed-banner");
+  if (banner) {
+    const reasons = [];
+    if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
+    if (frozen) reasons.push("Imagine 402");
+    if (!ffmpeg) reasons.push("ffmpeg 없음");
+    if (!grok) reasons.push("grok 없음");
+    banner.hidden = reasons.length === 0;
+    banner.textContent = reasons.join(" · ");
+  }
+}
+
 function applySettingsToForm(settings) {
   const chirp = Boolean(settings?.chirpAvailable);
   ["settings-chirp-option", "create-chirp-option"].forEach((id) => {
@@ -979,6 +1063,11 @@ async function hydrateStudioSettings() {
     const payload = await api("/api/settings");
     state.settings = payload.settings;
     applySettingsToForm(payload.settings);
+    const songs = $("#settings-bgm-songs");
+    if (songs) {
+      const count = Array.isArray(payload.songs) ? payload.songs.length : 0;
+      songs.textContent = count ? `곡 ${count}개` : "곡 없음";
+    }
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -1081,7 +1170,8 @@ async function importLibrary(event) {
     await refreshJobs();
     const imported = payload.imported?.length || 0;
     const seeded = payload.seeded?.length || 0;
-    showToast(imported ? `${imported}편을 올렸습니다.` : seeded ? "시드 카드가 있습니다." : "라이브러리를 다시 읽었습니다.");
+    const roots = payload.roots?.length || 0;
+    showToast(`가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`);
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -1114,7 +1204,6 @@ function bindEvents() {
   $("#create-form").addEventListener("submit", createProduction);
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
-  $("#browser-start")?.addEventListener("click", connectBrowser);
   $("#create-tile")?.addEventListener("click", openCreate);
   $("#menu-create")?.addEventListener("click", (event) => {
     $("#library-more")?.removeAttribute("open");
@@ -1130,6 +1219,7 @@ function bindEvents() {
   $("#close-short")?.addEventListener("click", closeOverlays);
   $("#close-template")?.addEventListener("click", closeOverlays);
   $("#close-settings")?.addEventListener("click", closeOverlays);
+  $("#close-machine")?.addEventListener("click", closeOverlays);
   $("#settings-form")?.addEventListener("submit", saveSettings);
   $("#draft-script")?.addEventListener("click", () => { void draftScriptFromTopic(); });
   $("#preview-voice")?.addEventListener("click", () => { void previewVoice("#preview-voice", "#voice-preview-audio", "#create-tts-provider", "#create-tts-voice"); });
@@ -1181,9 +1271,9 @@ function bindEvents() {
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) $$("#watch-scroller video").forEach((video) => video.pause());
-    else if (state.view === "watch" && state.selectedJobId) activateWatchSlide(state.selectedJobId);
+    if (document.hidden) stopWatchFeed($("#watch-feed"));
   });
+  window.addEventListener("pagehide", () => stopWatchFeed($("#watch-feed")));
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });
   $$(".toggle-label input").forEach((input) => input.addEventListener("change", syncToggleLabels));
   syncToggleLabels();
@@ -1191,10 +1281,10 @@ function bindEvents() {
 
 async function warnIfFactoryToolsMissing() {
   try {
-    const health = await api("/api/health");
-    if (!health.capabilities?.ffmpeg) showToast("ffmpeg가 없습니다.", "error");
+    state.health = await api("/api/health");
+    renderStudioChrome();
   } catch {
-    // Home stays the library grid even if health is unreachable.
+    renderStudioChrome();
   }
 }
 

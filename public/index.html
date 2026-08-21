@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0e14" />
     <title>PS4_JUSTDOIT</title>
     <link rel="stylesheet" href="/styles.css" />
@@ -20,6 +20,7 @@
         <h1>PS4_JUSTDOIT</h1>
       </a>
       <div class="studio-chrome-actions">
+        <div id="studio-chips" class="studio-chips" hidden></div>
         <details class="library-more" id="library-more">
           <summary class="library-more-toggle" aria-label="메뉴">
             <svg class="library-gear" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
@@ -35,6 +36,7 @@
           </div>
         </details>
       </div>
+      <p id="feed-banner" class="feed-banner" hidden></p>
       </header>
       <div class="shorts-grid" id="shorts-grid" aria-live="polite" aria-label="쇼츠">
         <button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠">
@@ -43,10 +45,10 @@
       </div>
     </main>
 
-    <div class="studio-overlay" id="create-overlay" hidden>
+    <div class="studio-overlay feed-card" id="create-overlay" hidden>
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel create-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="create-title">
-        <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-create">← 라이브러리</button></div>
+        <button type="button" class="draft-close" id="close-create" aria-label="닫기">×</button>
         <form class="create-panel" id="create-form">
           <h2 id="create-title">새 쇼츠</h2>
           <label class="field-label" for="topic">주제</label>
@@ -61,7 +63,7 @@
           </div>
           <label class="field-label" for="script-draft" hidden id="script-draft-label">대본 초안</label>
           <textarea id="script-draft" rows="5" hidden placeholder="이렇게 설계된 겁니다."></textarea>
-          <button class="primary-button" type="submit"><span>시작</span></button>
+          <button class="primary-button" type="submit"><span>초안 저장</span></button>
           <details class="advanced-create" id="advanced-create">
             <summary>고급</summary>
             <p class="form-footnote">월드 슬롯, 다른 생성 소스, 로컬 업로드는 여기에만 있습니다. 공장은 공식 grok CLI만 쓰며 Gemini로 대체하지 않습니다.</p>
@@ -91,12 +93,10 @@
             <label class="field-label" for="provider">생성 소스</label>
             <select id="provider" aria-describedby="provider-help">
               <option value="grok-imagine" selected>Grok Imagine 공장</option>
-              <option value="gemini-browser">Gemini · Chrome</option>
               <option value="local-video">로컬 영상 모델</option>
               <option value="local">로컬 클립 업로드</option>
             </select>
             <p id="provider-help" class="form-footnote">Grok Imagine 공장은 PATH의 grok 또는 ~/.grok/bin/grok와 이미 되어 있는 SuperGrok OAuth만 사용합니다. XAI_API_KEY와 grok login/logout은 쓰지 않으며 Gemini로 대체하지 않습니다.</p>
-            <button class="ghost-button" id="browser-start" type="button">Gemini Chrome 연결</button>
             <div class="toggle-row">
               <label class="toggle-label"><input id="captions" type="checkbox" checked /><span class="toggle"></span><span>한국어 자막 <b class="toggle-state" data-toggle-state="captions">켜짐</b></span></label>
               <label class="toggle-label"><input id="voiceover" type="checkbox" /><span class="toggle"></span><span>macOS 음성 <b class="toggle-state" data-toggle-state="voiceover">꺼짐</b></span></label>
@@ -120,10 +120,10 @@
       </div>
     </div>
 
-    <div class="studio-overlay" id="settings-overlay" hidden>
+    <div class="studio-overlay feed-card" id="settings-overlay" hidden>
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel settings-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-settings">← 라이브러리</button></div>
+        <button type="button" class="draft-close" id="close-settings" aria-label="닫기">×</button>
         <form class="create-panel" id="settings-form">
           <h2 id="settings-title">설정</h2>
           <label class="field-label" for="settings-tts-provider">나레이션</label>
@@ -140,22 +140,30 @@
           <button class="ghost-button" id="settings-preview-voice" type="button">목소리 미리 듣기</button>
           <audio id="settings-preview-audio" hidden controls></audio>
           <label class="toggle-label settings-bgm"><input id="settings-bgm-enabled" type="checkbox" /><span class="toggle"></span><span>배경 음악 <b class="toggle-state" data-toggle-state="settings-bgm-enabled">꺼짐</b></span></label>
+          <p id="settings-bgm-songs" class="form-footnote">곡 없음</p>
           <label class="field-label" for="settings-bgm-volume">배경 음량</label>
           <input id="settings-bgm-volume" type="range" min="0" max="0.4" step="0.01" value="0.08" />
           <p class="form-footnote">resource/songs 또는 workspace/songs에 오디오를 넣습니다. 없으면 나레이션만 씁니다.</p>
           <label class="field-label" for="settings-ffmpeg">ffmpeg 경로</label>
           <input id="settings-ffmpeg" type="text" placeholder="비우면 PATH" />
-          <p class="form-footnote">업로드는 나중에</p>
           <button class="primary-button" type="submit"><span>저장</span></button>
         </form>
       </div>
     </div>
 
-    <div class="studio-overlay" id="template-overlay" hidden>
+    <div class="studio-overlay feed-card" id="template-overlay" hidden>
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel template-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="template-title">
-        <div class="overlay-chrome"><button type="button" class="ghost-button overlay-back" id="close-template">← 라이브러리</button></div>
+        <button type="button" class="draft-close" id="close-template" aria-label="닫기">×</button>
         <div id="template-root" class="template-root"><p id="template-title">잠긴 프롬프트를 불러오는 중</p></div>
+      </div>
+    </div>
+
+    <div class="studio-overlay feed-card" id="machine-overlay" hidden>
+      <div class="overlay-backdrop" data-close-view="grid"></div>
+      <div class="overlay-panel machine-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="machine-title">
+        <button type="button" class="draft-close" id="close-machine" aria-label="닫기">×</button>
+        <div id="machine-root" class="machine-root"><h2 id="machine-title">머신</h2></div>
       </div>
     </div>
 

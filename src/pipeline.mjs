@@ -87,6 +87,17 @@ export async function updateJob(jobId, patch) {
   return next;
 }
 
+export async function deleteJob(jobId) {
+  const job = await readJob(jobId);
+  if (!["draft", "failed", "queued"].includes(job.status)) {
+    const error = new Error("초안·실패·대기 작업만 삭제할 수 있습니다.");
+    error.status = 409;
+    throw error;
+  }
+  await rm(join(JOBS_DIR, jobId), { recursive: true, force: true });
+  return { id: jobId, deleted: true };
+}
+
 export async function listJobs() {
   await ensureWorkspace();
   const entries = await readdir(JOBS_DIR, { withFileTypes: true });

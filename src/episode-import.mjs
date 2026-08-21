@@ -263,7 +263,7 @@ export async function ensureLibraryEpisodes({
     }
     jobs.push(job);
   }
-  return { jobs, seeded, imported, catalog };
+  return { jobs, seeded, imported, catalog, roots };
 }
 
 function isPlaceholderThumb(item = {}) {

@@ -92,6 +92,8 @@ test("empty library gets seed cards; dropped masters attach once", async () => {
   assert.ok(first.seeded.includes("seed-playground-cistern"));
   assert.ok(first.imported.includes("seed-playground-cistern"));
   assert.ok(first.imported.includes("seed-refuge-floor"));
+  assert.ok(Array.isArray(first.roots));
+  assert.ok(first.roots.length > 0);
   assert.equal(findJobForSlug(first.jobs, "playground-cistern").imported, true);
   assert.equal(findJobForSlug(first.jobs, "playground-cistern").status, "completed");
   assert.ok(existsSync(join(jobsDir, "seed-playground-cistern", "master.mp4")));

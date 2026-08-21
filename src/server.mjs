@@ -8,6 +8,7 @@ import {
   ROOT,
   copyUpload,
   createJob,
+  deleteJob,
   ensureWorkspace,
   listJobs,
   readAnalysis,
@@ -727,7 +728,10 @@ async function health() {
     },
     analysis: existsSync(ANALYSIS_PATH),
     rlmAnalysis: existsSync(join(ROOT, "data/rlm-benchmark-analysis.json")),
-    factoryQueue: grokQueue.snapshot()
+    factoryQueue: grokQueue.snapshot(),
+    imagine: {
+      frozen: process.env.PS4_IMAGINE_FROZEN !== "0"
+    }
   };
 }
 
@@ -997,6 +1001,13 @@ async function handleApi(request, url) {
       }
     }
     if (request.method === "GET" && !suffix) return json(await readJob(jobId));
+    if (request.method === "DELETE" && !suffix) {
+      try {
+        return json(await deleteJob(jobId));
+      } catch (error) {
+        return errorResponse(error, error.status || 400);
+      }
+    }
     if (request.method === "POST" && suffix === "run") {
       const current = await readJob(jobId);
       if (activeJobs.has(jobId) || isFreshRunningJob(current)) return errorResponse(new Error("이미 실행 중인 작업입니다."), 409);

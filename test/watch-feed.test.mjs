@@ -122,4 +122,9 @@ test("watch-feed module and app wire stop before leave", async () => {
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view\)/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /pagehide/);
+  assert.match(app, /aria-valuenow/);
+  assert.match(app, /Math\.abs\(dy\) > 50/);
+  assert.match(app, /preload = "auto"/);
+  assert.match(app, /class="watch-dl"/);
 });
