@@ -1,3 +1,4 @@
+/* Design lock: docs/stylegallery-lock.md + consumer-reference/ps4-justdoit.json */
 :root {
   --bg: #0b0d12;
   --surface: #141821;
@@ -14,6 +15,7 @@
   --amber: #f0bd68;
   --sans: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
   --watch-col: min(100vw, calc(100dvh * 9 / 16));
+  --overlay-w: min(400px, calc(100vw - 40px));
   --title: 17px;
   --body: 15px;
   --label: 13px;

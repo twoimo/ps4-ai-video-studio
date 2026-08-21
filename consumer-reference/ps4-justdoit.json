@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "id": "ps4-justdoit-studio",
+  "artifact_mode": "consumer_local",
+  "maturity": "stable",
+  "support": { "status": "active" },
+  "owner": { "name": "PS4_JUSTDOIT", "enforcement": "placeholder" },
+  "fixture_independence": "related",
+  "review_independence": "single_account",
+  "handoff": { "status": "declared", "record": "consumer-reference/ps4-justdoit.json" }
+}
