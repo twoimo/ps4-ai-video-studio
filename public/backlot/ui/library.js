@@ -66,7 +66,7 @@ function card(p) {
   return el("a", { class: `lib-card${p.live ? " live-card" : ""}`, href: `/p/${p.project_id}${staticSuffix}`, style: "text-decoration:none;color:inherit" },
     poster,
     el("div", { class: "lib-body" },
-      el("h3", {}, (p.title || p.project_id).toUpperCase()),
+      el("h3", {}, p.title || p.project_id),
       meta,
       p.stage_states.length ? miniRail(p.stage_states) : null,
     ),

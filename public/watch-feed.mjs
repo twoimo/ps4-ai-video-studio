@@ -160,6 +160,7 @@ function ensureWatchPlayer(root) {
   if (video) {
     attachWatchVideo(video);
     watchPlayers.set(root, video);
+    bindWatchSound(root, video);
     return video;
   }
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
@@ -168,6 +169,7 @@ function ensureWatchPlayer(root) {
   video = document.createElement("video");
   attachWatchVideo(video);
   watchPlayers.set(root, video);
+  bindWatchSound(root, video);
   const stage = root.querySelector?.(".watch-player .watch-stage") || root.querySelector?.(".watch-stage");
   if (stage) {
     if (!video.parentElement) stage.appendChild(video);
@@ -221,6 +223,8 @@ export function stopWatchFeed(root) {
     else video.parentElement?.removeChild?.(video);
   }
   if (root) watchPlayers.delete(root);
+  const sound = root?.querySelector?.(".watch-sound");
+  if (sound) sound.hidden = true;
 }
 
 function revealWatchVideo(video) {
@@ -234,11 +238,28 @@ function playResult(play) {
   return play && typeof play.then === "function" ? play : Promise.resolve(play);
 }
 
+function syncWatchSound(root, video) {
+  const button = root?.querySelector?.(".watch-sound");
+  if (!button) return;
+  button.hidden = !video?.muted;
+}
+
+function bindWatchSound(root, video) {
+  if (!video) return;
+  if (video.dataset?.soundBound !== "1") {
+    if (video.dataset) video.dataset.soundBound = "1";
+    video.addEventListener?.("volumechange", () => syncWatchSound(root, video));
+    video.addEventListener?.("play", () => syncWatchSound(root, video));
+  }
+  syncWatchSound(root, video);
+}
+
 function finishWatchPlay(video, root, epoch) {
   if (isStaleWatch(root, epoch)) {
     try { video.pause(); } catch { /* ignore stale play */ }
     return video;
   }
+  bindWatchSound(root, video);
   return revealWatchVideo(video);
 }
 
@@ -426,7 +447,8 @@ function chromeHit(event) {
     || closest(".watch-back")
     || closest(".watch-menu")
     || closest(".watch-materials-toggle")
-    || closest(".watch-close, .watch-back, .watch-menu, .watch-materials-toggle")
+    || closest(".watch-sound")
+    || closest(".watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-sound")
   );
 }
 
@@ -471,6 +493,19 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   root.addEventListener("click", (event) => {
     if (chromeHit(event)) {
       pager.swallowClick = false;
+      if (event.target?.closest?.(".watch-sound")) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        const video = watchPlayerVideo(root);
+        if (video) {
+          video.muted = false;
+          if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+          const play = playWatchMedia(video, root, watchEpochOf(root));
+          if (play && typeof play.catch === "function") play.catch(() => {});
+        }
+        syncWatchSound(root, video);
+        return;
+      }
       if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
         event.preventDefault?.();
         event.stopPropagation?.();

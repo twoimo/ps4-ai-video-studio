@@ -1212,7 +1212,7 @@ body:not(.first) .approval-review { animation: none; }
 }
 #studio-chrome .library-board-toggle:hover,
 #studio-chrome .library-more-toggle:hover { color: var(--text, #ececef); }
-.slate .clapper,
+.clapper { display: none; }
 .slate .wordmark { display: none; }
 body:has(#studio-chrome) .wrap:not(#app) .slate h1,
 body:has(#studio-chrome) .wrap:not(#app) .slate > div:has(h1),
@@ -1266,3 +1266,6 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
   border-bottom: 0;
   background: none;
 }
+
+/* Studio extra: library titles keep written case */
+.wrap:not(#app) .lib-body h3 { text-transform: none; }

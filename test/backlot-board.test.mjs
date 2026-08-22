@@ -181,7 +181,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.ok(css.indexOf("Studio extra: materials") < css.indexOf("Studio extra: full-width wrap"), "full-width override follows materials extra");
   assert.match(css, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
   assert.doesNotMatch(css, /\.slate \.wordmark\s*\{[^}]*text-transform:\s*uppercase/);
-  assert.match(css, /\.slate \.clapper,\s*\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.clapper\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
+  assert.match(libraryJs, /el\("h3", \{\}, p\.title \|\| p\.project_id\)/);
+  assert.doesNotMatch(libraryJs, /\(p\.title \|\| p\.project_id\)\.toUpperCase\(\)/);
   assert.match(css, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
   assert.match(css, /\.wrap#app \.slate/);
   assert.match(css, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);

@@ -583,6 +583,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(feed, /document\.createElement\("video"\)/);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
+  assert.match(app, /class="watch-sound"/);
+  assert.match(html, /class="watch-sound"[^>]*hidden/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
@@ -756,7 +759,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /Isolate shared chrome/);
   assert.match(boardCss, /isolation:\s*isolate/);
   assert.doesNotMatch(boardCss, /\.slate \.wordmark\s*\{[^}]*text-transform:\s*uppercase/);
-  assert.match(boardCss, /\.slate \.clapper,\s*\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.clapper\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(boardCss, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
   assert.match(boardCss, /\.wrap#app \.slate/);

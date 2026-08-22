@@ -735,7 +735,14 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /closest\("\.watch-column"\)/);
   assert.match(feed, /playMutedThenUnmutePlay[\s\S]*finishWatchPlay/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
-  assert.match(feed, /\.watch-close, \.watch-back/);
+  assert.match(feed, /\.watch-close, \.watch-back, \.watch-menu, \.watch-materials-toggle, \.watch-sound/);
+  assert.match(feed, /function syncWatchSound/);
+  assert.match(feed, /button\.hidden = !video\?\.muted/);
+  assert.match(feed, /closest\?\.\("\.watch-sound"\)/);
+  assert.match(html, /class="watch-sound"/);
+  assert.match(app, /class="watch-sound"/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound/);
+  assert.match(css, /\.watch-sound\[hidden\]/);
   assert.equal(feed.includes("letterbox"), false);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);

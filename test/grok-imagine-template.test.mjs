@@ -122,7 +122,10 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(js, /renderLockedSpec/);
   assert.match(js, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
   assert.match(js, /title\.textContent = "템플릿을 불러오지 못했습니다"/);
-  assert.match(page, /잠긴 프롬프트를 불러오는 중/);
+  assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
+  assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
+  assert.match(specJs, /<h2>잠긴 프롬프트<\/h2>/);
+  assert.doesNotMatch(specJs, /<h2>\$\{escapeSpecHtml\(spec\.title\)\}<\/h2>/);
   assert.ok(js.includes("템플릿을 불러오지 못했습니다"), "fail fallback leaves 불러오는 중");
   assert.match(specJs, /id="spec-corpus"/);
   assert.match(specJs, /id="spec-types"/);

@@ -11,7 +11,7 @@ async function loadTemplatePage() {
     const spec = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(spec.error || `요청 실패 (${response.status})`);
     document.title = `템플릿 · ${APP_TITLE}`;
-    if (title) title.textContent = spec.title || "잠긴 프롬프트";
+    if (title) title.textContent = "잠긴 프롬프트";
     root.innerHTML = renderLockedSpec(spec);
   } catch (error) {
     document.title = `템플릿 · ${APP_TITLE}`;

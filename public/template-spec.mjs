@@ -51,7 +51,7 @@ export function renderLockedSpec(spec = {}) {
   const setups = tally.setups || {};
   return `
       <header class="spec-section" style="border-top:0">
-        <h2>${escapeSpecHtml(spec.title)}</h2>
+        <h2>잠긴 프롬프트</h2>
         <p class="spec-lede">${escapeSpecHtml(spec.id)} · ${escapeSpecHtml(spec.date)}. 슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다. 잠금·코퍼스·스켈레톤은 읽기 전용입니다.</p>
       </header>
       <section class="spec-section" id="spec-corpus">
