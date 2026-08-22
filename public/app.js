@@ -128,7 +128,6 @@ function setView(view, options = {}) {
   const library = $("#shorts");
   if (next !== "watch") clearWatchSize(watchFeed);
   state.view = next;
-  if (state.view !== "watch") closeOpenWatchInspect();
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("template-open", state.view === "template");
   document.body.classList.toggle("overlay-open", ["create", "detail", "settings", "machine"].includes(state.view));
@@ -297,17 +296,6 @@ function watchFeedMarkup(jobs) {
     return `${watchSlideMarkup(jobs[jobs.length - 1], "head")}${jobs.map((job) => watchSlideMarkup(job)).join("")}${watchSlideMarkup(jobs[0], "tail")}`;
   }
   return jobs.map((job) => watchSlideMarkup(job)).join("");
-}
-
-function closeWatchInspect() {
-  const feed = $("#watch-feed");
-  if (!feed?.classList.contains("inspect-open")) return false;
-  feed.classList.remove("inspect-open");
-  return true;
-}
-
-function closeOpenWatchInspect() {
-  return closeWatchInspect();
 }
 
 function renderWatchSlide(job) {
@@ -1678,7 +1666,6 @@ function bindEvents() {
     if (event.key === "Escape") {
       if (closeMenu()) return;
       if (state.view === "watch") {
-        if (closeOpenWatchInspect()) return;
         stopWatchFeed($("#watch-feed"));
         openHome();
         return;
@@ -1712,12 +1699,10 @@ function bindEvents() {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      closeOpenWatchInspect();
       stopWatchFeed($("#watch-feed"));
     }
   });
   window.addEventListener("pagehide", () => {
-    closeOpenWatchInspect();
     stopWatchFeed($("#watch-feed"));
   });
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });

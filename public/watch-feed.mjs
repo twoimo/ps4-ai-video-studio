@@ -342,20 +342,12 @@ function chromeHit(event) {
   const closest = event.target?.closest?.bind(event.target);
   if (!closest) return false;
   return Boolean(
-    closest(".watch-inspect")
-    || closest(".watch-close")
+    closest(".watch-close")
     || closest(".watch-back")
     || closest(".watch-menu")
     || closest(".watch-materials-toggle")
-    ||     closest(".watch-inspect-dismiss")
-    || closest(".watch-inspect-close")
-    || closest(".watch-dl")
-    || closest(".watch-inspect, .watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-inspect-dismiss, .watch-inspect-close, .watch-dl")
+    || closest(".watch-close, .watch-back, .watch-menu, .watch-materials-toggle")
   );
-}
-
-function toggleInspect(root) {
-  root?.classList?.toggle("inspect-open");
 }
 
 function setSwiping(root, pager, value) {
@@ -398,12 +390,6 @@ export function bindWatchFeed(root, onBack, onActive) {
   root.addEventListener("click", (event) => {
     if (chromeHit(event)) {
       pager.swallowClick = false;
-      if (event.target?.closest?.(".watch-inspect-close, .watch-inspect-dismiss")) {
-        event.preventDefault?.();
-        event.stopPropagation?.();
-        root?.classList?.remove("inspect-open");
-        return;
-      }
       if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
         event.preventDefault?.();
         event.stopPropagation?.();
@@ -495,7 +481,6 @@ export function bindWatchFeed(root, onBack, onActive) {
   root.addEventListener("pointerup", (event) => endPointer(event, false));
   root.addEventListener("pointercancel", (event) => endPointer(event, true));
   root.addEventListener("wheel", (event) => {
-    if (event.target?.closest?.(".watch-inspect")) return;
     if (pager.swiping || root.dataset?.swiping === "1") return;
     const dy = event.deltaY || 0;
     if (Math.abs(dy) <= 40) return;
