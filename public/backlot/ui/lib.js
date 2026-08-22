@@ -98,7 +98,7 @@ export function subscribe(url, onChange) {
     clearTimeout(timer);
     timer = setTimeout(onChange, 250);
   };
-  source.onerror = () => { /* EventSource auto-reconnects */ };
+  source.onerror = () => { /* reconnect; do not close */ };
   return source;
 }
 

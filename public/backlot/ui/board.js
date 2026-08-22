@@ -1,5 +1,6 @@
 // Backlot project board — renders BoardState and stays live via SSE.
 
+import { displayTitle } from "../../shorts-ui.mjs";
 import {
   STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
   getJSON, mediaURL, projectIdFromPath, subscribe, thumbURL, waveBars,
@@ -92,7 +93,7 @@ function renderSlate(s) {
     el("div", { class: "clapper" }),
     el("div", {},
       el("a", { class: "wordmark", href: "/", style: "text-decoration:none" }, "Backlot"),
-      el("h1", {}, s.title || "보드"),
+      el("h1", {}, displayTitle(s.title, "보드")),
     ),
     ...chips,
     el("div", { class: "spacer" }),
@@ -296,7 +297,7 @@ function renderScriptCard(s) {
 
   const card = el("div", { class: "script-card script-preview", title: "Click to expand full script", onclick: openScriptModal },
     stamp,
-    el("div", { class: "sp-title" }, script.title || s.title),
+    el("div", { class: "sp-title" }, displayTitle(script.title, s.title, "보드")),
     el("div", { class: "sp-meta" },
       `script · ${fmtDuration(script.total_duration_seconds)} · ${(script.sections || []).length} sections`),
     ...scriptSections(script, 4),
@@ -481,7 +482,7 @@ function artifactReviewTitle(name, artifact, s) {
   if (name === "edit_decisions") return "Edit decisions";
   if (name === "render_report") return "Render report";
   if (name === "publish_log") return "Publish plan";
-  return artifact.title || artifact.name || s.title;
+  return displayTitle(artifact.title, artifact.name, s.title, "보드");
 }
 
 function renderApprovalReview(s) {
@@ -1064,7 +1065,7 @@ function tickReplay() {
 function render() {
   if (!state) return;
   const s = replay ? stateAt(state, replay.t) : state;
-  document.title = s.title || "보드";
+  document.title = displayTitle(s.title, "보드");
   document.body.classList.toggle("first", firstPaint);
   firstPaint = false;
   app.innerHTML = "";

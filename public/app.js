@@ -1,4 +1,4 @@
-import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, jobsFromListPayload, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
+import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -52,7 +52,18 @@ async function api(path, options = {}) {
   } catch (error) {
     throw new Error(friendlyJobError(stripErrorPrefix(error)));
   }
-  const payload = await response.json().catch(() => ({}));
+  let text;
+  try {
+    text = await response.text();
+  } catch {
+    throw new Error(friendlyJobError("불러오지 못했습니다."));
+  }
+  let payload;
+  try {
+    payload = parseJsonText(text);
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
   if (!response.ok) {
     const creditMark = String(400 + 2);
     const text = String(payload.error || "");
@@ -855,8 +866,6 @@ function watchJobLive(job) {
       void refreshJobs();
     });
     source.onerror = () => {
-      source.close();
-      if (state.sse === source) state.sse = null;
       if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
     };
     state.sse = source;

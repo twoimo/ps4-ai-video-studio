@@ -219,10 +219,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(libJs.includes("404"), false);
   assert.match(boardJs, /if \(st\.status === "failed"\) return "실패"/);
   assert.match(boardJs, /프로젝트를 찾을 수 없습니다/);
-  assert.match(boardJs, /document\.title = s\.title \|\| "보드"/);
-  assert.match(boardJs, /s\.title \|\| "보드"/);
+  assert.match(boardJs, /document\.title = displayTitle\(s\.title, "보드"\)/);
+  assert.match(boardJs, /displayTitle\(s\.title, "보드"\)/);
   assert.equal(boardJs.includes("Backlot — ${s.title}"), false);
   assert.equal(boardJs.includes("${s.title}"), false);
+  assert.doesNotMatch(libJs, /source\.onerror[\s\S]{0,80}source\.close/);
   assert.match(boardJs, /function boardUnchanged/);
   assert.match(boardJs, /if \(boardUnchanged\(state, next\)\) return/);
   assert.match(libraryJs, /projectsFromListPayload\(await getJSON\("\/api\/projects"\)\)/);

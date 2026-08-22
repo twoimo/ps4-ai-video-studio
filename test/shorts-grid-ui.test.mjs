@@ -10,6 +10,7 @@ import {
   importBroughtCopy,
   jobsFromListPayload,
   parseJsonText,
+  displayTitle,
   projectsFromListPayload,
   inspectVideoDownloads,
   isPlaceholderThumbnail,
@@ -109,6 +110,13 @@ test("short cards map status, hook still, and duration", () => {
   assert.throws(() => parseJsonText(""), /불러오지 못했습니다/);
   assert.throws(() => parseJsonText("{"), /불러오지 못했습니다/);
   assert.throws(() => parseJsonText("not-json"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("<!DOCTYPE html><html><body>x</body></html>"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("<html><body>x</body></html>"), /불러오지 못했습니다/);
+  assert.equal(displayTitle(undefined), "");
+  assert.equal(displayTitle("undefined"), "");
+  assert.equal(displayTitle(null, "보드"), "보드");
+  assert.equal(displayTitle("undefined", "보드"), "보드");
+  assert.equal(displayTitle("한강 갑문", "보드"), "한강 갑문");
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "draft", topic: "abcd" }), true);
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "running", topic: "abcd" }), false);
   assert.equal(settingsSaveFailMessage("ECONNREFUSED"), "설정을 저장하지 못했습니다.");
@@ -1085,6 +1093,10 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /function enqueueToast/);
   assert.match(app, /enqueueToast\.current/);
   assert.match(app, /enqueueToast\(error, "error"\)/);
+  assert.match(app, /parseJsonText\(text\)/);
+  assert.equal(app.includes("const payload = await response.json().catch(() => ({}))"), false);
+  assert.match(app, /source\.onerror = \(\) => \{/);
+  assert.doesNotMatch(app, /source\.onerror = \(\) => \{\s*source\.close\(\)/);
   assert.match(app, /jobsFromListPayload\(payload\)/);
   assert.match(app, /shortCardUnchanged\(prev, job\)/);
   assert.equal(app.includes("payload.jobs.map"), false);

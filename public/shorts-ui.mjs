@@ -67,9 +67,21 @@ export function projectsFromListPayload(payload) {
   return [];
 }
 
+export function displayTitle(...values) {
+  for (const value of values) {
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (!text || text === "undefined" || text === "null") continue;
+    return text;
+  }
+  return "";
+}
+
 export function parseJsonText(text) {
   const raw = String(text ?? "").trim();
-  if (!raw) throw new Error("불러오지 못했습니다.");
+  if (!raw || raw.startsWith("<") || /^<!doctype\s+html/i.test(raw) || /^<html[\s>]/i.test(raw)) {
+    throw new Error("불러오지 못했습니다.");
+  }
   try {
     return JSON.parse(raw);
   } catch {
