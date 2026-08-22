@@ -939,7 +939,7 @@ async function refreshCreatePreview() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        topic,
+        topic: topic.trim(),
         facts,
         worldSlots,
         scriptDraft: $("#script-draft")?.value?.trim() || ""
