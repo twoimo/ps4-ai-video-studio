@@ -798,8 +798,8 @@ test("sticky 저장 sits at bottom 0 and satellite import clears the batch hint"
   assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
   assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
   assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
-  assert.match(satellite, /rememberStudioCreateMode\(sessionStorage, "single"\)/);
-  assert.match(satellite, /export async function importSatelliteLibrary[\s\S]*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(satellite, /rememberStudioCreateMode\(globalThis\.sessionStorage, "single"\)/);
+  assert.match(satellite, /export async function importSatelliteLibrary[\s\S]*rememberStudioCreateMode\(globalThis\.sessionStorage, "single"\)/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

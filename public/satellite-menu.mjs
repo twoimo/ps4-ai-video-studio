@@ -33,7 +33,7 @@ function showSatelliteImportResult(root, payload = {}) {
 }
 
 export async function importSatelliteLibrary(root = document, request = fetch) {
-  rememberStudioCreateMode(sessionStorage, "single");
+  rememberStudioCreateMode(globalThis.sessionStorage, "single");
   resetSatelliteMenu(root);
   const overlay = root.querySelector?.("#satellite-menu");
   if (overlay) overlay.hidden = false;
