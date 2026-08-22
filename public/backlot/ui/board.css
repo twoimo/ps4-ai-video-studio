@@ -104,74 +104,7 @@ body {
   background-image: var(--bg-vignette);
 }
 
-html, body { width: 100%; min-height: 100dvh; }
-.wrap {
-  width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 0 max(28px, env(safe-area-inset-right)) max(80px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
-  box-sizing: border-box;
-}
-.wrap.work {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-  align-items: start;
-  gap: 22px;
-  max-width: none;
-}
-.wrap.work #app { min-width: 0; }
-.materials {
-  min-width: 0;
-  position: sticky;
-  top: 16px;
-  padding: 16px;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  background: var(--surface);
-}
-.materials .inspect-stack { display: grid; gap: 10px; }
-.materials .inspect-stack-head h2 { margin: 0; font-size: 16px; }
-.materials .field-label { margin: 0; color: var(--text-2); font-size: 12px; }
-.materials input, .materials textarea {
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-}
-.materials textarea { min-height: 72px; resize: vertical; }
-.materials .inspect-caption { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 8px; align-items: start; }
-.materials .inspect-caption b { padding-top: 10px; color: var(--text-3); font-size: 13px; }
-.materials .inspect-caption b i { display: block; font-style: normal; font-weight: 500; font-size: 10px; }
-.materials .inspect-files { display: flex; flex-wrap: wrap; gap: 8px; }
-.materials .inspect-files a {
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  text-decoration: none;
-  font-size: 13px;
-}
-.materials .inspect-actions { display: grid; gap: 8px; }
-.materials .inspect-save, .materials .inspect-regen {
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-.materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
-.materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
-.materials .materials-status[data-kind="error"], .materials .inspect-frozen { color: var(--red); }
+.wrap { max-width: 1440px; margin: 0 auto; padding: 0 28px 80px; }
 
 /* film grain — barely-there, keeps the dark room from feeling flat */
 body::after {
@@ -1031,7 +964,7 @@ body:not(.first) .approval-review { animation: none; }
 
 /* responsive project board */
 @media (max-width: 900px) {
-  .wrap { max-width: none; width: 100%; }
+  .wrap { max-width: none; width: 100%; padding: 0 18px 64px; overflow-x: clip; }
   .slate { flex-wrap: wrap; align-items: flex-start; gap: 10px 12px; }
   .slate > div:nth-child(2) { min-width: 0; flex: 1 1 240px; }
   .slate h1 { overflow-wrap: anywhere; }
@@ -1048,17 +981,7 @@ body:not(.first) .approval-review { animation: none; }
   .stage { flex: 0 0 82px; }
   .stage .name { font-size: calc(10px * var(--fs-scale)); max-width: 76px; overflow-wrap: anywhere; text-align: center; }
   .stage .sub { max-width: 76px; font-size: calc(9.5px * var(--fs-scale)); }
-}
 
-@media (max-width: 720px) {
-  html, body { overflow-x: clip; }
-  .wrap {
-    max-width: none;
-    width: 100%;
-    padding: 0 max(18px, env(safe-area-inset-right)) max(64px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-  }
-  .wrap.work { display: block; }
-  .materials { position: static; margin-top: 22px; }
   .board { display: block; }
   .main-col, aside { width: 100%; min-width: 0; }
   aside { margin-top: 20px; }
@@ -1079,29 +1002,10 @@ body:not(.first) .approval-review { animation: none; }
   .section-title { flex-wrap: wrap; }
   .section-title .meta { margin-left: 0; }
   .approval-review-head { flex-wrap: wrap; gap: 12px; }
-
-  .drawer .drawer-head .close {
-    min-width: 44px;
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .modal-bg {
-    padding: 16px 12px max(24px, env(safe-area-inset-bottom));
-    align-items: flex-end;
-  }
-  .modal-close {
-    top: max(12px, env(safe-area-inset-top));
-    right: max(12px, env(safe-area-inset-right));
-    min-height: 44px;
-  }
-  .replay-bar { flex-wrap: wrap; }
-  .replay-bar .rp-btn { min-height: 44px; }
 }
 
 @media (max-width: 520px) {
-  .wrap { padding: 0 max(12px, env(safe-area-inset-right)) max(52px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .wrap { padding: 0 12px 52px; }
   .slate { padding-top: 14px; }
   .clapper { width: 30px; height: 23px; }
   .slate .wordmark { font-size: calc(10px * var(--fs-scale)); }
@@ -1137,23 +1041,61 @@ body:not(.first) .approval-review { animation: none; }
   .approval-status { white-space: normal; }
 }
 
-/* Secondary captioned master after the living board.
-   Never a board column and never a 400 overlay card. */
-.studio-master {
-  margin-top: 28px;
-  width: min(220px, 42vw);
-  border: 1px solid var(--border);
-  background: var(--media-bg);
-  overflow: hidden;
+/* Studio extra: materials after the original wrap. Does not change OM layout. */
+.materials {
+  box-sizing: border-box;
+  max-width: 1440px;
+  margin: 0 auto 80px;
+  padding: 0 28px;
 }
-.studio-master video {
-  display: block;
+.materials[hidden] { display: none; }
+.materials .inspect-stack {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.materials .inspect-stack-head h2 { margin: 0; font-size: 16px; }
+.materials .field-label { margin: 0; color: var(--text-2); font-size: 12px; }
+.materials input, .materials textarea {
   width: 100%;
-  height: auto;
-  aspect-ratio: 9 / 16;
-  object-fit: cover;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
 }
-.studio-return {
+.materials textarea { min-height: 72px; resize: vertical; }
+.materials .inspect-caption { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 8px; align-items: start; }
+.materials .inspect-caption b { padding-top: 10px; color: var(--text-3); font-size: 13px; }
+.materials .inspect-caption b i { display: block; font-style: normal; font-weight: 500; font-size: 10px; }
+.materials .inspect-files { display: flex; flex-wrap: wrap; gap: 8px; }
+.materials .inspect-files a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
   text-decoration: none;
-  color: inherit;
+  font-size: 13px;
 }
+.materials .inspect-actions { display: grid; gap: 8px; }
+.materials .inspect-save, .materials .inspect-regen {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
+.materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
+.materials .materials-status[data-kind="error"], .materials .inspect-frozen { color: var(--red); }

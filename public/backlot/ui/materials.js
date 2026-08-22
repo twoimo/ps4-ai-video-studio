@@ -47,10 +47,7 @@ function bindMaterials(frozen) {
     }
   });
   root.querySelector("[data-inspect-regen], .inspect-regen")?.addEventListener("click", async () => {
-    if (frozen) {
-      status("크레딧 부족", "error");
-      return;
-    }
+    if (frozen) return;
     try {
       await saveMaterials();
       const response = await fetch(`/api/jobs/${encodeURIComponent(projectId)}/run`, { method: "POST" });

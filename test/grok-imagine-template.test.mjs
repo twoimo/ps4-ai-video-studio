@@ -16,6 +16,7 @@ import {
 import { getLockedSpec, SHOT_TYPE_IDS } from "../src/grok-imagine-spec.mjs";
 import { previewFactoryPrompts, stillPromptFor } from "../src/grok-imagine-factory.mjs";
 import { createJob } from "../src/pipeline.mjs";
+import { handleTemplatePage } from "../src/template-page.mjs";
 
 test("locked 2026-08-21 template returns slots, skeleton, and locks", () => {
   const template = getLockedTemplate();
@@ -104,11 +105,57 @@ test("createJob stores editable world slot overrides", async () => {
 
 test("studio HTML exposes a prompt template surface", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
-  assert.match(html, /id="template-overlay"/);
-  assert.match(html, /class="template-studio" id="template-overlay"/);
-  assert.match(html, /id="open-template">템플릿</);
+  const page = await readFile(join(process.cwd(), "public", "template", "index.html"), "utf8");
+  const js = await readFile(join(process.cwd(), "public", "template", "template.js"), "utf8");
+  const specJs = await readFile(join(process.cwd(), "public", "template-spec.mjs"), "utf8");
+  const app = await readFile(join(process.cwd(), "public", "app.js"), "utf8");
+  const css = await readFile(join(process.cwd(), "public", "styles.css"), "utf8");
+  assert.equal(html.includes("id=\"template-overlay\""), false);
+  assert.equal(html.includes("id=\"short-overlay\""), false);
+  assert.match(page, /class="template-studio" id="template-page"/);
+  assert.match(page, /id="template-root"/);
+  assert.match(page, /src="\/template\/template\.js"/);
+  assert.match(js, /renderLockedSpec/);
+  assert.match(js, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
+  assert.match(specJs, /id="spec-corpus"/);
+  assert.match(specJs, /id="spec-types"/);
+  assert.match(specJs, /id="spec-skeleton"/);
+  assert.match(specJs, /id="spec-locks"/);
+  assert.match(specJs, /슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다/);
+  assert.equal(specJs.includes("editable: true"), false);
+  assert.match(html, /id="open-template"[^>]*href="\/template"/);
+  assert.match(html, /id="open-template-menu"[^>]*href="\/template"/);
   assert.match(html, /id="create-world-slots"/);
-  assert.equal(html.indexOf('id="shorts-grid"') < html.indexOf('id="template-overlay"'), true);
+  assert.match(app, /location\.replace\("\/template"\)/);
+  assert.equal(app.includes('setView("template")'), false);
+  assert.equal(app.includes('setView("detail")'), false);
+  assert.equal(app.includes("#short-overlay"), false);
+  assert.equal(app.includes('trapOverlay("#short-overlay")'), false);
+  assert.equal(html.includes("공장 시작"), false);
+  assert.equal(app.includes("공장 시작"), false);
+  assert.equal(page.includes("watch-inspect"), false);
+  assert.equal(js.includes("watch-inspect"), false);
+  assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
+  assert.equal(css.includes("body.template-open"), false);
+  assert.equal(html.includes("쇼츠 공장"), false);
+  assert.equal(page.includes("쇼츠 공장"), false);
+  assert.equal(js.includes("쇼츠 공장"), false);
+  assert.equal(html.includes("크레딧 부족"), false);
+  assert.equal(page.includes("크레딧 부족"), false);
+  assert.equal(js.includes("크레딧 부족"), false);
+  assert.equal(specJs.includes("크레딧 부족"), false);
+  assert.equal(app.includes("크레딧 부족"), false);
+  assert.equal(html.includes("크레딧 402"), false);
+  assert.equal(app.includes("크레딧 402"), false);
+
+  const response = await handleTemplatePage(new Request("http://studio.local/template"), new URL("http://studio.local/template"));
+  assert.ok(response);
+  assert.equal(response.status, 200);
+  const served = await response.text();
+  assert.match(served, /id="template-page"/);
+  assert.match(served, /src="\/template\/template\.js\?v=/);
+  assert.doesNotMatch(served, /id="template-overlay"/);
+  assert.doesNotMatch(served, /role="dialog"/);
 });
 
 test("locked spec API payload has the 288 corpus and every factory lock", () => {

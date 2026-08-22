@@ -6,20 +6,6 @@ export async function getJSON(url) {
   return res.json();
 }
 
-export function pauseBacklotMedia(root = document) {
-  root.querySelectorAll("video, audio").forEach((media) => {
-    try { media.pause(); } catch { /* leave must never throw */ }
-  });
-}
-
-export function bindBacklotLeave(root = document) {
-  const pause = () => pauseBacklotMedia(root);
-  window.addEventListener("pagehide", pause);
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) pause();
-  });
-}
-
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

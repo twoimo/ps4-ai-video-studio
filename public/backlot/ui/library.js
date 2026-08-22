@@ -1,4 +1,4 @@
-import { bindBacklotLeave, el, fmtAgo, getJSON, pauseBacklotMedia, subscribe, thumbURL } from "/backlot/ui/lib.js";
+import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
 const THEME_KEY = "backlot.theme";
@@ -28,8 +28,6 @@ function renderThemeToggle() {
 
 applyTheme(currentTheme);
 document.getElementById("liveBadge").before(renderThemeToggle());
-bindBacklotLeave();
-document.getElementById("backlot-close")?.addEventListener("click", () => pauseBacklotMedia());
 
 function miniRail(states) {
   const rail = el("div", { class: "mini-rail" });
@@ -65,7 +63,7 @@ function card(p) {
   );
 
   const staticSuffix = new URLSearchParams(location.search).has("static") ? "?static=1" : "";
-  return el("a", { class: `lib-card${p.live ? " live-card" : ""}`, href: `/backlot/p/${p.project_id}${staticSuffix}`, style: "text-decoration:none;color:inherit" },
+  return el("a", { class: `lib-card${p.live ? " live-card" : ""}`, href: `/p/${p.project_id}${staticSuffix}`, style: "text-decoration:none;color:inherit" },
     poster,
     el("div", { class: "lib-body" },
       el("h3", {}, (p.title || p.project_id).toUpperCase()),
