@@ -725,8 +725,8 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
   assert.equal(css.includes("translateX(100%)"), false);
-  assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
-  assert.match(css, /\.watch-close[\s\S]*left:\s*12px/);
+  assert.match(css, /\.watch-close[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
   assert.match(css, /\.watch-close\s*\{[^}]*background:\s*none/);
   assert.match(css, /\.watch-close\s*\{[^}]*border:\s*0/);
