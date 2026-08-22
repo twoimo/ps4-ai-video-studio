@@ -763,7 +763,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("toggleWatchSurface"), false);
   assert.equal(app.includes('state.view === "watch" ? "라이브러리" : "보기"'), false);
   assert.match(app, /function openHome/);
-  assert.match(app, /function openHome\(event\) \{\s*event\?\.preventDefault\(\);\s*stopWatchFeed\(\$\("#watch-feed"\)\);/);
+  assert.match(app, /function openHome\(event\) \{\s*event\?\.preventDefault\(\);\s*skipStaleHashChange\(\);\s*stopWatchFeed\(\$\("#watch-feed"\)\);/);
   assert.match(app, /영상 주제를 4자 이상 입력하세요/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*showImportResult\(\{ error:/);
   assert.doesNotMatch(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
