@@ -1815,12 +1815,12 @@ function bindEvents() {
   $("#delete-overlay")?.addEventListener("click", (event) => {
     if (deleteClickSwallowed(event)) return;
   }, true);
-  $("#close-delete")?.addEventListener("click", (event) => {
-    if (!dismissStudioLayer()) closeDeleteConfirm(event);
+  $("#close-delete")?.addEventListener("click", () => {
+    if (!dismissStudioLayer()) closeDeleteConfirm();
   });
   $("#delete-confirm")?.addEventListener("click", () => { void confirmDeleteJob(); });
-  $$("[data-close-delete]").forEach((node) => node.addEventListener("click", (event) => {
-    if (!dismissStudioLayer()) closeDeleteConfirm(event);
+  $$("[data-close-delete]").forEach((node) => node.addEventListener("click", () => {
+    if (!dismissStudioLayer()) closeDeleteConfirm();
   }));
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome, (jobId) => notifyActive(jobId), (jobId) => {
