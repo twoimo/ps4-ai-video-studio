@@ -1,6 +1,6 @@
 // Backlot project board — renders BoardState and stays live via SSE.
 
-import { displayTitle } from "../../shorts-ui.mjs";
+import { displayItemLabel, displayPipelineLabel, displayStageLabel, displayTitle } from "../../shorts-ui.mjs";
 import {
   STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
   getJSON, mediaURL, projectIdFromPath, readStoredTheme, writeStoredTheme, subscribe, thumbURL, waveBars,
@@ -50,7 +50,7 @@ applyTheme(currentTheme);
 function renderSlate(s) {
   const board = s.storyboard;
   const chips = [
-    el("span", { class: "chip" }, `${s.pipeline.pipeline_type} pipeline`),
+    el("span", { class: "chip" }, displayPipelineLabel(s.pipeline.pipeline_type)),
     board && board.total_duration_seconds
       ? el("span", { class: "chip" }, `${board.scenes.length} scenes · ${fmtDuration(board.total_duration_seconds)}`)
       : null,
@@ -154,7 +154,7 @@ function renderRail(s) {
     },
       el("span", { class: "line" }),
       el("span", { class: "node" }, icon),
-      el("span", { class: "name" }, RAIL_LABELS[st.name] || st.name),
+      el("span", { class: "name" }, RAIL_LABELS[st.name] || displayStageLabel(st.name)),
       el("span", { class: "sub", style: "white-space:pre-line" },
         st.undeclared ? `${stageSub(st)}\nunlisted`.trim() : stageSub(st)),
     );
@@ -241,7 +241,7 @@ function renderDrawer(s) {
   }
   if (!shown) {
     body.append(el("div", { class: "hint" },
-      st.status === "pending" ? "This stage hasn't run yet." : "No canonical artifact found on disk for this stage."));
+      st.status === "pending" ? "이 단계는 아직 안 돌았어요." : "이 단계의 항목이 없습니다."));
   }
 
   return el("div", { class: "drawer" },
@@ -307,7 +307,7 @@ function renderScriptCard(s) {
 }
 
 function humanize(value) {
-  return String(value || "artifact").replaceAll("_", " ");
+  return displayItemLabel(value);
 }
 
 function shortText(value, limit = 180) {
@@ -476,13 +476,13 @@ function artifactReviewTitle(name, artifact, s) {
     const concept = (artifact.concept_options || []).find((item) => item.id === selected);
     return (concept && concept.title) || "Production proposal";
   }
-  if (name === "research_brief") return artifact.topic || "Research brief";
-  if (name === "scene_plan") return "Scene plan";
-  if (name === "asset_manifest") return "Generated assets";
-  if (name === "edit_decisions") return "Edit decisions";
-  if (name === "render_report") return "Render report";
-  if (name === "publish_log") return "Publish plan";
-  return displayTitle(artifact.title, artifact.name, s.title, "보드");
+  if (name === "research_brief") return artifact.topic || displayItemLabel(name);
+  if (name === "scene_plan") return displayItemLabel(name);
+  if (name === "asset_manifest") return displayItemLabel(name);
+  if (name === "edit_decisions") return displayItemLabel(name);
+  if (name === "render_report") return displayItemLabel(name);
+  if (name === "publish_log") return displayItemLabel(name);
+  return displayTitle(artifact.title, artifact.name, s.title, "보드") || displayItemLabel(name);
 }
 
 function renderApprovalReview(s) {
@@ -543,7 +543,7 @@ function openScriptModal() {
   if (!script) return;
   modal.innerHTML = "";
   modal.append(
-    el("span", { class: "modal-close", onclick: closeModal }, "ESC · CLOSE"),
+    el("span", { class: "modal-close", onclick: closeModal }, "닫기"),
     el("div", { class: "modal-page" },
       el("div", { class: "script-card", style: "cursor:default" },
         el("div", { class: "sp-title" }, script.title || state.title),
@@ -562,7 +562,7 @@ function openNarrModal(card) {
   const meta = [sceneLabel(card.id), card.section_label, fmtDuration(card.duration_seconds)]
     .filter(Boolean).join(" · ");
   modal.append(
-    el("span", { class: "modal-close", onclick: closeModal }, "ESC · CLOSE"),
+    el("span", { class: "modal-close", onclick: closeModal }, "닫기"),
     el("div", { class: "modal-page" },
       el("div", { class: "script-card", style: "cursor:default" },
         el("div", { class: "sp-meta" }, meta),
@@ -914,7 +914,7 @@ function renderNoState(s) {
   return el("div", { class: "notice", style: "border-color:#2b2b33;background:var(--surface-2);color:var(--text-3)" },
     el("span", { style: "font-size:calc(15px * var(--fs-scale))" }, "◌"),
     el("span", {},
-      el("b", { style: "color:var(--text-2)" }, "No pipeline state. "),
+      el("b", { style: "color:var(--text-2)" }, "단계가 없습니다. "),
       "This project has no checkpoints — Backlot is showing what it found on disk. ",
       "Runs that follow the checkpoint protocol get the full board."));
 }

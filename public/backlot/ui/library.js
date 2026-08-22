@@ -1,4 +1,4 @@
-import { displayTitle, friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
+import { displayPipelineLabel, displayStageLabel, displayTitle, friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
 import { el, fmtAgo, getJSON, readStoredTheme, writeStoredTheme, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
@@ -66,7 +66,7 @@ function miniRail(states) {
     const cls = s.status === "completed" ? "d"
       : s.status === "in_progress" ? "a"
       : s.status === "awaiting_human" ? "w" : "";
-    const name = RAIL_LABELS[s.name] || s.name;
+    const name = RAIL_LABELS[s.name] || displayStageLabel(s.name);
     const status = RAIL_STATUS[s.status] || s.status;
     rail.append(el("i", { class: cls, title: `${name}: ${status}` }));
   }
@@ -83,13 +83,13 @@ function card(p) {
   if (p.live && p.active_stage) {
     poster.append(el("span", { class: "lp-live" },
       el("span", { class: "dot" }),
-      p.awaiting_human ? "◈ 확인 필요" : `진행 · ${p.active_stage.toUpperCase()}`));
+      p.awaiting_human ? "◈ 확인 필요" : `진행 · ${displayStageLabel(p.active_stage)}`));
   } else if (p.awaiting_human) {
     poster.append(el("span", { class: "lp-live" }, "◈ 확인 필요"));
   }
 
   const meta = el("div", { class: "lb-meta" },
-    el("span", { class: "chip" }, p.pipeline_type || "unknown"),
+    el("span", { class: "chip" }, displayPipelineLabel(p.pipeline_type)),
     p.scene_count ? el("span", { class: "chip" }, `${p.scene_count} scenes`) : null,
     p.render_count ? el("span", { class: "chip" }, `${p.render_count} renders`) : null,
     el("span", { class: "when" }, fmtAgo(p.last_activity)),

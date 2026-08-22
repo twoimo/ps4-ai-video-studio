@@ -258,14 +258,23 @@ function playResult(play) {
 function syncWatchSound(root, video) {
   const button = root?.querySelector?.(".watch-sound");
   if (!button) return;
-  button.hidden = !video?.muted;
+  button.hidden = !(video?.muted || video?.volume === 0);
 }
 
 function bindWatchSound(root, video) {
   if (!video) return;
   if (video.dataset?.soundBound !== "1") {
     if (video.dataset) video.dataset.soundBound = "1";
-    video.addEventListener?.("volumechange", () => syncWatchSound(root, video));
+    video.__watchVolume = video.volume;
+    video.addEventListener?.("volumechange", () => {
+      const prev = video.__watchVolume;
+      video.__watchVolume = video.volume;
+      if (prev === 0 && video.volume > 0) {
+        video.muted = false;
+        if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+      }
+      syncWatchSound(root, video);
+    });
     video.addEventListener?.("play", () => syncWatchSound(root, video));
   }
   syncWatchSound(root, video);
@@ -512,6 +521,25 @@ function bindWatchResize(root) {
   observer.observe(root);
 }
 
+function bindWatchFlip(root) {
+  if (!root || root.dataset?.flipBound === "1") return;
+  if (root.dataset) root.dataset.flipBound = "1";
+  let aspect = (globalThis.innerWidth || 1) / Math.max(1, globalThis.innerHeight || 1);
+  const replay = () => {
+    if (!globalThis.document?.body?.classList?.contains("watch-open")) return;
+    const next = (globalThis.innerWidth || 1) / Math.max(1, globalThis.innerHeight || 1);
+    const flipped = Math.abs(next - aspect) >= 0.02;
+    aspect = next;
+    sizeWatchFeed(root);
+    applyWatchTransform(root, { animate: false });
+    if (!flipped) return;
+    wrapWatchFeed(root);
+    playWatchFeed(root);
+  };
+  globalThis.addEventListener?.("orientationchange", replay);
+  globalThis.addEventListener?.("resize", replay);
+}
+
 export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   if (!root) return;
   const pager = pagerOf(root);
@@ -529,6 +557,7 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   ensureWatchColumn(root);
   createWatchPlayer(root);
   bindWatchResize(root);
+  bindWatchFlip(root);
   const track = watchTrack(root);
   root.addEventListener("click", (event) => {
     if (pager.swallowClick) {

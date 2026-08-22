@@ -129,6 +129,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /id="template-root"/);
   assert.match(page, /class="template-skeleton"/);
   assert.match(page, /src="\/studio-chrome\.mjs"/);
+  assert.match(page, /class="template-back"[^>]*href="\/"/);
   assert.match(page, /src="\/template\/template\.js"/);
   assert.match(js, /renderLockedSpec/);
   assert.match(js, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
@@ -172,7 +173,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(app.includes("공장 시작"), false);
   assert.equal(page.includes("watch-inspect"), false);
   assert.equal(js.includes("watch-inspect"), false);
-  assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
+  assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*var\(--vv-height,\s*100dvh\)/);
   assert.match(css, /\.template-studio\s*\{[^}]*padding:\s*0 0 max\(48px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
   assert.match(css, /\.template-back\s*\{[^}]*width:\s*44px/);
   assert.match(css, /\.template-back\s*\{[^}]*height:\s*44px/);

@@ -11,6 +11,9 @@ import {
   jobsFromListPayload,
   parseJsonText,
   displayTitle,
+  displayItemLabel,
+  displayPipelineLabel,
+  displayStageLabel,
   projectsFromListPayload,
   inspectVideoDownloads,
   isAbortError,
@@ -240,6 +243,13 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.match(chrome, /--vv-bottom/);
   assert.match(chrome, /visualViewport/);
+  assert.match(chrome, /export function visualViewportKeyboardInset/);
+  assert.match(chrome, /outerHeight \|\| 0, globalThis\.screen\?\.height/);
+  assert.match(chrome, /classList\?\.toggle\("ime-open", bottom > 80\)/);
+  assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(chrome, /export function leaveSatelliteIfNeeded/);
+  assert.match(chrome, /satellite !== "leave"/);
+  assert.match(chrome, /armSatelliteHistory\(\)/);
   assert.match(chrome, /export function pinOverlaysToVisualViewport/);
   assert.match(chrome, /export function pinNodeToVisualViewport/);
   assert.match(chrome, /export function scrollFocusedFieldIntoView/);
@@ -328,6 +338,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /markStudioLayerFromPop\(\);\s*closeDeleteConfirm\(\)/);
   assert.match(app, /markStudioLayerFromPop\(\);\s*closeMenu\(\)/);
   assert.match(app, /handleStudioPopState[\s\S]*state\.view === "watch"[\s\S]*stopWatchFeed/);
+  assert.match(app, /closeOverlays\(\{ fromPop: true \}\)/);
+  assert.match(app, /if \(state\.view === "watch"\) stopWatchFeed\(\$\("#watch-feed"\)\);\s*if \(\["create", "settings", "machine"\]\.includes\(state\.view\)\) \{\s*closeOverlays\(\{ fromPop: true \}\);\s*return;\s*\}\s*applyHash\(\)/);
   assert.match(app, /addEventListener\("popstate", handleStudioPopState\)/);
   assert.match(app, /if \(studioLayerDismiss\(\)\) return;/);
   assert.match(app, /history\.back\(\)/);
@@ -571,6 +583,10 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*margin:\s*-16px 0/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*0/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*0/);
+  assert.match(chromeCss, /\.studio-chips\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(chromeCss, /\.studio-pipe\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(chromeCss, /\.studio-pipe-arrow\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*touch-action:\s*manipulation/);
   assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*44px/);
   assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*44px/);
   assert.match(chromeCss, /\.studio-chip\.pause\s*\{[^}]*color:\s*var\(--dim/);
@@ -1133,6 +1149,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(css, /--vv-height:\s*100dvh/);
   assert.match(css, /\.toast\s*\{[^}]*max-width:\s*min\(360px,\s*calc\(100% - 32px\)\)/);
   assert.match(css, /\.toast\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /html\.ime-open \.toast\s*\{[^}]*display:\s*none/);
+  assert.match(app, /visualViewportKeyboardInset\(\)/);
+  assert.match(app, /classList\.toggle\("ime-open", bottom > 80\)/);
   assert.match(css, /textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
@@ -1496,6 +1515,12 @@ test("displayTitle drops workspace paths and falls back to 보드", () => {
   assert.equal(displayTitle("file:///tmp/clip.mp4", "보드"), "보드");
   assert.equal(displayTitle("/workspace/jobs/foo"), "");
   assert.equal(displayTitle("한강 갑문", "보드"), "한강 갑문");
+  assert.equal(displayStageLabel("script"), "대본");
+  assert.equal(displayStageLabel("unknown"), "단계");
+  assert.equal(displayStageLabel("CustomStage"), "단계");
+  assert.equal(displayItemLabel("research_brief"), "조사");
+  assert.equal(displayItemLabel("artifact"), "항목");
+  assert.equal(displayPipelineLabel("unknown"), "단계");
 });
 
 test("leftover watch with no clips replaces #shorts", async () => {
@@ -1514,4 +1539,17 @@ test("hydrateCreateSlots keeps createSeq so cancel cannot refill", async () => {
   assert.match(app, /async function hydrateCreateSlots\(\) \{\s*const seq = state\.createSeq/);
   assert.match(app, /if \(seq !== state\.createSeq\) return;\s*await refreshCreatePreview\(seq\)/);
   assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
+});
+
+test("Android Back closes leftover create settings machine then applies hash after watch", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
+  const page = await readFile(join(publicDir, "template/index.html"), "utf8");
+  assert.match(app, /closeOverlays\(\{ fromPop: true \}\)/);
+  assert.match(app, /function closeOverlays\(event, options = \{\}\)/);
+  assert.match(app, /if \(state\.view === "watch"\) stopWatchFeed\(\$\("#watch-feed"\)\)/);
+  assert.match(app, /applyHash\(\)/);
+  assert.match(chrome, /export function leaveSatelliteIfNeeded/);
+  assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
 });

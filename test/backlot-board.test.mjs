@@ -241,6 +241,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*padding:\s*16px 4px/);
   assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*margin:\s*-16px 0/);
   assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*0/);
+  assert.match(css, /#studio-chrome \.studio-chips\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(css, /#studio-chrome \.studio-pipe\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*touch-action:\s*manipulation/);
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-width:\s*44px/);
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /\.materials textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
@@ -562,13 +565,23 @@ test("satellite import abort does not paint the result sheet", async () => {
 test("library long-press blocks contextmenu and the board rail stays visible", async () => {
   const root = process.cwd();
   const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
   const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
   const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
   assert.match(libraryJs, /addEventListener\("contextmenu"/);
   assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
   assert.match(libraryJs, /event\.preventDefault\(\)/);
   assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
   assert.match(libraryJs, /script:\s*"대본"/);
+  assert.match(libraryJs, /displayPipelineLabel\(p\.pipeline_type\)/);
+  assert.match(libraryJs, /displayStageLabel\(p\.active_stage\)/);
+  assert.match(boardJs, /displayPipelineLabel\(s\.pipeline\.pipeline_type\)/);
+  assert.match(boardJs, /onclick: closeModal \}, "닫기"/);
+  assert.doesNotMatch(boardJs, /ESC · CLOSE/);
+  assert.doesNotMatch(boardJs, /ESC · 닫기/);
+  assert.match(boardJs, /displayItemLabel/);
+  assert.match(boardJs, /displayStageLabel\(st\.name\)/);
   assert.match(libraryJs, /completed:\s*"완료"/);
   assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
   assert.match(css, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
@@ -576,6 +589,8 @@ test("library long-press blocks contextmenu and the board rail stays visible", a
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
   assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
+  assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(chrome, /export function leaveSatelliteIfNeeded/);
 });
 
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {

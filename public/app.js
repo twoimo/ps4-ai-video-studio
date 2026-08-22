@@ -1,7 +1,7 @@
 import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
-import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock } from "./studio-chrome.mjs";
+import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock, visualViewportKeyboardInset } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -768,6 +768,11 @@ function handleStudioPopState() {
     return;
   }
   if (state.view === "watch") stopWatchFeed($("#watch-feed"));
+  if (["create", "settings", "machine"].includes(state.view)) {
+    closeOverlays({ fromPop: true });
+    return;
+  }
+  applyHash();
 }
 
 function deleteClickSwallowed(event) {
@@ -1778,9 +1783,21 @@ async function importLibrary(event) {
   }
 }
 
-function closeOverlays(event) {
-  event?.preventDefault();
+function closeOverlays(event, options = {}) {
+  if (event && typeof event === "object" && typeof event.preventDefault !== "function") {
+    options = event;
+    event = null;
+  }
+  event?.preventDefault?.();
   if (state.view === "create") state.createSeq += 1;
+  if (options.fromPop) {
+    closeDeleteConfirm({ fromPop: true });
+    closeMenu({ fromPop: true });
+    setView("grid");
+    renderJobs();
+    restoreOpener();
+    return;
+  }
   if (studioLayerDismiss()) return;
   if (closeDeleteConfirm()) return;
   if (closeMenu()) return;
@@ -1812,9 +1829,10 @@ function pinWatchToVisualViewport() {
 function syncVisualViewportInset() {
   const vv = window.visualViewport;
   const height = vv?.height || window.innerHeight || 0;
-  const bottom = vv ? Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
+  const bottom = visualViewportKeyboardInset();
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   document.documentElement.style.setProperty("--vv-height", `${Math.round(height)}px`);
+  document.documentElement.classList.toggle("ime-open", bottom > 80);
   pinWatchToVisualViewport();
   pinOverlaysToVisualViewport();
   rescrollFocusedField(document);

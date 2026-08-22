@@ -788,7 +788,10 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(feed, /\.watch-close, \.watch-back, \.watch-menu, \.watch-materials-toggle, \.watch-sound/);
   assert.match(feed, /function syncWatchSound/);
-  assert.match(feed, /button\.hidden = !video\?\.muted/);
+  assert.match(feed, /button\.hidden = !\(video\?\.muted \|\| video\?\.volume === 0\)/);
+  assert.match(feed, /prev === 0 && video\.volume > 0/);
+  assert.match(feed, /function bindWatchFlip/);
+  assert.match(feed, /orientationchange/);
   assert.match(feed, /closest\?\.\("\.watch-sound"\)/);
   assert.match(html, /class="watch-sound"/);
   assert.match(app, /class="watch-sound"/);

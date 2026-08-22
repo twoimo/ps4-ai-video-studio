@@ -90,6 +90,58 @@ export function displayTitle(...values) {
   return "";
 }
 
+const LATIN_LABEL = /^[A-Za-z][A-Za-z0-9 _./:-]*$/;
+
+export const STAGE_LABELS = {
+  script: "대본",
+  "hook-lock": "첫 장면",
+  "image-edit": "그림 고치기",
+  animate: "움직이기",
+  compose: "편집",
+  scene_plan: "첫 장면",
+  assets: "그림 고치기",
+  edit: "편집",
+  research: "조사",
+  proposal: "제안",
+  idea: "아이디어",
+  publish: "올리기"
+};
+
+export const ITEM_LABELS = {
+  script: "대본",
+  research_brief: "조사",
+  proposal_packet: "제안",
+  brief: "브리프",
+  scene_plan: "장면",
+  asset_manifest: "그림",
+  edit_decisions: "편집",
+  render_report: "렌더",
+  final_review: "완성",
+  publish_log: "올리기",
+  decision_log: "결정"
+};
+
+export function displayStageLabel(name, fallback = "단계") {
+  const key = String(name || "").trim();
+  if (!key || key === "unknown") return fallback;
+  if (STAGE_LABELS[key]) return STAGE_LABELS[key];
+  if (LATIN_LABEL.test(key)) return fallback;
+  return key;
+}
+
+export function displayItemLabel(name, fallback = "항목") {
+  const key = String(name || "").trim();
+  if (!key || key === "unknown" || key === "artifact") return fallback;
+  if (ITEM_LABELS[key]) return ITEM_LABELS[key];
+  if (STAGE_LABELS[key]) return STAGE_LABELS[key];
+  if (LATIN_LABEL.test(key)) return fallback;
+  return key;
+}
+
+export function displayPipelineLabel(name) {
+  return displayStageLabel(name, "단계");
+}
+
 export function parseJsonText(text) {
   const raw = String(text ?? "").replace(/^\uFEFF/, "").trim();
   const head = raw.slice(0, 256);

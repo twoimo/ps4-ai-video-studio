@@ -1172,6 +1172,7 @@ body:has(#materials) .wrap#app,
   justify-self: center;
   gap: 2px 4px;
   min-width: 0;
+  touch-action: manipulation;
 }
 #studio-chrome .studio-pipe {
   display: inline-flex;
@@ -1179,6 +1180,7 @@ body:has(#materials) .wrap#app,
   align-items: center;
   justify-content: center;
   gap: 4px 6px;
+  touch-action: manipulation;
 }
 #studio-chrome .studio-pipe-arrow {
   margin: 0;
@@ -1186,6 +1188,7 @@ body:has(#materials) .wrap#app,
   color: var(--text-3, #5f5f68);
   font-size: 11px;
   line-height: 1;
+  touch-action: manipulation;
 }
 #studio-chrome .studio-chip {
   display: inline;
@@ -1204,6 +1207,7 @@ body:has(#materials) .wrap#app,
   min-width: 0;
   min-height: 0;
   text-transform: none;
+  touch-action: manipulation;
 }
 #studio-chrome .studio-chip.ok { color: var(--text, #ececef); }
 #studio-chrome .studio-chip.warn { color: var(--amber, #f0a83c); }

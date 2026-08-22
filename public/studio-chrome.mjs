@@ -140,15 +140,52 @@ export function syncOverlayLock(root = document) {
   restoreOverlayLockY();
 }
 
+export function visualViewportKeyboardInset() {
+  const vv = globalThis.visualViewport;
+  if (!vv) return 0;
+  const offset = vv.offsetTop || 0;
+  const inner = globalThis.innerHeight || 0;
+  const fromInner = Math.max(0, inner - vv.height - offset);
+  if (fromInner > 0) return fromInner;
+  const focused = globalThis.document?.activeElement;
+  const editing = focused && /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName || "");
+  if (!editing) return 0;
+  const outer = Math.max(globalThis.outerHeight || 0, globalThis.screen?.height || 0, inner);
+  return Math.max(0, outer - vv.height - offset);
+}
+
 function syncVisualViewportInset() {
   const vv = globalThis.visualViewport;
-  const innerHeight = globalThis.innerHeight || 0;
-  const height = vv?.height || innerHeight;
-  const bottom = vv ? Math.max(0, innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
-  globalThis.document?.documentElement?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
-  globalThis.document?.documentElement?.style?.setProperty("--vv-height", `${Math.round(height)}px`);
+  const height = vv?.height || globalThis.innerHeight || 0;
+  const bottom = visualViewportKeyboardInset();
+  const root = globalThis.document?.documentElement;
+  root?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+  root?.style?.setProperty("--vv-height", `${Math.round(height)}px`);
+  root?.classList?.toggle("ime-open", bottom > 80);
   pinOverlaysToVisualViewport(globalThis.document);
   rescrollFocusedField(globalThis.document);
+}
+
+function satelliteHome(path = globalThis.location?.pathname || "") {
+  if (/^\/(?:backlot\/)?p\//.test(path) || path.includes("/backlot/p/")) return "/backlot";
+  if (path === "/backlot" || path === "/backlot/") return "/";
+  if (path === "/template" || path.startsWith("/template/")) return "/";
+  return "";
+}
+
+export function leaveSatelliteIfNeeded(event) {
+  if (event?.state?.satellite !== "leave") return false;
+  const home = event.state?.href || satelliteHome();
+  if (!home) return false;
+  globalThis.location.replace(home);
+  return true;
+}
+
+export function armSatelliteHistory() {
+  const home = satelliteHome();
+  if (!home || globalThis.history?.state?.satellite) return;
+  globalThis.history.replaceState({ satellite: "leave", href: home }, "", globalThis.location.href);
+  globalThis.history.pushState({ satellite: "here" }, "", globalThis.location.href);
 }
 
 if (typeof document !== "undefined" && document.documentElement?.dataset?.studioChrome === "auto") {
@@ -156,6 +193,8 @@ if (typeof document !== "undefined" && document.documentElement?.dataset?.studio
   bindFocusScroll(document);
   void hydrateStudioChrome(document);
   syncVisualViewportInset();
+  armSatelliteHistory();
+  globalThis.addEventListener?.("popstate", leaveSatelliteIfNeeded);
   globalThis.visualViewport?.addEventListener("resize", syncVisualViewportInset);
   globalThis.visualViewport?.addEventListener("scroll", syncVisualViewportInset);
 }
