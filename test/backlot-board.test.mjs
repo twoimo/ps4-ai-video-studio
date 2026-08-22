@@ -188,7 +188,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /src="\/studio-chrome\.mjs"/);
   const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
   assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
-  assert.match(chrome, /bindStudioPipe\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.doesNotMatch(boardJs, /main\.append\(script\)/);
   assert.doesNotMatch(boardJs, /if \(script\) main\.append/);
   assert.match(css, /\.wrap\s*\{\s*max-width:\s*1440px/);
