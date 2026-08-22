@@ -657,7 +657,7 @@ async function saveInspectDraft(jobId, root) {
 function openHome(event) {
   event?.preventDefault();
   stopWatchFeed($("#watch-feed"));
-  closeMenu(event, { leave: true });
+  closeMenu({ navigate: true });
   setView("grid");
   renderJobs();
   sizeShortsGrid();
@@ -713,13 +713,24 @@ function replaceClearStudioLayer() {
   history.replaceState(null, "", location.href);
 }
 
+function studioLayerFromPop(overlay, options = {}) {
+  const fromPop = Boolean(options.fromPop || overlay?.dataset?.fromPop);
+  if (overlay?.dataset) delete overlay.dataset.fromPop;
+  return fromPop;
+}
+
+function markStudioLayerFromPop() {
+  const overlay = studioLayer === "confirm" ? $("#delete-overlay") : $("#menu-overlay");
+  if (overlay) overlay.dataset.fromPop = "1";
+}
+
 function clearStudioLayer(options = {}) {
   if (!studioLayer) return;
   if (options.fromPop) {
     studioLayer = "";
     return;
   }
-  if (options.leave || options.replace || pageHiding) {
+  if (options.navigate || options.leave || options.replace || pageHiding) {
     replaceClearStudioLayer();
     return;
   }
@@ -727,10 +738,14 @@ function clearStudioLayer(options = {}) {
   history.back();
 }
 
-function dismissStudioLayer() {
+function studioLayerDismiss() {
   if (!studioLayer) return false;
   history.back();
   return true;
+}
+
+function dismissStudioLayer() {
+  return studioLayerDismiss();
 }
 
 function deleteClickSwallowed(event) {
@@ -741,9 +756,11 @@ function deleteClickSwallowed(event) {
 }
 
 function closeDeleteConfirm(options = {}) {
+  if (options && typeof options.preventDefault === "function") options = {};
   state.pendingDeleteId = null;
   const overlay = $("#delete-overlay");
   if (!overlay || overlay.hidden) return false;
+  const fromPop = studioLayerFromPop(overlay, options);
   overlay.hidden = true;
   if ($("#menu-overlay")?.hidden && !["create", "settings", "machine"].includes(state.view)) {
     document.body.classList.remove("overlay-open");
@@ -751,7 +768,7 @@ function closeDeleteConfirm(options = {}) {
   }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
-  if (studioLayer === "confirm") clearStudioLayer(options);
+  if (studioLayer === "confirm") clearStudioLayer({ ...options, fromPop });
   return true;
 }
 
@@ -1335,7 +1352,7 @@ function openCreate(event) {
 function openBatch(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu(event, { leave: true });
+  closeMenu({ navigate: true });
   state.createMode = "batch";
   setView("create");
   void hydrateCreateSlots();
@@ -1415,7 +1432,7 @@ async function queueBatchJobs() {
 
 function openTemplate(event) {
   event?.preventDefault();
-  closeMenu(event, { leave: true });
+  closeMenu({ navigate: true });
   stopWatchFeed($("#watch-feed"));
   location.assign("/template");
 }
@@ -1423,7 +1440,7 @@ function openTemplate(event) {
 function openSettings(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu(event, { leave: true });
+  closeMenu({ navigate: true });
   if (state.view === "watch") state.returnToWatch = true;
   setView("settings");
 }
@@ -1441,7 +1458,7 @@ async function refreshMachineHealth() {
 function openMachine(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu(event, { leave: true });
+  closeMenu({ navigate: true });
   setView("machine");
 }
 
@@ -1671,9 +1688,14 @@ function resetMenuCard() {
 }
 
 function closeMenu(event, options = {}) {
+  if (event && typeof event === "object" && typeof event.preventDefault !== "function") {
+    options = event;
+    event = null;
+  }
   event?.preventDefault?.();
   const overlay = $("#menu-overlay");
   if (!overlay || overlay.hidden) return false;
+  const fromPop = studioLayerFromPop(overlay, options);
   overlay.hidden = true;
   resetMenuCard();
   if (!["create", "settings", "machine"].includes(state.view)) {
@@ -1682,7 +1704,7 @@ function closeMenu(event, options = {}) {
   }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
-  if (studioLayer === "menu") clearStudioLayer(options);
+  if (studioLayer === "menu") clearStudioLayer({ ...options, fromPop });
   return true;
 }
 
@@ -1691,7 +1713,7 @@ function openMenu(event) {
   const overlay = $("#menu-overlay");
   if (!overlay) return;
   if (!overlay.hidden) {
-    if (!dismissStudioLayer()) closeMenu(event);
+    if (!studioLayerDismiss()) closeMenu(event);
     return;
   }
   rememberOpener(event);
@@ -1736,7 +1758,7 @@ async function importLibrary(event) {
 function closeOverlays(event) {
   event?.preventDefault();
   if (state.view === "create") state.createSeq += 1;
-  if (dismissStudioLayer()) return;
+  if (studioLayerDismiss()) return;
   if (closeDeleteConfirm()) return;
   if (closeMenu()) return;
   if (state.returnToWatch) {
@@ -1811,7 +1833,7 @@ function bindEvents() {
   syncProviderForm();
   bindCreateTile();
   $("#menu-create")?.addEventListener("click", (event) => {
-    closeMenu(event, { leave: true });
+    closeMenu({ navigate: true });
     if (state.view === "watch") state.returnToWatch = true;
     openCreate(event);
   });
@@ -1820,23 +1842,23 @@ function bindEvents() {
   $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
   $("#library-more")?.addEventListener("click", openMenu);
   $("#close-menu")?.addEventListener("click", (event) => {
-    if (!dismissStudioLayer()) closeMenu(event);
+    if (!studioLayerDismiss()) closeMenu(event);
   });
   $("#menu-import-ok")?.addEventListener("click", (event) => {
-    if (!dismissStudioLayer()) closeMenu(event);
+    if (!studioLayerDismiss()) closeMenu(event);
   });
   $$("[data-close-menu]").forEach((node) => node.addEventListener("click", (event) => {
-    if (!dismissStudioLayer()) closeMenu(event);
+    if (!studioLayerDismiss()) closeMenu(event);
   }));
   $("#delete-overlay")?.addEventListener("click", (event) => {
     if (deleteClickSwallowed(event)) return;
   }, true);
   $("#close-delete")?.addEventListener("click", () => {
-    if (!dismissStudioLayer()) closeDeleteConfirm();
+    if (!studioLayerDismiss()) closeDeleteConfirm();
   });
   $("#delete-confirm")?.addEventListener("click", () => { void confirmDeleteJob(); });
   $$("[data-close-delete]").forEach((node) => node.addEventListener("click", () => {
-    if (!dismissStudioLayer()) closeDeleteConfirm();
+    if (!studioLayerDismiss()) closeDeleteConfirm();
   }));
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome, (jobId) => notifyActive(jobId), (jobId) => {
@@ -1865,16 +1887,18 @@ function bindEvents() {
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
   window.addEventListener("popstate", () => {
     if (studioLayer === "confirm") {
-      closeDeleteConfirm({ fromPop: true });
+      markStudioLayerFromPop();
+      closeDeleteConfirm();
       return;
     }
     if (studioLayer === "menu") {
-      closeMenu(null, { fromPop: true });
+      markStudioLayerFromPop();
+      closeMenu();
     }
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      if (dismissStudioLayer()) return;
+      if (studioLayerDismiss()) return;
       if (closeDeleteConfirm()) return;
       if (closeMenu()) return;
       if (state.view === "watch") {

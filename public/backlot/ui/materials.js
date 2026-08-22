@@ -1,5 +1,6 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
 import { friendlyJobError, isAbortError, parseJsonText, stripUiPaths, throwMappedFetchError } from "../../shorts-ui.mjs";
+import { bindFocusScroll } from "/studio-chrome.mjs";
 import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);
@@ -147,6 +148,7 @@ async function mountMaterials() {
   root.hidden = false;
   root.innerHTML = renderMaterialsPanel(job, promptsForPanel(job, prompts), { frozen });
   bindMaterials(frozen);
+  bindFocusScroll(root);
 }
 
 mountMaterials().catch((error) => {

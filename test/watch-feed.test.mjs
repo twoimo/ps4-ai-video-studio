@@ -798,6 +798,10 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /pagehide/);
   assert.match(app, /pageHiding = true;\s*replaceClearStudioLayer\(\)/);
   assert.doesNotMatch(app, /pagehide[\s\S]{0,200}history\.back/);
+  assert.match(app, /function studioLayerDismiss/);
+  assert.match(app, /dataset\.fromPop/);
+  assert.equal(feed.includes("scrollFocusedFieldIntoView"), false);
+  assert.equal(feed.includes("visualViewport"), false);
   assert.match(app, /aria-valuenow/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
   assert.match(feed, /preload = "auto"/);

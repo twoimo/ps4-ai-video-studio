@@ -99,7 +99,7 @@ body {
   font-family: var(--sans);
   font-size: calc(14px * var(--fs-scale));
   line-height: 1.5;
-  min-height: 100vh;
+  min-height: var(--vv-height, 100dvh);
   /* faint vignette so media pops */
   background-image: var(--bg-vignette);
 }
@@ -515,7 +515,7 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
   cursor: pointer;
 }
 .script-preview {
-  max-height: min(430px, calc(100vh - 360px));
+  max-height: min(430px, calc(var(--vv-height, 100dvh) - 360px));
   min-height: 320px;
   overflow: hidden;
 }
@@ -962,7 +962,7 @@ body:not(.first) .approval-review { animation: none; }
   .slate h1 { overflow-wrap: anywhere; }
   .slate .spacer { display: none; }
   .cost { text-align: left; }
-  .cost .bar { width: min(150px, 38vw); }
+  .cost .bar { width: min(150px, 38%); }
 
   .rail {
     overflow-x: auto;
@@ -1024,7 +1024,7 @@ body:not(.first) .approval-review { animation: none; }
   .panel-head .meta { margin-left: 0; }
   .drawer .drawer-head { flex-wrap: wrap; }
   .drawer pre { font-size: calc(10.5px * var(--fs-scale)); }
-  .scene-card { max-width: calc(100vw - 42px); }
+  .scene-card { max-width: 100%; }
   .approval-review-head, .approval-artifacts, .approval-review-foot { padding-left: 16px; padding-right: 16px; }
   .approval-review-note { margin-left: 16px; margin-right: 16px; }
   .approval-review-foot { align-items: flex-start; flex-direction: column; }
@@ -1082,7 +1082,7 @@ body:not(.first) .approval-review { animation: none; }
   display: grid;
   gap: 8px;
   position: sticky;
-  bottom: 0;
+  bottom: var(--vv-bottom, 0px);
   z-index: 2;
   background: var(--surface);
 }

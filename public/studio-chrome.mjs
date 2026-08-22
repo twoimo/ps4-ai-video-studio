@@ -79,16 +79,16 @@ export function pinOverlaysToVisualViewport(root = document) {
   });
 }
 
-export function scrollFocusIntoPanel(node) {
+export function scrollFocusedFieldIntoView(node) {
   if (!node || typeof node.getBoundingClientRect !== "function") return;
-  const panel = node.closest?.(".overlay-panel, .create-overlay-panel, .settings-overlay-panel, .machine-overlay-panel, .menu-overlay-panel, .short-detail-panel");
-  const box = node.getBoundingClientRect();
+  const panel = node.closest?.(".overlay-panel, .create-overlay-panel, .settings-overlay-panel, .machine-overlay-panel, .menu-overlay-panel, .short-detail-panel, .inspect-stack, .materials");
   if (panel) {
+    const box = node.getBoundingClientRect();
     const frame = panel.getBoundingClientRect();
     if (box.bottom > frame.bottom) panel.scrollTop += Math.round(box.bottom - frame.bottom);
     else if (box.top < frame.top) panel.scrollTop += Math.round(box.top - frame.top);
-    return;
   }
+  const box = node.getBoundingClientRect();
   const vv = globalThis.visualViewport;
   const viewTop = vv ? vv.offsetTop || 0 : 0;
   const viewBottom = vv ? viewTop + vv.height : (globalThis.innerHeight || 0);
@@ -98,20 +98,24 @@ export function scrollFocusIntoPanel(node) {
   else if (box.top < viewTop) scroller.scrollTop += Math.round(box.top - viewTop);
 }
 
+export function scrollFocusIntoPanel(node) {
+  scrollFocusedFieldIntoView(node);
+}
+
 export function bindFocusScroll(root = document) {
   if (!root || root.dataset?.focusScroll === "1") return;
   if (root.dataset) root.dataset.focusScroll = "1";
   root.addEventListener?.("focusin", (event) => {
     const target = event.target;
     if (!target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || "")) return;
-    scrollFocusIntoPanel(target);
+    scrollFocusedFieldIntoView(target);
   });
 }
 
 export function rescrollFocusedField(root = document) {
   const active = root.activeElement || globalThis.document?.activeElement;
   if (!active || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || "")) return;
-  scrollFocusIntoPanel(active);
+  scrollFocusedFieldIntoView(active);
 }
 
 let overlayLockY = 0;
