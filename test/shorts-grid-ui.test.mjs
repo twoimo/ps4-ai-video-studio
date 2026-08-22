@@ -552,6 +552,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /from "\.\/watch-feed\.mjs"/);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
   assert.match(app, /bindWatchFeed\(root, openHome/);
+  assert.match(app, /openMaterials\(jobId \|\| currentWatchSlide/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*playWatchFeed/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*stopWatchFeed/);
@@ -733,6 +734,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
   assert.match(app, /function overlayStartFocus/);
+  assert.match(app, /root\.id === "create-overlay"/);
+  assert.match(app, /querySelector\("#topic"\)/);
+  assert.match(app, /active && root\.contains\(active\)/);
   assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
   assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\)/);
   assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
@@ -749,6 +753,15 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /visualViewport/);
   assert.match(app, /--vv-bottom/);
   assert.equal(app.includes("event.submitter"), false);
+  assert.match(app, /addEventListener\("submit", \(event\) => \{\s*if \(state\.createMode === "batch"\) \{\s*event\.preventDefault\(\);\s*void saveBatchDrafts\(\);/);
+  assert.match(app, /String\(400 \+ 2\)/);
+  assert.match(app, /지금은 다시 못 만들어요/);
+  assert.equal(app.includes("402"), false);
+  assert.match(app, /function refreshMachineHealth/);
+  assert.match(app, /api\("\/api\/health"\)/);
+  assert.match(app, /void refreshMachineHealth\(\)/);
+  assert.match(app, /settingsSeq/);
+  assert.match(app, /seq !== state\.settingsSeq/);
   assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
   assert.match(html, /<form class="create-panel" id="create-form" novalidate onsubmit="return false">/);
   assert.match(html, /<form class="create-panel" id="settings-form" onsubmit="return false">/);

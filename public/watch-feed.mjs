@@ -441,10 +441,11 @@ function bindWatchResize(root) {
   observer.observe(root);
 }
 
-export function bindWatchFeed(root, onBack, onActive) {
+export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   if (!root) return;
   const pager = pagerOf(root);
   if (onActive) pager.onActive = onActive;
+  if (onMaterials) pager.onMaterials = onMaterials;
   if (root.dataset?.watchBound === "1") {
     if (globalThis.document?.body?.classList?.contains("watch-open")) {
       playWatchFeed(root);
@@ -464,6 +465,8 @@ export function bindWatchFeed(root, onBack, onActive) {
       if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
         event.preventDefault?.();
         event.stopPropagation?.();
+        const jobId = currentWatchSlide(root)?.dataset?.jobId;
+        pager.onMaterials?.(jobId);
         return;
       }
       const close = event.target?.closest?.(".watch-close, .watch-back");

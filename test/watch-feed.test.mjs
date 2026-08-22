@@ -565,8 +565,9 @@ test("pointer tap under 10px snaps back and does not change index", () => {
 });
 
 test("hamburger chromeHit does not open inspect and never swallows", () => {
-  const slides = [{ dataset: { jobId: "a" } }];
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
   const tokens = new Set();
+  const opened = [];
   const root = fakePager({ slides, height: 640 });
   root.classList = {
     toggle(name) {
@@ -575,7 +576,8 @@ test("hamburger chromeHit does not open inspect and never swallows", () => {
     },
     contains(name) { return tokens.has(name); }
   };
-  bindWatchFeed(root, () => {});
+  bindWatchFeed(root, () => {}, null, (jobId) => opened.push(jobId));
+  goWatchIndex(root, 1);
   const down = root.listeners.find((item) => item.type === "pointerdown").handler;
   const up = root.listeners.find((item) => item.type === "pointerup").handler;
   const click = root.listeners.find((item) => item.type === "click").handler;
@@ -584,7 +586,8 @@ test("hamburger chromeHit does not open inspect and never swallows", () => {
   up({ clientX: 10, clientY: 20, target: menu });
   click({ target: menu, preventDefault() {}, stopPropagation() {} });
   assert.equal(tokens.has("inspect-open"), false);
-  assert.equal(getWatchIndex(root), 0);
+  assert.equal(getWatchIndex(root), 1);
+  assert.deepEqual(opened, ["b"]);
 });
 
 test("pointer drag swallows the following click", () => {
@@ -701,6 +704,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /if \(root\) root\.hidden = false;\s*sizeWatchFeed\(root\)/);
   assert.match(feed, /mountWatchFeed\(\)/);
   assert.match(feed, /export function bindWatchFeed/);
+  assert.match(feed, /onMaterials/);
+  assert.match(feed, /pager\.onMaterials\?\.\(jobId\)/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(feed, /\.watch-close, \.watch-back/);

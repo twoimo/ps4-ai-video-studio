@@ -209,6 +209,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /id="satellite-import">가져오기</);
   assert.match(library, /src="\/satellite-menu\.mjs"/);
   assert.match(board, /src="\/satellite-menu\.mjs"/);
+  assert.match(library, /src="\/satellite-boot\.js"/);
+  assert.match(board, /src="\/satellite-boot\.js"/);
+  const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings"/);
+  assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
   const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
   assert.match(satellite, /export function resetSatelliteMenu/);
   assert.match(satellite, /\/api\/library\/import/);
@@ -245,6 +250,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /health\?\.imagine\?\.frozen !== false/);
   assert.match(materialsJs, /button\.disabled = true/);
   assert.match(boardJs, /function pauseBoardVideos/);
+  assert.match(boardJs, /function exclusiveBoardMedia/);
+  assert.match(boardJs, /addEventListener\("play"/);
   assert.match(boardJs, /visibilitychange/);
   assert.match(boardJs, /pagehide/);
   assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);

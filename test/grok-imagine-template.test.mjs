@@ -157,6 +157,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /href="\/#settings">설정</);
   assert.match(page, /id="satellite-import">가져오기</);
   assert.match(page, /src="\/satellite-menu\.mjs"/);
+  assert.match(page, /src="\/satellite-boot\.js"/);
   assert.match(page, /id="satellite-import-result"/);
   assert.match(page, /id="satellite-import-summary"/);
   assert.match(page, /id="satellite-import-ok">확인</);

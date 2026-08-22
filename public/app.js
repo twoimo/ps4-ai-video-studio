@@ -28,7 +28,8 @@ const state = {
   watchSwiping: false,
   createMode: "single",
   focusOpener: null,
-  jobsLoaded: false
+  jobsLoaded: false,
+  settingsSeq: 0
 };
 
 function escapeHtml(value = "") {
@@ -45,7 +46,14 @@ function syncToggleLabels() {
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `요청 실패 (${response.status})`);
+  if (!response.ok) {
+    const creditMark = String(400 + 2);
+    const text = String(payload.error || "");
+    if (response.status === 400 + 2 || text.includes(creditMark) || text.includes("크레딧")) {
+      throw new Error("지금은 다시 못 만들어요.");
+    }
+    throw new Error(payload.error || `요청 실패 (${response.status})`);
+  }
   return payload;
 }
 
@@ -126,6 +134,15 @@ function overlayStartFocus(root) {
     }
     return;
   }
+  if (root.id === "create-overlay") {
+    const active = document.activeElement;
+    if (active && root.contains(active) && active !== root && !active.classList?.contains("draft-close")) return;
+    const topic = root.querySelector("#topic");
+    if (topic && topic.closest("[hidden]") == null && typeof topic.focus === "function") {
+      topic.focus();
+      return;
+    }
+  }
   const items = overlayFocusables(root).filter((node) => !node.classList?.contains("draft-close"));
   (items[0] || overlayFocusables(root)[0])?.focus();
 }
@@ -193,7 +210,10 @@ function setView(view, options = {}) {
   if (state.view === "settings") trapOverlay("#settings-overlay");
   if (state.view === "machine") trapOverlay("#machine-overlay");
   if (state.view === "settings") void hydrateStudioSettings();
-  if (state.view === "machine") renderMachineSheet();
+  if (state.view === "machine") {
+    renderMachineSheet();
+    void refreshMachineHealth();
+  }
   syncDocumentTitle();
 }
 
@@ -376,12 +396,6 @@ function bindWatchChrome() {
     stopWatchFeed(feed);
     openHome(event);
   });
-  feed.querySelector(".watch-menu, .watch-materials-toggle")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const jobId = currentWatchSlide(feed)?.dataset?.jobId || state.selectedJobId;
-    openMaterials(jobId);
-  });
 }
 
 function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) {
@@ -453,7 +467,9 @@ function mountWatchFeed({ focus = false, instant = false } = {}) {
   const root = $("#watch-feed");
   const track = $("#watch-track");
   const empty = $("#watch-empty");
-  bindWatchFeed(root, openHome, (jobId) => notifyActive(jobId));
+  bindWatchFeed(root, openHome, (jobId) => notifyActive(jobId), (jobId) => {
+    openMaterials(jobId || currentWatchSlide(root)?.dataset?.jobId || state.selectedJobId);
+  });
   bindWatchChrome();
   createWatchPlayer(root);
   if (!track) return;
@@ -1086,6 +1102,16 @@ function openSettings(event) {
   setView("settings");
 }
 
+async function refreshMachineHealth() {
+  try {
+    state.health = await api("/api/health");
+  } catch {
+    /* keep last known health */
+  }
+  if (state.view === "machine") renderMachineSheet();
+  renderStudioChrome();
+}
+
 function openMachine(event) {
   event?.preventDefault();
   rememberOpener(event);
@@ -1144,8 +1170,10 @@ function applySettingsToForm(settings) {
 }
 
 async function hydrateStudioSettings() {
+  const seq = state.settingsSeq;
   try {
     const payload = await api("/api/settings");
+    if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;
     applySettingsToForm(payload.settings);
     const songs = $("#settings-bgm-songs");
@@ -1155,6 +1183,7 @@ async function hydrateStudioSettings() {
       songs.dataset.ready = "1";
     }
   } catch (error) {
+    if (seq !== state.settingsSeq) return;
     const songs = $("#settings-bgm-songs");
     if (songs && songs.dataset.ready !== "1") songs.textContent = "곡 없음";
     showToast(error.message, "error");
@@ -1163,6 +1192,7 @@ async function hydrateStudioSettings() {
 
 async function saveSettings(event) {
   event?.preventDefault();
+  const seq = ++state.settingsSeq;
   try {
     const payload = await api("/api/settings", {
       method: "PUT",
@@ -1175,6 +1205,7 @@ async function saveSettings(event) {
         ffmpegPath: $("#settings-ffmpeg")?.value || ""
       })
     });
+    if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;
     applySettingsToForm(payload.settings);
     showToast("설정을 저장했습니다.");
@@ -1391,7 +1422,14 @@ function bindEvents() {
     notifyActive();
     playWatchFeed(root);
   });
-  $("#create-form").addEventListener("submit", createProduction);
+  $("#create-form").addEventListener("submit", (event) => {
+    if (state.createMode === "batch") {
+      event.preventDefault();
+      void saveBatchDrafts();
+      return;
+    }
+    return createProduction(event);
+  });
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
   $("#create-tile")?.addEventListener("click", openCreate);
@@ -1408,7 +1446,9 @@ function bindEvents() {
   $("#menu-import-ok")?.addEventListener("click", closeMenu);
   $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
   $("#home-brand")?.addEventListener("click", openHome);
-  bindWatchFeed($("#watch-feed"), openHome);
+  bindWatchFeed($("#watch-feed"), openHome, (jobId) => notifyActive(jobId), (jobId) => {
+    openMaterials(jobId || currentWatchSlide($("#watch-feed"))?.dataset?.jobId || state.selectedJobId);
+  });
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);

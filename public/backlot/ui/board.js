@@ -1154,6 +1154,20 @@ function pauseBoardVideos() {
     try { video.pause(); } catch { /* ignore leftover playback */ }
   });
 }
+
+function exclusiveBoardMedia(current) {
+  document.querySelectorAll("video, audio").forEach((media) => {
+    if (media === current) return;
+    try { media.pause(); } catch { /* ignore leftover playback */ }
+  });
+}
+
+document.addEventListener("play", (event) => {
+  const media = event.target;
+  if (media?.pause && (media.tagName === "VIDEO" || media.tagName === "AUDIO")) {
+    exclusiveBoardMedia(media);
+  }
+}, true);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) pauseBoardVideos();
 });
