@@ -526,8 +526,8 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
       event.stopPropagation?.();
       return;
     }
-    if (!event.target.closest(".watch-stage") && !event.target.closest("video")) {
-      if (!event.target.closest(".watch-column")) {
+    if (!event.target?.closest?.(".watch-stage") && !event.target?.closest?.("video")) {
+      if (!event.target?.closest?.(".watch-column")) {
         stopWatchFeed(root);
         onBack?.(event);
       }

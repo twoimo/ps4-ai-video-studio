@@ -653,6 +653,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /settingsWrite\?\.abort\(\)/);
   assert.match(app, /signal: controller.signal/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*showToast\(settingsSaveFailMessage\(error\), "error"\)/);
+  assert.match(app, /async function draftScriptFromTopic/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = friendlyJobError\(error\);/);
+  assert.match(app, /if \(errorBox && text\) \{\s*errorBox\.hidden = false;/);
   assert.match(app, /\$\("#script-draft"\)\?\.value\?\.trim\(\)/);
   assert.match(app, /\$\("#topic"\)\?\.value\?\.trim\(\)/);
   assert.doesNotMatch(app, /\$\("#script-draft"\)\?\.value\.trim\(/);
@@ -850,6 +853,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /friendlyJobError\(data\.error \|\| "초안을 저장하지 못했습니다\."\)/);
   assert.match(materials, /parseJsonText\(await payload\.text\(\)\)/);
   assert.match(materials, /throwMappedFetchError\(error\)/);
+  assert.match(materials, /if \(isAbortError\(error\)\) return/);
+  assert.match(editor, /root\?\.querySelector\?\.\("\[data-draft-topic\]/);
   assert.equal(materials.includes(".json().catch(() => ({}))"), false);
   assert.equal(materials.includes("Failed to fetch"), false);
   assert.match(materials, /String\(400 \+ 2\)/);
@@ -1091,6 +1096,13 @@ test("watch inspector saves drafts and freezes regen", async () => {
       return null;
     }
   };
+  assert.deepEqual(collectInspectPayload(null), {
+    topic: "",
+    facts: [],
+    scriptDraft: "",
+    worldSlots: {},
+    shotOverrides: {}
+  });
   assert.deepEqual(collectInspectPayload(fakeRoot), {
     topic: "한강 갑문",
     facts: ["숨긴 사실"],

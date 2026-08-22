@@ -732,7 +732,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /onMaterials/);
   assert.match(feed, /pager\.onMaterials\?\.\(jobId\)/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
-  assert.match(feed, /closest\("\.watch-column"\)/);
+  assert.match(feed, /closest\?\.\("\.watch-column"\)/);
+  assert.match(feed, /target\?\.closest\?\.\("\.watch-stage"\)/);
   assert.match(feed, /playMutedThenUnmutePlay[\s\S]*finishWatchPlay/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(feed, /\.watch-close, \.watch-back, \.watch-menu, \.watch-materials-toggle, \.watch-sound/);

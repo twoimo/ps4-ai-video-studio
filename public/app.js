@@ -1495,9 +1495,11 @@ async function draftScriptFromTopic() {
     await refreshCreatePreview().catch(() => {});
     showToast("대본 초안을 넣었습니다.");
   } catch (error) {
-    if (errorBox) {
+    if (isAbortError(error)) return;
+    const text = friendlyJobError(error);
+    if (errorBox && text) {
       errorBox.hidden = false;
-      errorBox.textContent = friendlyJobError(error);
+      errorBox.textContent = text;
     }
     showToast(error, "error");
   } finally {

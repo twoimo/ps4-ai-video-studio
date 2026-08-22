@@ -96,13 +96,13 @@ export function collectInspectPayload(root) {
     if (!Number.isInteger(index)) return;
     shots[index] = {
       index,
-      prompt: node.querySelector("[data-shot-prompt], .inspect-shot-prompt")?.value || "",
-      animatePrompt: node.querySelector("[data-shot-animate], .inspect-shot-animate")?.value || "",
-      caption: node.querySelector("[data-shot-caption], .inspect-shot-caption")?.value || ""
+      prompt: node.querySelector?.("[data-shot-prompt], .inspect-shot-prompt")?.value || "",
+      animatePrompt: node.querySelector?.("[data-shot-animate], .inspect-shot-animate")?.value || "",
+      caption: node.querySelector?.("[data-shot-caption], .inspect-shot-caption")?.value || ""
     };
   });
   root?.querySelectorAll(".inspect-caption [data-shot-caption], .inspect-caption .inspect-shot-caption").forEach((input) => {
-    const index = Number(input.dataset.shotIndex || input.closest("[data-shot-index]")?.dataset.shotIndex);
+    const index = Number(input.dataset.shotIndex || input.closest?.("[data-shot-index]")?.dataset.shotIndex);
     if (!Number.isInteger(index)) return;
     shots[index] = {
       index,
@@ -112,10 +112,10 @@ export function collectInspectPayload(root) {
     };
   });
   return {
-    topic: root.querySelector("[data-draft-topic], .inspect-topic")?.value || "",
-    facts: (root.querySelector("[data-draft-facts], .inspect-facts")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
-    scriptDraft: root.querySelector("[data-draft-script], .inspect-script")?.value || "",
-    worldSlots: Object.fromEntries([...root.querySelectorAll("[data-world-slot]")].map((input) => [input.dataset.worldSlot, input.value]).filter(([, value]) => String(value || "").trim())),
+    topic: root?.querySelector?.("[data-draft-topic], .inspect-topic")?.value || "",
+    facts: (root?.querySelector?.("[data-draft-facts], .inspect-facts")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+    scriptDraft: root?.querySelector?.("[data-draft-script], .inspect-script")?.value || "",
+    worldSlots: Object.fromEntries([...(root?.querySelectorAll?.("[data-world-slot]") || [])].map((input) => [input.dataset.worldSlot, input.value]).filter(([, value]) => String(value || "").trim())),
     shotOverrides: shots
   };
 }

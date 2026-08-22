@@ -1,5 +1,5 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
-import { friendlyJobError, parseJsonText, stripUiPaths, throwMappedFetchError } from "../../shorts-ui.mjs";
+import { friendlyJobError, isAbortError, parseJsonText, stripUiPaths, throwMappedFetchError } from "../../shorts-ui.mjs";
 import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);
@@ -121,6 +121,7 @@ function bindMaterials(frozen) {
       status("대기열에 넣었습니다.");
     } catch (error) {
       if (button && !frozen) button.disabled = false;
+      if (isAbortError(error)) return;
       status(pausedActionError(error), "error");
     }
   });
