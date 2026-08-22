@@ -805,7 +805,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /leavingWatch/);
   assert.match(app, /preview-wrap video, \.shorts-grid video, audio/);
   assert.ok(html.indexOf('hash === "settings"') < html.indexOf('src="/app.js"'), "settings unhide before app.js");
+  assert.ok(html.indexOf('hash === "machine"') < html.indexOf('src="/app.js"'), "machine unhide before app.js");
   const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
+  assert.match(boot, /hash === "machine" \|\| hash.indexOf\("machine\/"\) === 0/);
+  assert.match(boot, /show\("machine-overlay"\)/);
   assert.match(boot, /if \(hash === "batch"\)/);
   assert.match(boot, /title\.textContent = "양산"/);
   assert.match(boot, /single\.hidden = true/);
