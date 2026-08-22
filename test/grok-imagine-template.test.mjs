@@ -145,6 +145,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.doesNotMatch(css, /\.template-studio\s*\{[^}]*padding:\s*16px/);
   assert.match(css, /\.template-studio \.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
   assert.match(css, /\.template-root\s*\{[^}]*max-width:\s*none/);
+  assert.match(css, /\.template-root \.slot-card[\s\S]*width:\s*100%[\s\S]*max-width:\s*none/);
   assert.doesNotMatch(css, /max-width:\s*min\(1120px/);
   assert.equal(page.includes("그림 · 멈춤"), false);
   assert.match(page, />대본</);

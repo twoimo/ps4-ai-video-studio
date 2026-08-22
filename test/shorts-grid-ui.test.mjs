@@ -719,6 +719,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
   assert.match(boardCss, /#studio-chrome/);
   assert.match(boardCss, /z-index:\s*100/);
+  assert.match(boardCss, /Isolate shared chrome/);
+  assert.match(boardCss, /isolation:\s*isolate/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.slate \.wordmark/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
