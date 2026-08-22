@@ -312,6 +312,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const materialsJs = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
   const editor = await readFile(join(root, "public/materials-editor.mjs"), "utf8");
   assert.equal(materialsJs.includes("쇼츠 공장"), false);
+  assert.doesNotMatch(materialsJs, /getElementById\("app"\)/);
+  assert.doesNotMatch(materialsJs, /#app/);
   assert.equal(editor.includes("쇼츠 공장"), false);
   assert.match(materialsJs, /method: "PATCH"/);
   assert.match(materialsJs, /\/run/);
