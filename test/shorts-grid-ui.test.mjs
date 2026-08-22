@@ -224,7 +224,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border-radius:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*-webkit-touch-callout:\s*none/);
-  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*46/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*60/);
   assert.match(css, /\.watch-feed\s*\{[^}]*container-type:\s*size/);
   assert.match(css, /100cqh/);
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
@@ -283,6 +283,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /aria-label="\$\{escapeHtml\(displayTitle\(job\.topic, "영상"\)\)\}"/);
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
+  assert.match(app, /innerWidth >= 600 && window\.innerWidth > window\.innerHeight/);
   assert.match(app, /const n = shortLandscape \? 2 : Math\.max\(1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
   assert.match(app, /function measureChrome/);
   assert.match(app, /getBoundingClientRect\(\)\.top/);
@@ -1605,6 +1606,7 @@ test("Android Back closes leftover create settings machine then applies hash aft
   const page = await readFile(join(publicDir, "template/index.html"), "utf8");
   assert.match(app, /closeOverlays\(\{ fromPop: true \}\)/);
   assert.match(app, /function closeOverlays\(event, options = \{\}\)/);
+  assert.match(app, /function closeOverlays[\s\S]*createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
   assert.match(app, /if \(state\.view === "watch"\) stopWatchFeed\(\$\("#watch-feed"\)\)/);
   assert.match(app, /applyHash\(\)/);
   assert.match(chrome, /export function leaveSatelliteIfNeeded/);
@@ -1623,12 +1625,13 @@ test("empty grid first create upserts then renders and pagehide persists setting
   assert.match(app, /keepalive/);
   assert.match(app, /settingsSaveFailMessage\(error\)/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*z-index:\s*40/);
-  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*46/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*60/);
   assert.match(css, /\.library-menu\s*\{[^}]*z-index:\s*2/);
   assert.match(css, /\.toast\s*\{[^}]*z-index:\s*50/);
   assert.match(css, /\.studio-overlay\.feed-card\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
   assert.match(css, /\.library-menu button,\s*\.library-menu a\s*\{[^}]*min-height:\s*44px/);
-  assert.match(css, /#close-machine\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*top:\s*max\(10px,\s*env\(safe-area-inset-top\)\)/);
   assert.match(css, /#machine-sheet li\s*\{[^}]*min-height:\s*44px/);
   assert.match(chromeCss, /#satellite-menu\s*\{[^}]*z-index:\s*40/);
   assert.match(chromeCss, /\.studio-chrome ~ \.studio-chrome\s*\{[^}]*display:\s*none/);
@@ -1712,4 +1715,28 @@ test("failJobsLoad paints create+empty, batch is a button, and health sheet stay
   assert.match(css, /body\.template-page \.library-board-toggle\[href="\/backlot"\]/);
   assert.match(css, /body\.template-page \.library-board-toggle\[href="\/template"\]/);
   assert.equal(html.includes("쇼츠"), false);
+});
+
+test("confirm sits above toast so 삭제 stays tappable", async () => {
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*60/);
+  assert.match(css, /\.toast\s*\{[^}]*z-index:\s*50/);
+  assert.match(css, /\.confirm-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+});
+
+test("closeOverlays cancel forces createMode single and clears the hint", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  assert.match(app, /function closeOverlays\(event, options = \{\}\)/);
+  assert.match(app, /state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+});
+
+test("landscape 2-col needs min-width 600px and machine close uses safe-area", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  assert.match(app, /innerWidth >= 600 && window\.innerWidth > window\.innerHeight/);
+  assert.match(app, /innerHeight \/ window\.innerWidth < 0\.75/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*height:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*top:\s*max\(10px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*right:\s*max\(10px,\s*env\(safe-area-inset-right\)\)/);
 });

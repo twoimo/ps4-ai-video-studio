@@ -1198,3 +1198,11 @@ test("watch title blocks Android long-press callout and close does not double op
   assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /bindWatchFeed\(root, openHome/);
 });
+
+test("landscape watch close and menu use max top/left or top/right safe-area", async () => {
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-close[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-left\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-left\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-menu[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-right\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-right\)\)/);
+});

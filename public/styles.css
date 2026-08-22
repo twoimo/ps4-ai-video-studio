@@ -140,7 +140,7 @@ html:has(body.overlay-open),
 body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: pan-y; }
 .studio-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) max(env(safe-area-inset-bottom), var(--vv-bottom, 0px)) env(safe-area-inset-left); }
 .studio-overlay.feed-card { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) max(env(safe-area-inset-bottom), var(--vv-bottom, 0px)) env(safe-area-inset-left); }
-#delete-overlay { z-index: 46; }
+#delete-overlay { z-index: 60; }
 .studio-overlay[hidden] { display: none; }
 .studio-overlay.feed-card[hidden] { display: none !important; }
 .overlay-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
@@ -188,11 +188,14 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
   line-height: 1;
 }
 .draft-close:hover { color: var(--text); background: var(--surface-3); }
-#close-machine {
+#close-machine,
+#machine-overlay .draft-close {
   width: 44px;
   height: 44px;
   min-width: 44px;
   min-height: 44px;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
 }
 #machine-sheet li {
   min-height: 44px;
@@ -488,6 +491,20 @@ body.watch-open .watch-feed { display: block; }
     top: auto;
     bottom: max(68px, env(safe-area-inset-bottom));
     z-index: 7;
+  }
+}
+@media (orientation: landscape) {
+  #watch-feed .watch-close,
+  #watch-feed .watch-back,
+  .watch-close,
+  .watch-back {
+    top: max(12px, env(safe-area-inset-top), env(safe-area-inset-left));
+    left: max(12px, env(safe-area-inset-top), env(safe-area-inset-left));
+  }
+  #watch-feed .watch-menu,
+  .watch-menu {
+    top: max(12px, env(safe-area-inset-top), env(safe-area-inset-right));
+    right: max(12px, env(safe-area-inset-top), env(safe-area-inset-right));
   }
 }
 .watch-meta { min-width: 0; -webkit-touch-callout: none; user-select: none; }

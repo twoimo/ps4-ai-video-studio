@@ -702,7 +702,12 @@ test("library posters are 9:16, cost wraps, and materials save stays opaque", as
   assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*object-fit:\s*cover/);
   assert.match(css, /Studio extra: board aside overflow/);
   assert.match(css, /\.board\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*320px\)/);
-  assert.match(css, /aside,\s*\.materials\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overflow-y:\s*hidden/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overscroll-behavior-y:\s*none/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*touch-action:\s*pan-x/);
   assert.match(css, /\.lib-grid:has\(\.is-skeleton\) \+ #empty/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
@@ -732,6 +737,8 @@ test("library swallows long-press, materials holds IME toast, and board keep ign
   assert.match(boardJs, /keepPaintedGrid\(app\)/);
   assert.match(boardJs, /\$\{index \+ 1\}번/);
   assert.match(boardJs, /\$\{i \+ 1\}테이크/);
+  assert.match(boardJs, /\$\{card\.takes\.length\}테이크/);
+  assert.doesNotMatch(boardJs, /`T\$\{card\.takes\.length\}`/);
   assert.doesNotMatch(boardJs, /`Item \$\{index \+ 1\}`/);
   assert.doesNotMatch(boardJs, /`take \$\{i \+ 1\}`/);
   assert.match(ui, /export function keepPaintedGrid/);
@@ -741,6 +748,23 @@ test("library swallows long-press, materials holds IME toast, and board keep ign
   assert.match(materials, /keyCode === 229/);
   assert.match(materials, /isComposing/);
   assert.match(materials, /ime-open/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("materials overflow stays visible, filmstrip pans sideways, slate is N테이크", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overflow-y:\s*hidden/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overscroll-behavior-y:\s*none/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*touch-action:\s*pan-x/);
+  assert.match(boardJs, /\$\{card\.takes\.length\}테이크/);
+  assert.doesNotMatch(boardJs, /`T\$\{card\.takes\.length\}`/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

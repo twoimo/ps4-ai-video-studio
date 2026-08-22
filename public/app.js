@@ -417,7 +417,7 @@ function sizeShortsGrid() {
   const height = window.visualViewport?.height || window.innerHeight;
   const col = (height - chrome - gap) * 9 / 16;
   if (!(col > 0)) return;
-  const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
+  const shortLandscape = window.innerWidth >= 600 && window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
   const n = shortLandscape ? 2 : Math.max(1, Math.ceil((width + gap) / (col + gap)));
   grid.style.setProperty("--n", String(n));
 }
@@ -1870,6 +1870,8 @@ function closeOverlays(event, options = {}) {
     event = null;
   }
   event?.preventDefault?.();
+  state.createMode = "single";
+  rememberStudioCreateMode(sessionStorage, "single");
   if (state.view === "create") state.createSeq += 1;
   if (options.fromPop) {
     skipStaleHashChange();

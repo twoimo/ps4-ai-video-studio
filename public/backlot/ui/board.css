@@ -1048,6 +1048,7 @@ body:not(.first) .approval-review { animation: none; }
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   background: var(--surface);
+  overflow-x: clip;
 }
 .materials .inspect-stack-head h2 { margin: 0; font-size: 16px; }
 .materials .field-label { margin: 0; color: var(--text-2); font-size: 12px; }
@@ -1318,6 +1319,9 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
 /* Studio extra: filmstrip does not snap */
 .filmstrip {
   scroll-snap-type: none;
+  overflow-y: hidden;
+  overscroll-behavior-y: none;
+  touch-action: pan-x;
 }
 
 /* Studio extra: Android select stays 16px */
@@ -1380,9 +1384,11 @@ html, body {
 .board {
   grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
 }
-aside,
-.materials {
+aside {
   overflow-x: clip;
+}
+.materials {
+  overflow: visible;
 }
 .lib-grid:has(.is-skeleton) + #empty,
 .lib-grid[data-busy] + #empty {

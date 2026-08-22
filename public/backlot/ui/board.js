@@ -719,7 +719,7 @@ function sceneCard(s, card) {
 
   const slate = el("div", { class: "sc-slate" },
     el("span", { class: "num" }, sceneLabel(card.id)),
-    card.takes.length > 1 ? el("span", { class: "take" }, `T${card.takes.length}`) : null,
+    card.takes.length > 1 ? el("span", { class: "take" }, `${card.takes.length}테이크`) : null,
     card.hero_moment ? el("span", { class: "hero" }, "★ HERO") : null,
     el("span", { class: "dur" }, fmtDuration(dur)),
   );
