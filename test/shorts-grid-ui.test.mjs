@@ -6,6 +6,7 @@ import {
   channelOneLiner,
   DEFAULT_CREATE_PROVIDER,
   formatClock,
+  friendlyJobError,
   importBroughtCopy,
   inspectVideoDownloads,
   isPlaceholderThumbnail,
@@ -16,7 +17,8 @@ import {
   shortStatus,
   shortStatusLabel,
   shortThumbnail,
-  shortUploadPack
+  shortUploadPack,
+  stripUiPaths
 } from "../public/shorts-ui.mjs";
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
 import { machineSheetHtml, renderMachineSheetHtml, pipelineStages, PIPE_EDIT_MISSING, PIPE_PAUSED, PIPE_SCRIPT_MISSING } from "../public/studio-pipe.mjs";
@@ -71,6 +73,12 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(importBroughtCopy({ count: 13 }), "가져왔어요 13편");
   assert.equal(importBroughtCopy({ error: "가져오지 못했습니다." }), "가져오지 못했습니다.");
   assert.equal(importBroughtCopy({ imported: ["a"], seeded: [], roots: ["/secret"], catalog: { episodes: [] } }), "가져왔어요 1편");
+  assert.equal(stripUiPaths("실패 /workspace/jobs/demo/master.mp4"), "실패");
+  assert.equal(stripUiPaths("404 /api/projects"), "404");
+  assert.equal(friendlyJobError("ENOENT: no such file /opt/homebrew/bin/ffmpeg"), "파일을 찾지 못했습니다.");
+  assert.equal(friendlyJobError("404 /api/jobs/x"), "찾지 못했습니다.");
+  assert.equal(friendlyJobError("영상 주제를 4자 이상 입력하세요."), "영상 주제를 4자 이상 입력하세요.");
+  assert.equal(friendlyJobError("ECONNREFUSED"), "요청에 실패했습니다.");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -1025,6 +1033,13 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /provider: "grok-imagine"/);
   assert.match(app, /draftOnly: true/);
   assert.match(app, /function queueBatchJobs/);
+  assert.match(app, /function parseBatchTopics/);
+  assert.match(app, /leftover\.length/);
+  assert.match(app, /line && line\.length < 4/);
+  assert.match(app, /function batchTopicsOrFocus/);
+  assert.match(app, /friendlyJobError/);
+  assert.match(app, /stripUiPaths/);
+  assert.equal(app.includes("요청 실패 (${response.status})"), false);
   assert.match(app, /\/run/);
   assert.match(app, /업로드 준비/);
   assert.match(app, /bindFocusTrap/);

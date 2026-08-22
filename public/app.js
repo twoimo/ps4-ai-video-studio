@@ -1,4 +1,4 @@
-import { formatClock, importBroughtCopy, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripUiPaths } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -54,14 +54,14 @@ async function api(path, options = {}) {
     if (response.status === 400 + 2 || text.includes(creditMark) || text.includes("크레딧")) {
       throw new Error("지금은 다시 못 만들어요.");
     }
-    throw new Error(payload.error || `요청 실패 (${response.status})`);
+    throw new Error(friendlyJobError(payload.error || "요청에 실패했습니다."));
   }
   return payload;
 }
 
 function showToast(message, type = "") {
   const toast = $("#toast");
-  toast.textContent = message;
+  toast.textContent = stripUiPaths(type === "error" ? friendlyJobError(message) : message);
   toast.className = `toast visible ${type}`;
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => { toast.className = "toast"; }, 4200);
@@ -1097,7 +1097,26 @@ function openBatch(event) {
 }
 
 function parseBatchTopics() {
-  return ($("#batch-topics")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length >= 4);
+  const lines = ($("#batch-topics")?.value || "").split(/\r?\n/).map((line) => line.trim());
+  const leftover = lines.filter((line) => line && line.length < 4);
+  if (leftover.length) throw new Error("주제를 한 줄에 하나씩 4자 이상 입력하세요.");
+  return lines.filter(Boolean);
+}
+
+function batchTopicsOrFocus() {
+  try {
+    const topics = parseBatchTopics();
+    if (!topics.length) {
+      showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
+      $("#batch-topics")?.focus();
+      return null;
+    }
+    return topics;
+  } catch (error) {
+    showToast(friendlyJobError(error), "error");
+    $("#batch-topics")?.focus();
+    return null;
+  }
 }
 
 function batchJobBody(topic) {
@@ -1106,12 +1125,8 @@ function batchJobBody(topic) {
 }
 
 async function saveBatchDrafts() {
-  const topics = parseBatchTopics();
-  if (!topics.length) {
-    showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
-    $("#batch-topics")?.focus();
-    return;
-  }
+  const topics = batchTopicsOrFocus();
+  if (!topics) return;
   try {
     for (const topic of topics) {
       const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batchJobBody(topic)) });
@@ -1127,12 +1142,8 @@ async function saveBatchDrafts() {
 
 async function queueBatchJobs() {
   if (state.health?.imagine?.frozen !== false) return;
-  const topics = parseBatchTopics();
-  if (!topics.length) {
-    showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
-    $("#batch-topics")?.focus();
-    return;
-  }
+  const topics = batchTopicsOrFocus();
+  if (!topics) return;
   try {
     for (const topic of topics) {
       const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batchJobBody(topic)) });

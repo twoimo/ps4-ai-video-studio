@@ -35,6 +35,30 @@ export function importBroughtCopy(payload = {}) {
   return `가져왔어요 ${count}편`;
 }
 
+const UI_PATH = /(?:file:\/\/\S+)|(?:[A-Za-z]:\\(?:[\w.+-]+\\)+[\w.+-]+)|(?:(?:^|[\s"'`(=])(?:\/(?:workspace|opt|usr|home|Users|tmp|var|private|root|api)(?:\/[\w.+-]+)+))|(?:(?:^|[\s"'`(=])(?:workspace|resource)\/[\w./+-]+)/g;
+
+export function stripUiPaths(value) {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map(stripUiPaths);
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, stripUiPaths(item)]));
+  }
+  return String(value).replace(UI_PATH, (match) => {
+    const lead = match.match(/^[\s"'`(=]/);
+    return lead ? lead[0] : "";
+  }).replace(/[ \t]{2,}/g, " ").replace(/\s+([.,!?])/g, "$1").trim();
+}
+
+export function friendlyJobError(error) {
+  const original = String(error?.message || error || "");
+  const text = stripUiPaths(original);
+  if (/ENOENT|ENOTDIR|no such file/i.test(original)) return "파일을 찾지 못했습니다.";
+  if (/\b404\b/.test(original) || /not found/i.test(original)) return "찾지 못했습니다.";
+  if (!text) return "요청에 실패했습니다.";
+  if (/[가-힣]/.test(text)) return text;
+  return "요청에 실패했습니다.";
+}
+
 export function isPlaceholderThumbnail(artifact = {}) {
   if (artifact.placeholder === true) return true;
   const width = Number(artifact.width);

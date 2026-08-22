@@ -117,7 +117,7 @@ function stageSub(st) {
     return "in progress";
   }
   if (st.status === "in_progress") return "in progress";
-  if (st.status === "failed") return st.error ? String(st.error).slice(0, 60) : "failed";
+  if (st.status === "failed") return "실패";
   if (st.timestamp) {
     const approved = st.gated && st.human_approved ? " · approved" : "";
     return fmtClock(st.timestamp) + approved;

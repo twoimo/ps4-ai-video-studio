@@ -7,7 +7,7 @@ export function projectIdFromPath(pathname = "") {
 
 export async function getJSON(url) {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  if (!res.ok) throw new Error("불러오지 못했습니다.");
   return res.json();
 }
 
