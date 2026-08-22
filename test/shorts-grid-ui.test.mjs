@@ -767,7 +767,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /function bindEvents\(\) \{\s*bindStudioPipe\(document, openMachine\);/);
   assert.ok(app.indexOf("bindEvents();") < app.indexOf("void warnIfFactoryToolsMissing()"), "chips bind before health");
   assert.match(boardCss, /IBM Plex Sans KR/);
+  assert.match(boardCss, /:root\s*\{[\s\S]*--sans:\s*'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;/);
   assert.match(boardCss, /#studio-chrome[\s\S]*font-family:\s*var\(--sans\)/);
+  assert.equal(boardCss.includes("Inter"), false);
   assert.equal(boardCss.includes("family=Inter"), false);
   const heroExtra = boardCss.slice(boardCss.lastIndexOf("Studio extra: compact 9:16 render-hero"));
   assert.match(heroExtra, /height:\s*min\(36vh,\s*320px\)/);
