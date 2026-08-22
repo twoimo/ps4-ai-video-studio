@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   applyWatchTransform,
@@ -11,6 +11,7 @@ import {
   goWatchIndex,
   pageHeight,
   playWatchFeed,
+  playWatchMedia,
   selectedWatchSlide,
   sizeWatchFeed,
   stopWatchFeed,
@@ -286,23 +287,27 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   assert.equal(video.playCalls, 3);
 });
 
-test("playWatchFeed never starts muted and only mutes after play reject", async () => {
+test("playWatchMedia muted fallback is same-turn unmute then remute", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
-  const playFn = feed.slice(feed.indexOf("function playWithMuteFallback"), feed.indexOf("function revealAndPlay"));
-  const mutedFn = feed.slice(feed.indexOf("function playMutedThenUnmute"), feed.indexOf("function playWithMuteFallback"));
+  const mediaFn = feed.slice(feed.indexOf("export function playWatchMedia"), feed.indexOf("function revealAndPlay"));
+  const mutedFn = feed.slice(feed.indexOf("function playMutedThenUnmutePlay"), feed.indexOf("export function playWatchMedia"));
   assert.equal(app.includes("muted = true"), false);
   assert.equal(feed.includes("muted=true"), false);
   assert.equal(feed.includes("탭해서 재생"), false);
-  assert.match(feed, /video\.muted = false/);
-  assert.match(playFn, /video\.muted = false/);
-  assert.ok(playFn.indexOf("video.play()") < playFn.indexOf("playMutedThenUnmute"));
+  assert.equal(feed.includes(".catch(() => {})"), false);
+  assert.match(feed, /export function playWatchMedia/);
+  assert.match(feed, /function playMutedThenUnmutePlay/);
+  assert.match(feed, /function unmuteAndPlay/);
+  assert.match(feed, /function remuteAndPlay/);
+  assert.match(mediaFn, /video\.muted = false/);
+  assert.ok(mediaFn.indexOf("video.play()") < mediaFn.indexOf("playMutedThenUnmutePlay"));
   assert.match(mutedFn, /video\.muted = true/);
-  assert.match(mutedFn, /video\.play\(\)/);
+  assert.match(mutedFn, /unmuteAndPlay/);
   assert.match(feed, /pointerup/);
 });
 
-test("playWatchFeed muted-fallback keeps video playing after unmute fail", async () => {
+test("playWatchMedia remutes and plays when unmute play fails", async () => {
   let muted = true;
   let playCalls = 0;
   const video = {
@@ -317,10 +322,7 @@ test("playWatchFeed muted-fallback keeps video playing after unmute fail", async
     readyState: 0,
     style: { visibility: "", opacity: "" },
     get muted() { return muted; },
-    set muted(value) {
-      if (value === false && playCalls >= 2) throw new Error("unmute blocked");
-      muted = value;
-    },
+    set muted(value) { muted = value; },
     closest() { return null; },
     getAttribute() { return null; },
     removeAttribute() {},
@@ -329,7 +331,7 @@ test("playWatchFeed muted-fallback keeps video playing after unmute fail", async
     play() {
       playCalls += 1;
       this.playCalls = playCalls;
-      if (!muted && playCalls === 1) {
+      if (!muted) {
         this.paused = true;
         return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
       }
@@ -338,16 +340,27 @@ test("playWatchFeed muted-fallback keeps video playing after unmute fail", async
     },
     pause() { this.paused = true; }
   };
-  await playWatchFeed(video);
-  assert.equal(playCalls, 2);
+  await playWatchMedia(video);
+  assert.equal(playCalls, 4);
   assert.equal(video.muted, true);
   assert.equal(video.paused, false);
 });
 
-test("playWatchFeed same-turn muted play after unmuted reject", async () => {
-  const video = fakeVideo(0, { rejectUnmuted: true });
-  await playWatchFeed(video);
-  assert.equal(video.playCalls, 2);
+test("playWatchMedia same-turn muted play then unmute after unmuted reject", async () => {
+  let unmutedFails = 1;
+  const video = fakeVideo(0);
+  video.play = function play() {
+    this.playCalls += 1;
+    if (!this.muted && unmutedFails > 0) {
+      unmutedFails -= 1;
+      this.paused = true;
+      return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
+    }
+    this.paused = false;
+    return Promise.resolve();
+  };
+  await playWatchMedia(video);
+  assert.equal(video.playCalls, 3);
   assert.equal(video.paused, false);
   assert.equal(video.muted, false);
 });
@@ -925,4 +938,23 @@ test("listeners before src catch synchronous Android loadeddata", () => {
   assert.ok(handlers.length >= 3);
   assert.equal(video.style.visibility, "visible");
   assert.equal(video.style.opacity, "1");
+});
+
+test("public files have no tap-to-play copy and no credit 402 copy", async () => {
+  const root = join(process.cwd(), "public");
+  const files = [];
+  async function walk(dir) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) await walk(path);
+      else if (/\.(js|mjs|html|css)$/.test(entry.name)) files.push(path);
+    }
+  }
+  await walk(root);
+  assert.ok(files.length > 0);
+  for (const path of files) {
+    const source = await readFile(path, "utf8");
+    assert.equal(source.includes("탭해서 재생"), false, path);
+    assert.equal(source.includes("크레딧 402"), false, path);
+  }
 });

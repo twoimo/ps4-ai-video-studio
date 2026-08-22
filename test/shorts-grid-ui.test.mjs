@@ -611,9 +611,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(editor.includes("자막 ASS"), false);
   assert.equal(editor.includes("captions.ass"), false);
   assert.match(editor, /class="primary-button inspect-save"[^>]*>저장</);
-  assert.match(editor, /class="secondary-button inspect-regen"/);
-  assert.match(editor, /const regenLabel = frozen \? "지금은 다시 못 만들어요" : "다시 만들기"/);
-  assert.match(editor, /지금은 다시 못 만들어요/);
+  assert.match(editor, /secondary-button inspect-regen/);
+  assert.match(editor, /is-paused/);
+  assert.match(editor, /다시 만들기 · 멈춤/);
   assert.match(editor, /지금은 그림을 안 만들어요/);
   assert.match(editor, /export function fallbackCaptionPrompts/);
   assert.match(editor, /job\.lines/);
@@ -626,7 +626,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /지금은 다시 못 만들어요/);
   assert.equal(materials.includes("402"), false);
   assert.match(app, /지금은 그림을 안 만들어요/);
-  assert.equal(app.includes('reasons.push("지금은 그림을 안 만들어요")'), false);
+  assert.match(app, /if \(frozen\) reasons\.push\("지금은 그림을 안 만들어요"\)/);
   assert.equal(app.includes("그림 · 멈춤"), false);
   assert.equal(app.includes("움직임 · 멈춤"), false);
   assert.match(app, /paused: frozen/);
@@ -659,6 +659,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.doesNotMatch(boardCss, /@media \(max-width: 720px\)/);
   assert.doesNotMatch(boardCss, /max-width:\s*440px/);
   assert.doesNotMatch(boardCss, /max-width:\s*400px/);
+  assert.match(boardCss, /\.materials \.inspect-frozen[\s\S]*color:\s*var\(--text-2\)/);
+  assert.doesNotMatch(boardCss, /\.materials \.inspect-frozen[^{]*\{[^}]*var\(--red\)/);
+  assert.match(boardCss, /\.materials \.inspect-regen\.is-paused/);
   assert.match(boardCss, /\.materials \.inspect-stack\s*\{[^}]*gap/);
   assert.match(boardCss, /\.materials \.inspect-caption\s*\{[^}]*grid-template-columns:\s*1\.5rem/);
   assert.match(boardCss, /\.materials \.inspect-files\s*\{/);
@@ -705,7 +708,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(panel.includes("자막 ASS"), false);
   assert.equal(panel.includes("watch-inspect-close"), false);
   assert.match(panel, /disabled/);
-  assert.match(panel, /지금은 다시 못 만들어요/);
+  assert.match(panel, /is-paused/);
+  assert.match(panel, /다시 만들기 · 멈춤/);
+  assert.match(panel, /title="지금은 그림을 안 만들어요"/);
   assert.match(panel, /지금은 그림을 안 만들어요/);
   const fakeRoot = {
     querySelectorAll(selector) {

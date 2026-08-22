@@ -204,61 +204,74 @@ function revealWatchVideo(video) {
   return video;
 }
 
-function playMutedThenUnmute(video) {
-  video.muted = true;
-  if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
-  let mutedPlay;
-  try {
-    mutedPlay = video.play();
-  } catch {
-    return;
-  }
-  const afterMuted = () => {
-    revealWatchVideo(video);
-    try {
-      video.muted = false;
-      if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
-      if (video.paused) {
-        video.muted = true;
-        video.play?.();
-      }
-    } catch {
-      video.muted = true;
-    }
-    return video;
-  };
-  if (mutedPlay && typeof mutedPlay.then === "function") {
-    return mutedPlay.then(afterMuted).catch(() => {});
-  }
-  afterMuted();
-  return mutedPlay;
+function playResult(play) {
+  return play && typeof play.then === "function" ? play : Promise.resolve(play);
 }
 
-function playWithMuteFallback(video, jobId, { reveal = true } = {}) {
-  if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
-  if (reveal) revealWatchVideo(video);
+function remuteAndPlay(video) {
+  video.muted = true;
+  if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
+  let play;
+  try {
+    play = video.play();
+  } catch {
+    revealWatchVideo(video);
+    return Promise.resolve(video);
+  }
+  return playResult(play).then(() => revealWatchVideo(video)).catch(() => {
+    revealWatchVideo(video);
+    return video;
+  });
+}
+
+function unmuteAndPlay(video) {
+  revealWatchVideo(video);
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   let play;
   try {
     play = video.play();
   } catch {
-    return playMutedThenUnmute(video);
+    return remuteAndPlay(video);
   }
-  if (play && typeof play.then === "function") {
-    return play.then(() => revealWatchVideo(video)).catch(() => playMutedThenUnmute(video));
+  return playResult(play).then(() => revealWatchVideo(video)).catch(() => remuteAndPlay(video));
+}
+
+function playMutedThenUnmutePlay(video) {
+  video.muted = true;
+  if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
+  let mutedPlay;
+  try {
+    mutedPlay = video.play();
+  } catch {
+    return remuteAndPlay(video);
   }
-  return play;
+  return playResult(mutedPlay).then(() => unmuteAndPlay(video)).catch(() => remuteAndPlay(video));
+}
+
+export function playWatchMedia(video) {
+  if (!video || typeof video.play !== "function") return Promise.resolve(video);
+  video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  let play;
+  try {
+    play = video.play();
+  } catch {
+    return playMutedThenUnmutePlay(video);
+  }
+  return playResult(play).then(() => revealWatchVideo(video)).catch(() => playMutedThenUnmutePlay(video));
 }
 
 function revealAndPlay(video, jobId) {
-  return playWithMuteFallback(video, jobId, { reveal: true });
+  if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
+  revealWatchVideo(video);
+  return playWatchMedia(video);
 }
 
 export function playWatchFeed(target) {
   if (target && typeof target.play === "function" && typeof target.querySelector !== "function") {
     attachWatchVideo(target);
-    return playWithMuteFallback(target);
+    return playWatchMedia(target);
   }
   const root = target;
   const slides = watchSlides(root);
@@ -293,7 +306,7 @@ export function playWatchFeed(target) {
   if (src && video.getAttribute?.("src") !== src) video.src = src;
   if (video.dataset) video.dataset.jobId = jobId || "";
   if ((video.readyState || 0) >= 2) revealWatchVideo(video);
-  return playWithMuteFallback(video, jobId, { reveal: false });
+  return playWatchMedia(video);
 }
 
 export function clearWatchSize(root) {
@@ -443,12 +456,11 @@ export function bindWatchFeed(root, onBack, onActive) {
     const video = watchPlayerVideo(root);
     if (!video) return;
     if (video.paused) {
-      revealWatchVideo(video);
-      const play = globalThis.document?.body?.classList?.contains("watch-open") ? playWatchFeed(root) : null;
-      if (play && typeof play.then === "function") {
-        play.then(() => revealWatchVideo(video)).catch(() => {});
+      if (globalThis.document?.body?.classList?.contains("watch-open")) {
+        playWatchFeed(root);
+      } else {
+        stopWatchFeed(root);
       }
-      if (!play) stopWatchFeed(root);
     } else {
       video.pause();
     }

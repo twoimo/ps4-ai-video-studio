@@ -1054,6 +1054,7 @@ function renderStudioChrome() {
   const health = state.health || {};
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
+  const frozen = health.imagine?.frozen !== false;
   const chips = $("#studio-chips");
   if (chips) {
     chips.hidden = false;
@@ -1066,6 +1067,7 @@ function renderStudioChrome() {
     if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
     if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
     if (!grok) reasons.push("대본을 쓸 수 없습니다");
+    if (frozen) reasons.push("지금은 그림을 안 만들어요");
     banner.hidden = reasons.length === 0;
     banner.textContent = reasons.join(" · ");
   }
