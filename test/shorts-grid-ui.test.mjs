@@ -288,7 +288,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /function measureChrome/);
   assert.match(app, /getBoundingClientRect\(\)\.top/);
   assert.match(app, /setProperty\("--chrome"/);
-  assert.match(app, /visualViewport\?\.height \|\| window\.innerHeight/);
+  assert.match(app, /const height = portrait \? innerH : \(window\.visualViewport\?\.height \|\| innerH\)/);
   assert.match(app, /height - chrome - gap/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /addEventListener\("resize"/);
