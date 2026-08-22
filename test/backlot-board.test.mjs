@@ -263,9 +263,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
   assert.equal(css.includes("family=Inter"), false);
   const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
-  assert.match(heroExtra, /height:\s*min\(36vh,\s*320px\)/);
+  assert.match(heroExtra, /height:\s*auto/);
   assert.match(heroExtra, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(heroExtra, /width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
   assert.match(boardJs, /onchange: \(e\) => \{ setT\(e\.target\.value\); render\(\); \},\s*\}\),/);
   assert.match(boardJs, /script:\s*"대본"/);
   assert.match(boardJs, /"hook-lock":\s*"첫 장면"/);
@@ -433,7 +435,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
   assert.match(libraryJs, /function failLibrary/);
-  assert.match(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card"\)/);
+  assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
   assert.match(boardJs, /function failBoard/);
   assert.match(boardJs, /function initBoard/);
@@ -575,8 +578,11 @@ test("library long-press blocks contextmenu and the board rail stays visible", a
   assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
   assert.match(libraryJs, /script:\s*"대본"/);
   assert.match(libraryJs, /displayPipelineLabel\(p\.pipeline_type\)/);
+  assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
   assert.match(libraryJs, /displayStageLabel\(p\.active_stage\)/);
-  assert.match(boardJs, /displayPipelineLabel\(s\.pipeline\.pipeline_type\)/);
+  assert.match(boardJs, /displayPipelineLabel\(pipelineType\)/);
+  assert.match(boardJs, /pipelineType !== "style_playbook"/);
+  assert.doesNotMatch(boardJs, /s\.style_playbook \? el\("span", \{ class: "chip" \}/);
   assert.match(boardJs, /onclick: closeModal \}, "닫기"/);
   assert.doesNotMatch(boardJs, /ESC · CLOSE/);
   assert.doesNotMatch(boardJs, /ESC · 닫기/);
@@ -606,6 +612,27 @@ test("board bfcache closes the modal, disables PiP, and blocks pull-to-refresh",
   assert.match(css, /z-index:\s*1;/);
   assert.doesNotMatch(css, /z-index:\s*90/);
   assert.match(css, /html, body \{\s*overscroll-behavior-y:\s*none/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("library empty Korean, fail clears skeletons, and hero uses an auto 9:16 box", async () => {
+  const root = process.cwd();
+  const library = await readFile(join(root, "public/backlot/index.html"), "utf8");
+  const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
+  assert.match(library, /아직 보드가 없습니다/);
+  assert.doesNotMatch(library, /No projects yet/);
+  assert.match(libraryJs, /querySelector\("\.lib-card"\)/);
+  assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
+  assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
+  assert.match(ui, /key === "ps4-studio"\) return "보드"/);
+  const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
+  assert.match(heroExtra, /height:\s*auto/);
+  assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

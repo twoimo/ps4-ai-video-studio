@@ -222,7 +222,7 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
 .overlay-chrome { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; min-height: 36px; }
 .overlay-back { color: var(--text); }
 .create-panel { width: 100%; max-width: none; margin: 0; min-height: 0; display: flex; flex-direction: column; font-size: 14px; }
-.create-panel h2, .job-detail h2, .overlay-panel h2, .menu-overlay-panel h2, .machine-root h2 { margin: 0 36px 8px 0; font-size: 16px; font-weight: 600; letter-spacing: -.02em; }
+.create-panel h2, .job-detail h2, .overlay-panel h2, .menu-overlay-panel h2, .machine-root h2 { margin: 0 36px 8px 0; padding-right: 48px; font-size: 16px; font-weight: 600; letter-spacing: -.02em; }
 .create-panel #facts-field { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
 .create-panel #facts { flex: 0 0 auto; min-height: 0; }
 .empty-note { margin: 0 0 8px; color: var(--dim); font-size: 14px; }
@@ -330,7 +330,7 @@ body.template-page { display: block; overflow: auto; }
 
 #watch-feed,
 #watch-feed.watch-feed,
-.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
+.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; overscroll-behavior: none; container-type: size; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
 body.watch-open #watch-feed,
@@ -460,6 +460,7 @@ body.watch-open .studio-chrome { display: none; }
 body.watch-open .library { display: none; }
 
 html.ime-open .toast { display: none; }
+html.ime-open body { top: 0; }
 .toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: min(360px, calc(100% - 32px)); overflow-wrap: anywhere; transform: translateY(20px); opacity: 0; pointer-events: none; color: var(--text); background: var(--surface-3); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; transition: .25s ease; }
 .toast.visible { transform: translateY(0); opacity: 1; }
 .toast.error { color: #ffd2cd; border-color: rgba(255,120,109,.4); }

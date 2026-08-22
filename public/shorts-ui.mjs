@@ -139,6 +139,9 @@ export function displayItemLabel(name, fallback = "항목") {
 }
 
 export function displayPipelineLabel(name) {
+  const key = String(name || "").trim();
+  if (key === "ps4-studio") return "보드";
+  if (key === "style_playbook") return "";
   return displayStageLabel(name, "단계");
 }
 

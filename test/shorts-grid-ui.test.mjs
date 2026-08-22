@@ -562,7 +562,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(home.includes(">보기<"), false);
   assert.equal(home.includes("surface-toggle"), false);
   assert.match(home, /id="home-brand"/);
-  assert.match(home, /href="#shorts"/);
+  assert.match(home, /id="home-brand" href="\/"/);
   assert.equal(home.includes('class="watch-open"'), false);
   assert.match(html, /id="watch-feed" hidden/);
   assert.match(html, /id="shorts">/);
@@ -718,7 +718,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("function patchDetailProgress"), false);
   assert.equal(app.includes("function renderLiveFactory"), false);
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
-  assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
+  assert.match(app, /function hashForView[\s\S]*if \(view === "machine"\) return "#machine";\s*return ""/);
   assert.match(app, /if \(view === "machine"\) return "#machine"/);
   assert.match(app, /hash === "machine"/);
   assert.match(app, /hash === "machine" \|\| hash\.startsWith\("machine\/"\)/);
@@ -735,7 +735,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
   assert.match(app, /async function refreshCreatePreview\(expectedSeq = state\.createSeq\)/);
   assert.match(app, /await refreshCreatePreview\(seq\)/);
-  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash && location\.hash !== "#shorts"\) history\.replaceState\(null, "", "#shorts"\)/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash\) history\.replaceState\(null, "", location\.pathname \+ location\.search\)/);
   assert.match(app, /#batch-topics"\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(app, /hash === "short"/);
   assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
@@ -1196,9 +1196,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(boardCss.includes("Inter"), false);
   assert.equal(boardCss.includes("family=Inter"), false);
   const heroExtra = boardCss.slice(boardCss.lastIndexOf("Studio extra: compact 9:16 render-hero"));
-  assert.match(heroExtra, /height:\s*min\(36vh,\s*320px\)/);
+  assert.match(heroExtra, /height:\s*auto/);
   assert.match(heroExtra, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(heroExtra, /width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.doesNotMatch(boardCss, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
   assert.doesNotMatch(boardCss, /@media \(max-width: 720px\)/);
@@ -1523,12 +1525,14 @@ test("displayTitle drops workspace paths and falls back to 보드", () => {
   assert.equal(displayItemLabel("research_brief"), "조사");
   assert.equal(displayItemLabel("artifact"), "항목");
   assert.equal(displayPipelineLabel("unknown"), "단계");
+  assert.equal(displayPipelineLabel("ps4-studio"), "보드");
+  assert.equal(displayPipelineLabel("style_playbook"), "");
 });
 
-test("leftover watch with no clips replaces #shorts", async () => {
+test("leftover watch with no clips replaces /", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const html = await readFile(join(publicDir, "index.html"), "utf8");
-  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash && location\.hash !== "#shorts"\) history\.replaceState\(null, "", "#shorts"\)/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash\) history\.replaceState\(null, "", location\.pathname \+ location\.search\)/);
   assert.equal(html.includes('class="watch-open"'), false);
   assert.match(html, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
   assert.match(html, /classList\.add\("watch-open"\)/);
@@ -1569,4 +1573,24 @@ test("empty grid first create upserts then renders and pagehide persists setting
   assert.match(css, /\.library-menu\s*\{[^}]*z-index:\s*2/);
   assert.match(chromeCss, /#satellite-menu\s*\{[^}]*z-index:\s*40/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+});
+
+test("grid hash is / and IME queues toasts until the keyboard closes", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
+  assert.match(app, /function hashForView[\s\S]*if \(view === "machine"\) return "#machine";\s*return ""/);
+  assert.match(app, /if \(hash === "shorts"\) history\.replaceState\(history\.state, "", location\.pathname \+ location\.search\)/);
+  assert.match(html, /id="home-brand" href="\/"/);
+  assert.match(app, /function imeKeyboardOpen/);
+  assert.match(app, /function flushToastsAfterIme/);
+  assert.match(app, /current \|\| imeKeyboardOpen\(\)/);
+  assert.match(app, /flushToastsAfterIme\(\)/);
+  assert.match(app, /document\.body\.style\.top = "0px"/);
+  assert.match(chrome, /body\.style\.top = "0px"/);
+  assert.match(css, /html\.ime-open body\s*\{[^}]*top:\s*0/);
+  assert.match(css, /\.create-panel h2[\s\S]{0,120}padding-right:\s*48px/);
+  assert.match(css, /\.draft-close\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /\.draft-close\s*\{[^}]*height:\s*44px/);
 });

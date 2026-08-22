@@ -1043,7 +1043,7 @@ test("first paint #watch hides the grid before JS", async () => {
   assert.match(boot, /library\.hidden = true/);
   assert.match(boot, /getElementById\("watch-feed"\)/);
   assert.match(boot, /feed\.hidden = false/);
-  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash && location\.hash !== "#shorts"\) history\.replaceState\(null, "", "#shorts"\)/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash\) history\.replaceState\(null, "", location\.pathname \+ location\.search\)/);
 });
 
 test("wheel stays on the watch feed root", () => {
@@ -1129,4 +1129,46 @@ test("watch PiP leftover exits on pause and stop and kicks back on enter", async
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(\)/);
   assert.match(feed, /classList\?\.contains\("watch-open"\)\) return;\s*try \{ video\.pause\(\)/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+});
+
+test("edge swipe does not rubber-band and lostpointercapture zeros the swipe", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
+  const root = fakePager({ slides, height: 640 });
+  bindWatchFeed(root, () => {});
+  goWatchIndex(root, 0);
+  applyWatchTransform(root, { animate: false, offset: 80 });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*0px,\s*0\)/);
+  applyWatchTransform(root, { animate: false, offset: -80 });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*-80px,\s*0\)/);
+  goWatchIndex(root, 1);
+  applyWatchTransform(root, { animate: false, offset: -80 });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*-640px,\s*0\)/);
+  const start = root.listeners.find((item) => item.type === "pointerdown").handler;
+  const move = root.listeners.find((item) => item.type === "pointermove").handler;
+  const lost = root.listeners.find((item) => item.type === "lostpointercapture");
+  assert.ok(lost);
+  goWatchIndex(root, 0);
+  start({ clientX: 10, clientY: 200, target: { closest: () => null } });
+  move({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  lost.handler({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  assert.equal(getWatchIndex(root), 0);
+  goWatchIndex(root, 1);
+  stopWatchFeed(root);
+  assert.match(root.track.style.transform, /translate3d\(0,\s*0,\s*0\)/);
+  assert.match(feed, /lostpointercapture/);
+  assert.match(feed, /translate3d\(0, 0, 0\)/);
+  assert.match(feed, /dataset\?\.swiping === "1" \|\| pagerOf\(root\)\?\.swiping\) return/);
+  assert.match(css, /#watch-feed[\s\S]{0,280}overscroll-behavior:\s*none/);
+});
+
+test("hardware Back after PiP exits PiP and re-pushes so layers stay", async () => {
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  const pop = app.slice(app.indexOf("function handleStudioPopState"), app.indexOf("function deleteClickSwallowed"));
+  assert.match(pop, /pictureInPictureElement/);
+  assert.match(pop, /exitPictureInPicture/);
+  assert.match(pop, /history\.pushState\(history\.state,\s*"",\s*location\.href\)/);
+  assert.ok(pop.indexOf("pictureInPictureElement") < pop.indexOf('studioLayer === "confirm"'));
+  assert.ok(pop.indexOf("pictureInPictureElement") < pop.indexOf('state.view === "watch"'));
 });

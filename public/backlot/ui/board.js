@@ -49,12 +49,14 @@ applyTheme(currentTheme);
 
 function renderSlate(s) {
   const board = s.storyboard;
+  const pipelineType = String(s.pipeline?.pipeline_type || "").trim();
   const chips = [
-    el("span", { class: "chip" }, displayPipelineLabel(s.pipeline.pipeline_type)),
+    pipelineType && pipelineType !== "style_playbook"
+      ? el("span", { class: "chip" }, displayPipelineLabel(pipelineType))
+      : null,
     board && board.total_duration_seconds
       ? el("span", { class: "chip" }, `${board.scenes.length} scenes · ${fmtDuration(board.total_duration_seconds)}`)
       : null,
-    s.style_playbook ? el("span", { class: "chip" }, s.style_playbook) : null,
   ];
 
   const awaiting = s.stages.find((x) => x.status === "awaiting_human");

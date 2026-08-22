@@ -110,9 +110,13 @@ export function applyWatchTransform(root, { animate = false, offset = 0 } = {}) 
   const pager = pagerOf(root);
   const h = pageHeight(root);
   if (!track?.style || !pager || !(h > 0)) return;
-  const y = -pager.index * h + offset;
-  const count = watchSlides(root).length;
-  if (count) track.style.height = `${count * h}px`;
+  const slides = watchSlides(root);
+  const last = Math.max(0, slides.length - 1);
+  let nextOffset = offset;
+  if (pager.index <= 0 && nextOffset > 0) nextOffset = 0;
+  if (pager.index >= last && nextOffset < 0) nextOffset = 0;
+  const y = -pager.index * h + nextOffset;
+  if (slides.length) track.style.height = `${slides.length * h}px`;
   track.style.transition = animate ? "transform 160ms ease-out" : "none";
   track.style.transform = `translate3d(0, ${y}px, 0)`;
 }
@@ -251,6 +255,11 @@ export function stopWatchFeed(root) {
     pager.velocity = 0;
   }
   if (root?.dataset) delete root.dataset.swiping;
+  const track = watchTrack(root);
+  if (track?.style) {
+    track.style.transition = "none";
+    track.style.transform = "translate3d(0, 0, 0)";
+  }
   pauseLeftoverMedia(root);
   const videos = [];
   const held = root ? watchPlayers.get(root) : null;
@@ -556,6 +565,7 @@ function bindWatchFlip(root) {
   if (root.dataset) root.dataset.flipBound = "1";
   let aspect = (globalThis.innerWidth || 1) / Math.max(1, globalThis.innerHeight || 1);
   const replay = () => {
+    if (root.dataset?.swiping === "1" || pagerOf(root)?.swiping) return;
     if (!globalThis.document?.body?.classList?.contains("watch-open")) return;
     const next = (globalThis.innerWidth || 1) / Math.max(1, globalThis.innerHeight || 1);
     const flipped = Math.abs(next - aspect) >= 0.02;
@@ -698,6 +708,7 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   };
   root.addEventListener("pointerup", (event) => endPointer(event, false));
   root.addEventListener("pointercancel", (event) => endPointer(event, true));
+  root.addEventListener("lostpointercapture", (event) => endPointer(event, true));
   root.addEventListener("wheel", (event) => {
     if (pager.swiping || root.dataset?.swiping === "1") return;
     const dy = event.deltaY || 0;

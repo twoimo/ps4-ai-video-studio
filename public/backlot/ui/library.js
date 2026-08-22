@@ -89,7 +89,7 @@ function card(p) {
   }
 
   const meta = el("div", { class: "lb-meta" },
-    el("span", { class: "chip" }, displayPipelineLabel(p.pipeline_type)),
+    p.pipeline_type && p.pipeline_type !== "style_playbook" ? el("span", { class: "chip" }, displayPipelineLabel(p.pipeline_type)) : null,
     p.scene_count ? el("span", { class: "chip" }, `${p.scene_count} scenes`) : null,
     p.render_count ? el("span", { class: "chip" }, `${p.render_count} renders`) : null,
     el("span", { class: "when" }, fmtAgo(p.last_activity)),
@@ -126,7 +126,7 @@ function failLibrary(error) {
   const count = document.getElementById("count");
   const empty = document.getElementById("empty");
   const grid = document.getElementById("grid");
-  if (grid?.querySelector(".lib-card, .lib-skeleton")) return;
+  if (grid?.querySelector(".lib-card")) return;
   if (count) count.textContent = "불러오지 못함";
   if (grid) grid.innerHTML = "";
   if (empty) {

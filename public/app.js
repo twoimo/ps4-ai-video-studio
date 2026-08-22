@@ -75,6 +75,17 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function imeKeyboardOpen() {
+  return document.documentElement.classList.contains("ime-open");
+}
+
+function flushToastsAfterIme() {
+  if (imeKeyboardOpen()) return;
+  if (enqueueToast.current || enqueueToast.timer) return;
+  const next = enqueueToast.queue?.shift();
+  if (next) revealToast(next);
+}
+
 function enqueueToast(message, type = "") {
   if (isAbortError(message)) return;
   const text = stripUiPaths(type === "error" ? friendlyJobError(message) : stripErrorPrefix(message));
@@ -84,7 +95,7 @@ function enqueueToast(message, type = "") {
   if (current && current.text === text && current.type === type) return;
   if (enqueueToast.queue.some((item) => item.text === text && item.type === type)) return;
   const item = { text, type };
-  if (current) {
+  if (current || imeKeyboardOpen()) {
     enqueueToast.queue.push(item);
     return;
   }
@@ -92,6 +103,11 @@ function enqueueToast(message, type = "") {
 }
 
 function revealToast(item) {
+  if (imeKeyboardOpen()) {
+    enqueueToast.queue ||= [];
+    enqueueToast.queue.unshift(item);
+    return;
+  }
   const toast = $("#toast");
   if (!toast) return;
   enqueueToast.current = item;
@@ -124,7 +140,7 @@ function hashForView(view) {
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "settings") return "#settings";
   if (view === "machine") return "#machine";
-  return "#shorts";
+  return "";
 }
 
 function replaceWatchHash(jobId) {
@@ -332,7 +348,7 @@ function applyHash() {
     const playable = watchableJobs();
     if (!playable.length) {
       setView("grid", { skipHash: true });
-      if (location.hash && location.hash !== "#shorts") history.replaceState(null, "", "#shorts");
+      if (location.hash) history.replaceState(null, "", location.pathname + location.search);
       return;
     }
     const requested = jobId && playable.find((job) => job.id === jobId);
@@ -359,6 +375,7 @@ function applyHash() {
     return;
   }
   if (!hash || hash === "shorts") {
+    if (hash === "shorts") history.replaceState(history.state, "", location.pathname + location.search);
     setView("grid", { skipHash: true });
     return;
   }
@@ -759,6 +776,12 @@ function dismissStudioLayer() {
 }
 
 function handleStudioPopState() {
+  if (pageHiding) return;
+  if (document.pictureInPictureElement) {
+    try { document.exitPictureInPicture?.(); } catch { /* ignore leftover PiP */ }
+    try { history.pushState(history.state, "", location.href); } catch { /* ignore leftover PiP */ }
+    return;
+  }
   if (studioLayer === "confirm") {
     markStudioLayerFromPop();
     closeDeleteConfirm();
@@ -1835,12 +1858,20 @@ function syncVisualViewportInset() {
   const bottom = visualViewportKeyboardInset();
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   document.documentElement.style.setProperty("--vv-height", `${Math.round(height)}px`);
-  document.documentElement.classList.toggle("ime-open", bottom > 80);
+  const ime = bottom > 80;
+  document.documentElement.classList.toggle("ime-open", ime);
+  if (ime) {
+    document.body.style.top = "0px";
+  } else {
+    document.body.style.removeProperty("top");
+    flushToastsAfterIme();
+  }
   pinWatchToVisualViewport();
   pinOverlaysToVisualViewport();
   rescrollFocusedField(document);
   if (document.body?.classList?.contains("watch-open")) {
     const root = $("#watch-feed");
+    if (root?.dataset?.swiping === "1") return;
     sizeWatchFeed(root);
     applyWatchTransform(root, { animate: false });
   } else {
@@ -1859,6 +1890,7 @@ function bindEvents() {
     pinWatchToVisualViewport();
     if (state.view !== "watch") return;
     const root = $("#watch-feed");
+    if (root?.dataset?.swiping === "1") return;
     sizeWatchFeed(root);
     applyWatchTransform(root, { animate: false });
     wrapWatchFeed(root);

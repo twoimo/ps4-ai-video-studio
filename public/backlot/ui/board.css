@@ -1258,16 +1258,17 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
 
 /* Studio extra: compact 9:16 render-hero so 720p files are not squashed */
 .render-hero {
-  height: min(36vh, 320px);
+  height: auto;
   aspect-ratio: 9 / 16;
   width: min(100%, calc(min(36vh, 320px) * 9 / 16));
-  max-width: 100%;
+  max-width: min(100%, calc(min(36vh, 320px) * 9 / 16));
+  max-height: min(36vh, 320px);
   margin-inline: auto;
 }
 .render-hero video {
   width: 100%;
-  height: 100%;
-  max-height: none;
+  height: auto;
+  max-height: min(36vh, 320px);
   object-fit: contain;
 }
 
