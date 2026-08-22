@@ -113,7 +113,17 @@ export function shortCardUnchanged(prev, next) {
     && shortDurationSeconds(prev) === shortDurationSeconds(next);
 }
 
+export function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === 20;
+}
+
+export function throwMappedFetchError(error) {
+  if (isAbortError(error)) throw error;
+  throw new Error(friendlyJobError(stripErrorPrefix(error)));
+}
+
 export function settingsSaveFailMessage(error) {
+  if (isAbortError(error)) return "";
   const text = friendlyJobError(error);
   if (!text || text === "요청에 실패했습니다.") return "설정을 저장하지 못했습니다.";
   return text;

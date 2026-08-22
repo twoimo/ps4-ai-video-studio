@@ -1,4 +1,4 @@
-import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
+import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -50,8 +50,7 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, options);
   } catch (error) {
-    if (isAbortError(error)) throw error;
-    throw new Error(friendlyJobError(stripErrorPrefix(error)));
+    throwMappedFetchError(error);
   }
   let text;
   try {
@@ -77,6 +76,7 @@ async function api(path, options = {}) {
 }
 
 function enqueueToast(message, type = "") {
+  if (isAbortError(message)) return;
   const text = stripUiPaths(type === "error" ? friendlyJobError(message) : stripErrorPrefix(message));
   if (!text) return;
   enqueueToast.queue ||= [];
@@ -172,7 +172,7 @@ function restoreOpener() {
 function overlayStartFocus(root) {
   if (!root) return;
   if (root.id === "machine-overlay") {
-    const panel = root.querySelector(".overlay-panel");
+    const panel = root.querySelector?.(".overlay-panel");
     if (panel && typeof panel.focus === "function") {
       if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
       panel.focus();
@@ -183,7 +183,7 @@ function overlayStartFocus(root) {
     const active = document.activeElement;
     if (active && root.contains(active) && active !== root && !active.classList?.contains("draft-close")) return;
     const batch = state.createMode === "batch";
-    const target = batch ? root.querySelector("#batch-topics") : root.querySelector("#topic");
+    const target = batch ? root.querySelector?.("#batch-topics") : root.querySelector?.("#topic");
     if (target && target.closest("[hidden]") == null && typeof target.focus === "function") {
       target.focus();
       return;
@@ -1008,10 +1008,6 @@ function syncPollTimer() {
   if (active) state.poll = window.setInterval(pollJobs, 900);
 }
 
-function isAbortError(error) {
-  return error?.name === "AbortError" || error?.code === 20;
-}
-
 function keepPaintedGrid(error) {
   if (!isAbortError(error)) return false;
   return Boolean(
@@ -1358,7 +1354,7 @@ async function hydrateStudioSettings() {
       songs.dataset.ready = "1";
     }
   } catch (error) {
-    if (seq !== state.settingsSeq) return;
+    if (isAbortError(error) || seq !== state.settingsSeq) return;
     const songs = $("#settings-bgm-songs");
     if (songs && songs.dataset.ready !== "1") songs.textContent = "곡 없음";
     showToast(error, "error");
@@ -1387,6 +1383,7 @@ async function persistSettings({ toast = false } = {}) {
     applySettingsToForm(payload.settings);
     if (toast) showToast("설정을 저장했습니다.");
   } catch (error) {
+    if (isAbortError(error)) return;
     showToast(settingsSaveFailMessage(error), "error");
   }
 }

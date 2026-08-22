@@ -1,6 +1,6 @@
 // Shared helpers for the Backlot UI.
 
-import { friendlyJobError, parseJsonText, stripErrorPrefix } from "../../shorts-ui.mjs";
+import { friendlyJobError, parseJsonText, stripErrorPrefix, throwMappedFetchError } from "../../shorts-ui.mjs";
 
 const THEME_KEY = "backlot.theme";
 
@@ -30,7 +30,7 @@ export async function getJSON(url) {
   try {
     res = await fetch(url);
   } catch (error) {
-    throw new Error(friendlyJobError(stripErrorPrefix(error)));
+    throwMappedFetchError(error);
   }
   if (!res.ok) throw new Error(friendlyJobError("불러오지 못했습니다."));
   let text;

@@ -13,6 +13,7 @@ import {
   displayTitle,
   projectsFromListPayload,
   inspectVideoDownloads,
+  isAbortError,
   isPlaceholderThumbnail,
   isWatchableShort,
   shortDurationSeconds,
@@ -25,7 +26,8 @@ import {
   shortThumbnail,
   shortUploadPack,
   stripErrorPrefix,
-  stripUiPaths
+  stripUiPaths,
+  throwMappedFetchError
 } from "../public/shorts-ui.mjs";
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
 import { machineSheetHtml, renderMachineSheetHtml, pipelineStages, PIPE_EDIT_MISSING, PIPE_PAUSED, PIPE_SCRIPT_MISSING } from "../public/studio-pipe.mjs";
@@ -96,6 +98,12 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(friendlyJobError(new TypeError("Cannot read properties of undefined (reading 'map')")), "지금은 처리할 수 없습니다.");
   assert.equal(friendlyJobError("TypeError: Cannot read properties of undefined (reading 'map')"), "지금은 처리할 수 없습니다.");
   assert.equal(friendlyJobError("Cannot read properties of undefined (reading 'map')"), "지금은 처리할 수 없습니다.");
+  const abort = new Error("aborted");
+  abort.name = "AbortError";
+  assert.equal(isAbortError(abort), true);
+  assert.throws(() => throwMappedFetchError(abort), (error) => error === abort);
+  assert.throws(() => throwMappedFetchError(new TypeError("Failed to fetch")), /연결하지 못했습니다/);
+  assert.equal(settingsSaveFailMessage(abort), "");
   assert.deepEqual(jobsFromListPayload(undefined), []);
   assert.deepEqual(jobsFromListPayload({}), []);
   assert.deepEqual(jobsFromListPayload({ jobs: null }), []);
@@ -638,9 +646,10 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /fieldLines\("#facts"\)/);
   assert.match(app, /\$\("#provider"\)\?\.value/);
   assert.match(app, /function keepPaintedGrid/);
-  assert.match(app, /function isAbortError/);
-  assert.match(app, /error\?\.name === "AbortError"/);
+  assert.match(app, /throwMappedFetchError\(error\)/);
   assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*enqueueToast\(error, "error"\)/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*showToast\(settingsSaveFailMessage\(error\), "error"\)/);
   assert.match(app, /\$\("#script-draft"\)\?\.value\?\.trim\(\)/);
   assert.match(app, /\$\("#topic"\)\?\.value\?\.trim\(\)/);
   assert.doesNotMatch(app, /\$\("#script-draft"\)\?\.value\.trim\(/);
@@ -900,15 +909,15 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /function overlayStartFocus/);
   assert.match(app, /root\.id === "create-overlay"/);
   assert.match(app, /createMode === "batch"/);
-  assert.match(app, /querySelector\("#batch-topics"\)/);
-  assert.match(app, /querySelector\("#topic"\)/);
+  assert.match(app, /querySelector\?\.\("#batch-topics"\)/);
+  assert.match(app, /querySelector\?\.\("#topic"\)/);
   assert.match(app, /active && root\.contains\(active\)/);
   assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
   assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\)/);
   assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
   assert.match(html, /id="close-create"[^>]*tabindex="-1"/);
   assert.match(html, /id="settings-overlay"[\s\S]*class="draft-close"[\s\S]*id="settings-tts-provider"/);
-  assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\);[\s\S]*?return;/);
+  assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\?\.\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\);[\s\S]*?return;/);
   assert.match(html, /id="machine-overlay"[\s\S]*class="overlay-panel machine-overlay-panel"[^>]*tabindex="-1"/);
   assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
   assert.match(app, /\/\^\(p\|materials\)/);
