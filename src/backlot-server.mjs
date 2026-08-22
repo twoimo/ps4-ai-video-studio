@@ -308,7 +308,7 @@ export async function handleBacklotPage(request, url) {
     return uiHtml("index.html", ["board.css", "library.js"]);
   }
   if (/^\/(?:backlot\/)?p\/[^/]+\/?$/.test(url.pathname)) {
-    return uiHtml("board.html", ["board.css", "board.js"]);
+    return uiHtml("board.html", ["board.css", "board.js", "materials.js"]);
   }
   return null;
 }

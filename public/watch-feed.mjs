@@ -407,7 +407,6 @@ export function bindWatchFeed(root, onBack, onActive) {
       if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
         event.preventDefault?.();
         event.stopPropagation?.();
-        toggleInspect(root);
         return;
       }
       const close = event.target?.closest?.(".watch-close, .watch-back");

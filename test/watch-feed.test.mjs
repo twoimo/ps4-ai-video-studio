@@ -484,7 +484,7 @@ test("hamburger chromeHit toggles inspect and never swallows", () => {
   down({ clientX: 10, clientY: 20, target: menu });
   up({ clientX: 10, clientY: 20, target: menu });
   click({ target: menu, preventDefault() {}, stopPropagation() {} });
-  assert.equal(tokens.has("inspect-open"), true);
+  assert.equal(tokens.has("inspect-open"), false);
   assert.equal(getWatchIndex(root), 0);
 });
 
@@ -663,7 +663,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /data-loop="head"/);
   assert.match(app, /data-loop="tail"/);
   assert.match(app, /function watchFeedMarkup/);
-  assert.match(app, /\$\("#watch-inspect"\)/);
+  assert.match(app, /function openMaterials/);
+  assert.match(app, /\/backlot\/p\//);
   assert.match(html, /id="watch-track"/);
   assert.equal(html.includes('id="watch-player"'), false);
   assert.match(feed, /pointerdown/);

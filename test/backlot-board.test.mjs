@@ -77,6 +77,10 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(library, /id="liveBadge"/);
   assert.match(library, /class="wordmark">Backlot</);
   assert.match(board, /id="app"/);
+  assert.match(board, /class="wrap work"/);
+  assert.match(board, /id="materials"/);
+  assert.match(board, /aria-label="재료"/);
+  assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
   assert.match(board, /id="modal"/);
   assert.match(board, /id="player"/);
   assert.match(boardJs, /function renderSlate/);
@@ -116,12 +120,21 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /@media \(max-width: 720px\)/);
   assert.match(css, /\.board\s*\{\s*display:\s*block/);
   assert.match(css, /\.wrap\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /\.wrap\.work\s*\{/);
+  assert.match(css, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.wrap\.work \{ display: block; \}/);
   assert.doesNotMatch(css, /max-width:\s*440px/);
   assert.doesNotMatch(css, /max-width:\s*400px/);
   assert.equal(library.includes("쇼츠 공장"), false);
   assert.equal(board.includes("쇼츠 공장"), false);
   assert.equal(boardJs.includes("쇼츠 공장"), false);
   assert.equal(home.includes("쇼츠 공장"), false);
+  const materialsJs = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
+  const editor = await readFile(join(root, "public/materials-editor.mjs"), "utf8");
+  assert.equal(materialsJs.includes("쇼츠 공장"), false);
+  assert.equal(editor.includes("쇼츠 공장"), false);
+  assert.match(materialsJs, /method: "PATCH"/);
+  assert.match(materialsJs, /\/run/);
 
   const page = await handleBacklotPage(new Request("http://backlot.local/backlot"), new URL("http://backlot.local/backlot"));
   assert.ok(page);
@@ -136,10 +149,14 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const boardPage = await handleBacklotPage(new Request("http://backlot.local/backlot/p/demo"), new URL("http://backlot.local/backlot/p/demo"));
   const boardHtml = await boardPage.text();
   assert.match(boardHtml, /id="app"/);
+  assert.match(boardHtml, /id="materials"/);
   assert.match(boardHtml, /src="\/backlot\/ui\/board\.js\?v=/);
+  assert.match(boardHtml, /src="\/backlot\/ui\/materials\.js\?v=/);
   assert.doesNotMatch(boardHtml, /\/backlot\/backlot\//);
   assert.doesNotMatch(boardHtml, /id="backlot-overlay"/);
   assert.doesNotMatch(boardHtml, /role="dialog"/);
+  assert.doesNotMatch(boardHtml, /id="watch-inspect"/);
+  assert.doesNotMatch(boardHtml, /id="short-overlay"/);
 
   const alias = await handleBacklotPage(new Request("http://backlot.local/p/demo"), new URL("http://backlot.local/p/demo"));
   assert.match(await alias.text(), /id="app"/);
