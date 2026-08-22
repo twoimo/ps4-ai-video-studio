@@ -680,7 +680,17 @@ function canDeleteJob(job) {
   return job && ["draft", "failed", "queued"].includes(job.status);
 }
 
-function closeDeleteConfirm() {
+let deletePushed = false;
+let deleteSwallowUntil = 0;
+
+function deleteClickSwallowed(event) {
+  if (Date.now() >= deleteSwallowUntil) return false;
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  return true;
+}
+
+function closeDeleteConfirm(options = {}) {
   state.pendingDeleteId = null;
   const overlay = $("#delete-overlay");
   if (!overlay || overlay.hidden) return false;
@@ -691,6 +701,9 @@ function closeDeleteConfirm() {
   }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
+  const shouldBack = deletePushed;
+  deletePushed = false;
+  if (shouldBack && !options.fromPop) history.back();
   return true;
 }
 
@@ -705,6 +718,11 @@ function askDeleteJob(job) {
   const overlay = $("#delete-overlay");
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  deleteSwallowUntil = Date.now() + 420;
+  if (!deletePushed) {
+    history.pushState({ deleteConfirm: 1 }, "", location.href);
+    deletePushed = true;
+  }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
   trapOverlay("#delete-overlay");
@@ -743,6 +761,7 @@ function bindShortCard(card) {
   let moved = false;
   let fired = false;
   let swallowClick = false;
+  let swallowUntil = 0;
   const clearHold = () => {
     if (hold) window.clearTimeout(hold);
     hold = 0;
@@ -751,6 +770,7 @@ function bindShortCard(card) {
     if (fired || moved) return;
     fired = true;
     swallowClick = true;
+    swallowUntil = Date.now() + 420;
     clearHold();
     void deleteJob(jobId);
   };
@@ -775,7 +795,7 @@ function bindShortCard(card) {
     }
   };
   card.querySelector(".short-card-open")?.addEventListener("click", (event) => {
-    if (swallowClick) {
+    if (swallowClick || Date.now() < swallowUntil) {
       swallowClick = false;
       event?.preventDefault?.();
       event?.stopPropagation?.();
@@ -787,8 +807,12 @@ function bindShortCard(card) {
     event.stopPropagation();
     openDetail(jobId);
   });
+  card.querySelector(".short-card-detail")?.addEventListener("contextmenu", (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+  });
   card.addEventListener("click", (event) => {
-    if (!swallowClick) return;
+    if (!swallowClick && Date.now() >= swallowUntil) return;
     swallowClick = false;
     event?.preventDefault?.();
     event?.stopPropagation?.();
@@ -1747,6 +1771,9 @@ function bindEvents() {
   $("#close-menu")?.addEventListener("click", closeMenu);
   $("#menu-import-ok")?.addEventListener("click", closeMenu);
   $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
+  $("#delete-overlay")?.addEventListener("click", (event) => {
+    if (deleteClickSwallowed(event)) return;
+  }, true);
   $("#close-delete")?.addEventListener("click", closeDeleteConfirm);
   $("#delete-confirm")?.addEventListener("click", () => { void confirmDeleteJob(); });
   $$("[data-close-delete]").forEach((node) => node.addEventListener("click", closeDeleteConfirm));
@@ -1775,6 +1802,10 @@ function bindEvents() {
   });
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
+  window.addEventListener("popstate", () => {
+    if (!deletePushed) return;
+    closeDeleteConfirm({ fromPop: true });
+  });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (closeDeleteConfirm()) return;

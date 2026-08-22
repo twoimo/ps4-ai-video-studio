@@ -298,8 +298,14 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /pointercancel/);
   assert.match(app, /if \(fired \|\| moved\) return/);
   assert.match(app, /swallowClick = true/);
-  assert.match(app, /if \(swallowClick\)/);
+  assert.match(app, /Date\.now\(\) \+ 420/);
+  assert.match(app, /if \(swallowClick \|\| Date\.now\(\) < swallowUntil\)/);
   assert.match(app, /closest\?\.\("\.short-card-detail"\)/);
+  assert.match(app, /\.short-card-detail"\)\?\.addEventListener\("contextmenu"/);
+  assert.match(app, /history\.pushState\(\{ deleteConfirm: 1 \}/);
+  assert.match(app, /addEventListener\("popstate"/);
+  assert.match(app, /closeDeleteConfirm\(\{ fromPop: true \}\)/);
+  assert.match(app, /history\.back\(\)/);
   assert.match(app, /function askDeleteJob/);
   assert.match(app, /function closeDeleteConfirm/);
   assert.match(app, /askDeleteJob[\s\S]*syncOverlayLock/);
