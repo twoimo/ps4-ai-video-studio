@@ -11,7 +11,11 @@
 .studio-chip.danger { color: var(--danger, #ff786d); }
 .studio-chip.pause { color: var(--dim, #606b7d); }
 .library-brand { display: flex; align-items: center; gap: 8px; min-width: 0; color: inherit; text-decoration: none; }
-.library-brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; }
+.library-brand h1 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; }
+@media (max-width: 860px) {
+  #open-board,
+  #open-template { display: none; }
+}
 .brand-mark { display: grid; place-items: center; width: 24px; height: 24px; aspect-ratio: 1 / 1; flex: 0 0 24px; overflow: hidden; color: var(--accent, #b7f36b); }
 .library-more-toggle,
 .library-board-toggle { list-style: none; cursor: pointer; color: var(--muted, #8f99aa); display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px; line-height: 1.2; border: 0; background: none; text-decoration: none; }

@@ -634,6 +634,32 @@ test("pointer drag swallows the following click", () => {
   assert.equal(video.pauseCalls, pauses);
 });
 
+test("swipe swallowClick before chrome so landing on close does not leave", () => {
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
+  const backs = [];
+  const root = fakePager({ slides, height: 640 });
+  bindWatchFeed(root, (event) => backs.push(event.via || "back"));
+  const start = root.listeners.find((item) => item.type === "pointerdown").handler;
+  const move = root.listeners.find((item) => item.type === "pointermove").handler;
+  const end = root.listeners.find((item) => item.type === "pointerup").handler;
+  const click = root.listeners.find((item) => item.type === "click").handler;
+  goWatchIndex(root, 0);
+  start({ clientX: 10, clientY: 200, target: { closest: () => null } });
+  move({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  const close = { closest: (sel) => sel.includes("watch-close") || sel.includes("watch-back") ? {} : null };
+  end({ clientX: 10, clientY: 140, target: close });
+  const prevented = [];
+  click({
+    target: close,
+    via: "close",
+    preventDefault() { prevented.push("prevent"); },
+    stopPropagation() { prevented.push("stop"); }
+  });
+  assert.deepEqual(backs, []);
+  assert.deepEqual(prevented, ["prevent", "stop"]);
+  assert.equal(getWatchIndex(root), 1);
+});
+
 test("selectedWatchSlide prefers the real slide over a loop clone", () => {
   const real = { dataset: { jobId: "a" }, className: "watch-slide active" };
   const clone = { dataset: { jobId: "a", loop: "tail" }, className: "watch-slide" };
@@ -841,6 +867,10 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.equal(css.includes("watch-inspect-dismiss"), false);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(feed, /swallowClick/);
+  const clickFn = feed.slice(feed.indexOf('root.addEventListener("click"'), feed.indexOf('root.addEventListener("pointerdown"'));
+  assert.ok(clickFn.indexOf("pager.swallowClick") < clickFn.indexOf("chromeHit(event)"));
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-slide-chrome[\s\S]*bottom:\s*max\(112px,\s*calc\(env\(safe-area-inset-bottom\) \+ 44px\)\)/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-sound[\s\S]*bottom:\s*max\(68px/);
   assert.match(feed, /movement < 10/);
   assert.match(feed, /Math\.hypot/);
   const sizeFn = feed.slice(feed.indexOf("export function sizeWatchFeed"), feed.indexOf("export function wrapWatchFeed"));

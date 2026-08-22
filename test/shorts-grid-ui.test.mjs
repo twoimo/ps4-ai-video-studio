@@ -493,6 +493,10 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(chromeCss, /\.brand-mark\s*\{[^}]*overflow:\s*hidden/);
   assert.match(chromeCss, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent/);
   assert.equal(/\.brand-mark\s*\{[^}]*background:\s*var\(--accent\)/.test(chromeCss), false);
+  assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*text-overflow:\s*ellipsis/);
+  assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*#open-board[\s\S]*#open-template[\s\S]*display:\s*none/);
   assert.equal(home.includes('width="13.6"'), false);
   assert.equal(home.includes('height="19.6"'), false);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);

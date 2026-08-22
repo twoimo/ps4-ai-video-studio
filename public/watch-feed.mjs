@@ -491,8 +491,13 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   bindWatchResize(root);
   const track = watchTrack(root);
   root.addEventListener("click", (event) => {
-    if (chromeHit(event)) {
+    if (pager.swallowClick) {
       pager.swallowClick = false;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      return;
+    }
+    if (chromeHit(event)) {
       if (event.target?.closest?.(".watch-sound")) {
         event.preventDefault?.();
         event.stopPropagation?.();
@@ -518,12 +523,6 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
         onBack?.(event);
         return;
       }
-      return;
-    }
-    if (pager.swallowClick) {
-      pager.swallowClick = false;
-      event.preventDefault?.();
-      event.stopPropagation?.();
       return;
     }
     if (!event.target?.closest?.(".watch-stage") && !event.target?.closest?.("video")) {
@@ -564,10 +563,6 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   });
   root.addEventListener("pointermove", (event) => {
     if (!pager.swiping) return;
-    if (chromeHit(event)) {
-      pager.swallowClick = false;
-      return;
-    }
     const x = event.clientX || 0;
     const y = event.clientY || 0;
     const now = Date.now();
@@ -580,12 +575,10 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
     applyWatchTransform(root, { animate: false, offset: pager.dy });
   });
   const endPointer = (event, cancel = false) => {
-    if (chromeHit(event)) {
-      pager.swallowClick = false;
-      setSwiping(root, pager, false);
+    if (!pager.swiping) {
+      if (chromeHit(event)) pager.swallowClick = false;
       return;
     }
-    if (!pager.swiping) return;
     setSwiping(root, pager, false);
     const movement = Math.hypot(pager.dx, pager.dy);
     if (cancel || movement < 10) {

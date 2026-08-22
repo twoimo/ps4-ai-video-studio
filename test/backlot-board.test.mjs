@@ -202,6 +202,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /IBM Plex Sans KR/);
   assert.match(css, /:root\s*\{[\s\S]*--sans:\s*'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;/);
   assert.match(css, /#studio-chrome[\s\S]*font-family:\s*var\(--sans\)/);
+  assert.match(css, /#studio-chrome h1\s*\{[^}]*text-overflow:\s*ellipsis/);
+  assert.match(css, /#studio-chrome h1\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /#studio-chrome h1\s*\{[^}]*white-space:\s*nowrap/);
   assert.equal(css.includes("Inter"), false);
   assert.match(css, /Isolate shared chrome/);
   assert.match(css, /#studio-chrome[\s\S]*isolation:\s*isolate/);
