@@ -1394,7 +1394,9 @@ async function persistSettings({ toast = false } = {}) {
     if (toast) showToast("설정을 저장했습니다.");
   } catch (error) {
     if (isAbortError(error)) return;
-    showToast(settingsSaveFailMessage(error), "error");
+    const text = settingsSaveFailMessage(error);
+    if (!text) return;
+    showToast(text, "error");
   }
 }
 
@@ -1566,6 +1568,7 @@ async function importLibrary(event) {
     await refreshJobs();
     showImportResult(payload);
   } catch (error) {
+    if (isAbortError(error)) return;
     showImportResult({ error: friendlyJobError(error) || "가져오지 못했습니다." });
   }
 }

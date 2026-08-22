@@ -638,7 +638,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /function openHome/);
   assert.match(app, /function openHome\(event\) \{\s*event\?\.preventDefault\(\);\s*stopWatchFeed\(\$\("#watch-feed"\)\);/);
   assert.match(app, /영상 주제를 4자 이상 입력하세요/);
-  assert.match(app, /showImportResult\(\{ error:/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*showImportResult\(\{ error:/);
   assert.doesNotMatch(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
   assert.match(app, /\$\("#create-form"\)\?\.addEventListener\("submit"/);
   assert.match(app, /function fieldLines/);
@@ -652,7 +652,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;\s*\}\s*enqueueToast\(error, "error"\)/);
   assert.match(app, /settingsWrite\?\.abort\(\)/);
   assert.match(app, /signal: controller.signal/);
-  assert.match(app, /if \(isAbortError\(error\)\) return;\s*showToast\(settingsSaveFailMessage\(error\), "error"\)/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = settingsSaveFailMessage\(error\);\s*if \(!text\) return;\s*showToast\(text, "error"\)/);
   assert.match(app, /async function draftScriptFromTopic/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = friendlyJobError\(error\);/);
   assert.match(app, /if \(errorBox && text\) \{\s*errorBox\.hidden = false;/);
@@ -854,6 +854,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /parseJsonText\(await payload\.text\(\)\)/);
   assert.match(materials, /throwMappedFetchError\(error\)/);
   assert.match(materials, /if \(isAbortError\(error\)\) return/);
+  assert.match(editor, /root\?\.querySelectorAll\?\.\("\.inspect-shot/);
+  assert.match(editor, /root\?\.querySelectorAll\?\.\("\.inspect-caption/);
+  assert.match(editor, /node\.querySelector\?\./);
+  assert.match(editor, /input\.closest\?\./);
   assert.match(editor, /root\?\.querySelector\?\.\("\[data-draft-topic\]/);
   assert.equal(materials.includes(".json().catch(() => ({}))"), false);
   assert.equal(materials.includes("Failed to fetch"), false);
@@ -1097,6 +1101,13 @@ test("watch inspector saves drafts and freezes regen", async () => {
     }
   };
   assert.deepEqual(collectInspectPayload(null), {
+    topic: "",
+    facts: [],
+    scriptDraft: "",
+    worldSlots: {},
+    shotOverrides: {}
+  });
+  assert.deepEqual(collectInspectPayload({}), {
     topic: "",
     facts: [],
     scriptDraft: "",

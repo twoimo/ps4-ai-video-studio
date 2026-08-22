@@ -1,4 +1,4 @@
-import { friendlyJobError, importBroughtCopy, parseJsonText, throwMappedFetchError } from "./shorts-ui.mjs";
+import { friendlyJobError, importBroughtCopy, isAbortError, parseJsonText, throwMappedFetchError } from "./shorts-ui.mjs";
 
 function syncOverlayOpen(root = document) {
   const overlay = root.querySelector?.("#satellite-menu");
@@ -75,6 +75,7 @@ export function bindSatelliteMenu(root = document, request = fetch) {
     try {
       await importSatelliteLibrary(root, request);
     } catch (error) {
+      if (isAbortError(error)) return;
       const summary = root.querySelector?.("#satellite-import-summary");
       const overlay = root.querySelector?.("#satellite-menu");
       const actions = root.querySelector?.("#satellite-menu-actions");

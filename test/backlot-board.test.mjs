@@ -8,7 +8,7 @@ import { loadBoardState, listProjects, safeMediaPath, safeProjectDir, STUDIO_RAI
 import { backlotHealth, handleBacklotApi, handleBacklotMedia, handleBacklotPage } from "../src/backlot-server.mjs";
 import { getLockedSpec } from "../src/grok-imagine-spec.mjs";
 import { FACTORY_LOCKS, WORLD_SLOT_IDS } from "../src/grok-imagine-template.mjs";
-import { importSatelliteLibrary } from "../public/satellite-menu.mjs";
+import { bindSatelliteMenu, importSatelliteLibrary } from "../public/satellite-menu.mjs";
 import { projectIdFromPath } from "../public/backlot/ui/lib.js";
 
 async function api(path) {
@@ -283,6 +283,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(satellite.includes("시드 ${seeded}"), false);
   assert.equal(satellite.includes("경로 ${roots}"), false);
   assert.match(satellite, /throwMappedFetchError\(error\)/);
+  assert.match(satellite, /if \(isAbortError\(error\)\) return/);
   assert.match(satellite, /await request\("\/api\/library\/import", \{ method: "POST" \}[\s\S]*resetSatelliteMenu\(root\);\s*showSatelliteImportResult/);
   assert.match(library, /id="satellite-import-result"/);
   assert.match(board, /id="satellite-import-result"/);
@@ -450,6 +451,40 @@ test("satellite import resets the menu then paints the result card", async () =>
   assert.equal(actions.hidden, true);
   assert.equal(result.hidden, false);
   assert.equal(summary.textContent, "가져왔어요 1편");
+});
+
+test("satellite import abort does not paint the result sheet", async () => {
+  const title = { textContent: "가져오기" };
+  const actions = { hidden: false };
+  const result = { hidden: true };
+  const summary = { textContent: "" };
+  const overlay = { hidden: true };
+  const listeners = {};
+  const nodes = {
+    "#satellite-menu-title": title,
+    "#satellite-menu-actions": actions,
+    "#satellite-import-result": result,
+    "#satellite-import-summary": summary,
+    "#satellite-menu": overlay,
+    "#satellite-import": {
+      addEventListener(type, fn) {
+        if (type === "click") listeners.click = fn;
+      }
+    }
+  };
+  const root = {
+    dataset: {},
+    querySelector(sel) { return nodes[sel] || null; },
+    querySelectorAll() { return []; }
+  };
+  const abort = new Error("aborted");
+  abort.name = "AbortError";
+  bindSatelliteMenu(root, async () => { throw abort; });
+  await listeners.click({ preventDefault() {} });
+  assert.equal(overlay.hidden, false);
+  assert.equal(actions.hidden, false);
+  assert.equal(result.hidden, true);
+  assert.equal(summary.textContent, "");
 });
 
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {

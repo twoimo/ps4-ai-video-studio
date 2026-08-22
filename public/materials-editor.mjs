@@ -91,7 +91,7 @@ export function renderInspectCaptions(shots = []) {
 
 export function collectInspectPayload(root) {
   const shots = {};
-  root?.querySelectorAll(".inspect-shot[data-shot-index]").forEach((node) => {
+  root?.querySelectorAll?.(".inspect-shot[data-shot-index]")?.forEach((node) => {
     const index = Number(node.dataset.shotIndex);
     if (!Number.isInteger(index)) return;
     shots[index] = {
@@ -101,7 +101,7 @@ export function collectInspectPayload(root) {
       caption: node.querySelector?.("[data-shot-caption], .inspect-shot-caption")?.value || ""
     };
   });
-  root?.querySelectorAll(".inspect-caption [data-shot-caption], .inspect-caption .inspect-shot-caption").forEach((input) => {
+  root?.querySelectorAll?.(".inspect-caption [data-shot-caption], .inspect-caption .inspect-shot-caption")?.forEach((input) => {
     const index = Number(input.dataset.shotIndex || input.closest?.("[data-shot-index]")?.dataset.shotIndex);
     if (!Number.isInteger(index)) return;
     shots[index] = {
