@@ -168,6 +168,16 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /method: "DELETE"/);
   assert.match(app, /contextmenu/);
   assert.match(app, /#studio-chips/);
+  assert.match(app, /function renderChips/);
+  assert.match(app, /만드는 과정/);
+  assert.match(app, />대본</);
+  assert.match(app, />그림</);
+  assert.match(app, />움직임</);
+  assert.match(app, />편집</);
+  assert.match(app, /크레딧 부족/);
+  assert.equal(app.includes(">grok</button>"), false);
+  assert.equal(app.includes(">ffmpeg</button>"), false);
+  assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
   assert.match(app, /health\.imagine\?\.frozen/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
