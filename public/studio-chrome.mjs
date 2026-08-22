@@ -1,6 +1,6 @@
-import { machineSheetHtml, pipelineStages, renderStudioPipe } from "./studio-pipe.mjs";
+import { machineSheetHtml, pipelineStages, renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 
-export { machineSheetHtml, pipelineStages, renderStudioPipe };
+export { machineSheetHtml, pipelineStages, renderMachineSheetHtml, renderStudioPipe };
 
 export function defaultOpenMachine(event) {
   event?.preventDefault?.();
@@ -31,7 +31,7 @@ export function paintStudioPipe(root = document, health = {}, openMachine = defa
 export function paintMachineSheet(root = document, health = {}) {
   const sheet = root.querySelector?.("#machine-root");
   if (!sheet) return;
-  sheet.innerHTML = machineSheetHtml(health);
+  sheet.innerHTML = renderMachineSheetHtml(health);
 }
 
 export async function hydrateStudioChrome(root = document, { fetchHealth, openMachine } = {}) {

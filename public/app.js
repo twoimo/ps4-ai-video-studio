@@ -1,6 +1,6 @@
 import { formatClock, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
-import { machineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
+import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
@@ -164,6 +164,7 @@ function setView(view, options = {}) {
   const library = $("#shorts");
   if (next !== "watch") clearWatchSize(watchFeed);
   const leavingWatch = document.body.classList.contains("watch-open") && next !== "watch";
+  if (state.view === "settings" && next !== "settings") void persistSettings();
   state.view = next;
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "settings", "machine"].includes(state.view));
@@ -1149,7 +1150,7 @@ function renderChips(health = {}) {
 function renderMachineSheet() {
   const root = $("#machine-root");
   if (!root) return;
-  root.innerHTML = machineSheetHtml(state.health || {});
+  root.innerHTML = renderMachineSheetHtml(state.health || {});
 }
 
 function renderStudioChrome() {
@@ -1213,29 +1214,37 @@ async function hydrateStudioSettings() {
   }
 }
 
-async function saveSettings(event) {
-  event?.preventDefault();
+function settingsPayload() {
+  return {
+    ttsProvider: $("#settings-tts-provider")?.value,
+    ttsVoice: $("#settings-tts-voice")?.value,
+    bgmEnabled: $("#settings-bgm-enabled")?.checked === true,
+    bgmVolume: Number($("#settings-bgm-volume")?.value || 0),
+    ffmpegPath: $("#settings-ffmpeg")?.value || ""
+  };
+}
+
+async function persistSettings({ toast = false } = {}) {
   const seq = ++state.settingsSeq;
   try {
     const payload = await api("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        ttsProvider: $("#settings-tts-provider")?.value,
-        ttsVoice: $("#settings-tts-voice")?.value,
-        bgmEnabled: $("#settings-bgm-enabled")?.checked === true,
-        bgmVolume: Number($("#settings-bgm-volume")?.value || 0),
-        ffmpegPath: $("#settings-ffmpeg")?.value || ""
-      })
+      body: JSON.stringify(settingsPayload())
     });
     if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;
     applySettingsToForm(payload.settings);
-    showToast("설정을 저장했습니다.");
-    closeOverlays();
+    if (toast) showToast("설정을 저장했습니다.");
   } catch (error) {
     showToast(error.message, "error");
   }
+}
+
+async function saveSettings(event) {
+  event?.preventDefault();
+  await persistSettings({ toast: true });
+  closeOverlays();
 }
 
 async function previewVoice(buttonId, audioId, providerId, voiceId) {
@@ -1479,6 +1488,7 @@ function bindEvents() {
   $("#close-settings")?.addEventListener("click", closeOverlays);
   $("#close-machine")?.addEventListener("click", closeOverlays);
   $("#settings-form")?.addEventListener("submit", saveSettings);
+  $("#settings-form")?.addEventListener("change", () => { void persistSettings(); });
   $("#draft-script")?.addEventListener("click", () => { void draftScriptFromTopic(); });
   $("#preview-voice")?.addEventListener("click", () => { void previewVoice("#preview-voice", "#voice-preview-audio", "#create-tts-provider", "#create-tts-voice"); });
   $("#settings-preview-voice")?.addEventListener("click", () => { void previewVoice("#settings-preview-voice", "#settings-preview-audio", "#settings-tts-provider", "#settings-tts-voice"); });

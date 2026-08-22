@@ -354,11 +354,10 @@ body.watch-open .watch-feed { display: block; }
 #watch-feed .watch-back:focus-visible,
 .watch-close:focus-visible,
 .watch-back:focus-visible { background: none; border: 0; border-radius: 0; box-shadow: none; }
-#watch-feed .watch-column .watch-sound,
-#watch-feed .watch-sound,
-.watch-sound {
+#watch-feed .watch-column .watch-sound {
   position: absolute;
-  right: 12px;
+  left: auto;
+  right: 0;
   bottom: 68px;
   z-index: 8;
   min-width: 44px;
@@ -376,6 +375,7 @@ body.watch-open .watch-feed { display: block; }
   text-shadow: 0 1px 6px rgba(0,0,0,.75);
   pointer-events: auto;
 }
+#watch-feed .watch-column .watch-sound[hidden],
 #watch-feed .watch-sound[hidden],
 .watch-sound[hidden] { display: none; }
 #watch-feed .watch-progress,
@@ -403,10 +403,9 @@ body.watch-open .watch-feed { display: block; }
     right: max(12px, env(safe-area-inset-right));
     bottom: max(18px, env(safe-area-inset-bottom));
   }
-  #watch-feed .watch-column .watch-sound,
-  #watch-feed .watch-sound,
-  .watch-sound {
-    right: max(12px, env(safe-area-inset-right));
+  #watch-feed .watch-column .watch-sound {
+    left: auto;
+    right: 0;
     bottom: max(68px, env(safe-area-inset-bottom));
   }
 }

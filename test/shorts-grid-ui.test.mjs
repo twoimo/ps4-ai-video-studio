@@ -18,7 +18,7 @@ import {
   shortUploadPack
 } from "../public/shorts-ui.mjs";
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
-import { machineSheetHtml, pipelineStages, PIPE_EDIT_MISSING, PIPE_PAUSED, PIPE_SCRIPT_MISSING } from "../public/studio-pipe.mjs";
+import { machineSheetHtml, renderMachineSheetHtml, pipelineStages, PIPE_EDIT_MISSING, PIPE_PAUSED, PIPE_SCRIPT_MISSING } from "../public/studio-pipe.mjs";
 
 const publicDir = join(process.cwd(), "public");
 
@@ -146,7 +146,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /from "\.\/studio-pipe\.mjs"/);
   assert.match(app, /from "\.\/studio-chrome\.mjs"/);
   assert.match(pipe, /export function pipelineStages/);
-  assert.match(pipe, /export function machineSheetHtml[\s\S]*pipelineStages\(health\)/);
+  assert.match(pipe, /export function renderMachineSheetHtml[\s\S]*pipelineStages\(health\)/);
+  assert.match(pipe, /export function machineSheetHtml/);
+  assert.match(chrome, /renderMachineSheetHtml\(health\)/);
   assert.match(pipe, /export function renderStudioPipe/);
   assert.match(chrome, /export function paintStudioPipe/);
   assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
@@ -196,7 +198,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /#studio-chips/);
   assert.match(app, /function renderChips/);
   assert.match(app, /function renderMachineSheet/);
-  assert.match(app, /machineSheetHtml\(state\.health/);
+  assert.match(app, /renderMachineSheetHtml\(state\.health/);
   assert.match(pipe, /export function pipelineStages/);
   assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
   assert.equal(app.includes("대본 ${grok ? \"준비\" : \"없음\"}"), false);
@@ -585,7 +587,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
   assert.match(app, /class="watch-sound"/);
   assert.match(html, /class="watch-sound"[^>]*hidden/);
-  assert.match(css, /#watch-feed \.watch-column \.watch-sound/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
@@ -721,7 +724,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(app.includes("그림 · 멈춤"), false);
   assert.equal(/reasons\.push\("그림 · 멈춤"\)/.test(app), false);
   assert.equal(/if \(frozen\) reasons\.push/.test(app), false);
-  assert.match(app, /machineSheetHtml\(state\.health/);
+  assert.match(app, /renderMachineSheetHtml\(state\.health/);
   assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
   assert.equal(pipe.includes("없음"), false);
   assert.equal(pipe.includes("지금은 다시 못 만들어요"), false);
@@ -800,6 +803,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /void refreshMachineHealth\(\)/);
   assert.match(app, /settingsSeq/);
   assert.match(app, /seq !== state\.settingsSeq/);
+  assert.match(app, /function persistSettings/);
+  assert.match(app, /addEventListener\("change", \(\) => \{ void persistSettings/);
+  assert.match(app, /state\.view === "settings" && next !== "settings"\) void persistSettings/);
+  assert.match(app, /await persistSettings\(\{ toast: true \}\)/);
   assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
   assert.match(html, /<form class="create-panel" id="create-form" novalidate onsubmit="return false">/);
   assert.match(html, /<form class="create-panel" id="settings-form" onsubmit="return false">/);
@@ -1040,13 +1047,18 @@ test("machine sheet uses the same frozen and missing copy as chips", () => {
   assert.equal(frozen[2].title, PIPE_PAUSED);
   assert.equal(frozen[3].title, PIPE_EDIT_MISSING);
   assert.equal(frozen[1].paused, true);
-  const sheet = machineSheetHtml({ imagine: { frozen: true }, capabilities: {} });
+  const sheet = renderMachineSheetHtml({ imagine: { frozen: true }, capabilities: {} });
+  assert.equal(sheet, machineSheetHtml({ imagine: { frozen: true }, capabilities: {} }));
   assert.match(sheet, /대본 대본을 쓸 수 없습니다/);
   assert.match(sheet, /그림 지금은 그림을 안 만들어요/);
   assert.match(sheet, /움직임 지금은 그림을 안 만들어요/);
   assert.match(sheet, /편집 편집을 할 수 없습니다/);
   assert.equal(sheet.includes("없음"), false);
-  const ready = machineSheetHtml({
+  assert.equal(sheet.includes("Grok"), false);
+  assert.equal(sheet.includes("Imagine"), false);
+  assert.equal(sheet.includes("ffmpeg"), false);
+  assert.equal(sheet.includes("CLI"), false);
+  const ready = renderMachineSheetHtml({
     imagine: { frozen: false },
     capabilities: { grokCli: true, ffmpeg: true }
   });
@@ -1054,6 +1066,8 @@ test("machine sheet uses the same frozen and missing copy as chips", () => {
   assert.match(ready, /그림 준비/);
   assert.match(ready, /움직임 준비/);
   assert.match(ready, /편집 준비/);
+  assert.equal(ready.includes("Grok"), false);
+  assert.equal(ready.includes("ffmpeg"), false);
 });
 
 test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and wrap.work", async () => {

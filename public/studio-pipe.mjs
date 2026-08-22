@@ -44,7 +44,14 @@ export function staticStudioPipe() {
   return renderStudioPipe({ imagine: { frozen: true }, capabilities: {} });
 }
 
-export function machineSheetHtml(health = {}) {
+export function renderMachineSheetHtml(health = {}) {
   const stages = pipelineStages(health);
-  return `<h2 id="machine-title">사양</h2><p>${stages.map((stage) => `${stage.label} ${stage.ready ? "준비" : stage.title}`).join(" · ")}</p>`;
+  return `<h2 id="machine-title">사양</h2><p>${stages.map((stage) => {
+    const status = stage.ready ? "준비" : stage.paused ? PIPE_PAUSED : stage.title;
+    return `${escapePipeHtml(stage.label)} ${escapePipeHtml(status)}`;
+  }).join(" · ")}</p>`;
+}
+
+export function machineSheetHtml(health = {}) {
+  return renderMachineSheetHtml(health);
 }
