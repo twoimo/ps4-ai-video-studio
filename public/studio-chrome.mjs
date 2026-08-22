@@ -1,3 +1,4 @@
+import { writeCreateModeHint } from "./shorts-ui.mjs";
 import { machineSheetHtml, pipelineStages, renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 
 export { machineSheetHtml, pipelineStages, renderMachineSheetHtml, renderStudioPipe };
@@ -118,6 +119,15 @@ export function hideExtraStudioChrome(root = document) {
   }
 }
 
+export function bindCreateModeHints(root = document) {
+  root.querySelectorAll?.("[data-create-mode]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const mode = el.dataset.createMode;
+      if (mode === "batch" || mode === "single") writeCreateModeHint(mode);
+    });
+  });
+}
+
 export function bindFocusScroll(root = document) {
   if (!root || root.dataset?.focusScroll === "1") return;
   if (root.dataset) root.dataset.focusScroll = "1";
@@ -213,6 +223,7 @@ if (typeof document !== "undefined" && document.documentElement?.dataset?.studio
   hideExtraStudioChrome(document);
   bindStudioPipe(document);
   bindFocusScroll(document);
+  bindCreateModeHints(document);
   void hydrateStudioChrome(document);
   syncVisualViewportInset();
   armSatelliteHistory();

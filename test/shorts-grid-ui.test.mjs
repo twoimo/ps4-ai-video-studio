@@ -214,7 +214,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /--thumb-h:\s*calc\(\(var\(--vv-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
   assert.equal(css.includes("round(up"), false);
-  assert.match(css, /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(var\(--n,\s*1\),\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /grid-auto-rows:\s*auto/);
   assert.match(css, /\.shorts-grid\s*\{[^}]*overflow:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
@@ -228,7 +228,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /100cqh/);
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
   assert.equal(css.includes("grid-template-rows: repeat(var(--n)"), false);
-  assert.match(css, /minmax\(min\(100%,\s*var\(--col\)\)/);
+  assert.match(css, /repeat\(var\(--n,\s*1\),\s*minmax\(0,\s*1fr\)\)/);
   assert.match(html, /class="short-card short-skeleton is-skeleton"/);
   assert.equal((html.match(/class="short-card short-skeleton is-skeleton"/g) || []).length, 8);
   assert.match(app, /jobsLoaded/);
@@ -241,7 +241,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(pipe, /export function renderStudioPipe/);
   assert.match(chrome, /export function paintStudioPipe/);
   assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
-  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*bindCreateModeHints\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.match(chrome, /--vv-bottom/);
   assert.match(chrome, /visualViewport/);
   assert.match(chrome, /export function visualViewportKeyboardInset/);
@@ -249,6 +249,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /classList\?\.toggle\("ime-open", bottom > 80\)/);
   assert.match(chrome, /export function armSatelliteHistory/);
   assert.match(chrome, /export function leaveSatelliteIfNeeded/);
+  assert.match(chrome, /export function bindCreateModeHints/);
+  assert.match(chrome, /writeCreateModeHint/);
   assert.match(chrome, /satellite !== "leave"/);
   assert.match(chrome, /armSatelliteHistory\(\)/);
   assert.match(chrome, /export function pinOverlaysToVisualViewport/);
@@ -280,7 +282,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /aria-label="\$\{escapeHtml\(displayTitle\(job\.topic, "영상"\)\)\}"/);
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
-  assert.match(app, /Math\.max\(shortLandscape \? 3 : 1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
+  assert.match(app, /const n = shortLandscape \? 2 : Math\.max\(1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
   assert.match(app, /function measureChrome/);
   assert.match(app, /getBoundingClientRect\(\)\.top/);
   assert.match(app, /setProperty\("--chrome"/);
@@ -782,6 +784,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = settingsSaveFailMessage\(error\);\s*if \(!text\) return;\s*showToast\(text, "error"\)/);
   assert.match(app, /async function persistSettings\(\{ toast = false, keepalive = false \} = \{\}\)/);
   assert.match(app, /void persistSettings\(\{ keepalive: true \}\)/);
+  assert.match(app, /if \(keepalive\) \{\s*try \{\s*await fetch\("\/api\/settings"/);
+  assert.match(app, /keepalive: true/);
+  assert.match(app, /pagehide persist does not parse the body or toast/);
   assert.match(app, /async function draftScriptFromTopic/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = friendlyJobError\(error\);/);
   assert.match(app, /if \(errorBox && text\) \{\s*errorBox\.hidden = false;/);
@@ -1099,7 +1104,12 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /location\.replace\(`\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}`\)/);
   assert.match(app, /월드 슬롯을 불러오지 못했습니다/);
   assert.match(app, /hash === "batch"/);
-  assert.match(app, /createMode === "batch" \? "#batch" : "#create"/);
+  assert.match(app, /if \(view === "create"\) return "#create"/);
+  assert.doesNotMatch(app, /createMode === "batch" \? "#batch" : "#create"/);
+  assert.doesNotMatch(app, /if \(view === "batch"\) return "#batch"/);
+  assert.doesNotMatch(app, /replaceState\(history\.state, "", "#batch"\)/);
+  assert.match(app, /takeCreateModeHint\(\)/);
+  assert.match(app, /location\.hash === "#batch"/);
   assert.match(app, /visualViewport/);
   assert.match(app, /--vv-bottom/);
   assert.match(app, /function pinWatchToVisualViewport/);
@@ -1149,7 +1159,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boot, /classList\.add\("watch-open"\)/);
   assert.match(boot, /library\.hidden = true/);
   assert.match(boot, /feed\.hidden = false/);
-  assert.match(boot, /if \(hash === "batch"\)/);
+  assert.match(boot, /leftoverBatch/);
+  assert.match(boot, /hash === "batch"/);
+  assert.match(boot, /studioCreateMode/);
   assert.match(boot, /title\.textContent = "양산"/);
   assert.match(boot, /single\.hidden = true/);
   assert.match(boot, /batch\.hidden = false/);
@@ -1484,6 +1496,8 @@ test("machine sheet uses the same frozen and missing copy as chips", () => {
   assert.equal(frozen[1].paused, true);
   const sheet = renderMachineSheetHtml({ imagine: { frozen: true }, capabilities: {} });
   assert.equal(sheet, machineSheetHtml({ imagine: { frozen: true }, capabilities: {} }));
+  assert.match(sheet, /<ul id="machine-sheet">/);
+  assert.match(sheet, /<li>대본 대본을 쓸 수 없습니다<\/li>/);
   assert.match(sheet, /대본 대본을 쓸 수 없습니다/);
   assert.match(sheet, /그림 지금은 그림을 안 만들어요/);
   assert.match(sheet, /움직임 지금은 그림을 안 만들어요/);
@@ -1600,6 +1614,11 @@ test("empty grid first create upserts then renders and pagehide persists setting
   assert.match(css, /\.studio-overlay\s*\{[^}]*z-index:\s*40/);
   assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*46/);
   assert.match(css, /\.library-menu\s*\{[^}]*z-index:\s*2/);
+  assert.match(css, /\.toast\s*\{[^}]*z-index:\s*50/);
+  assert.match(css, /\.studio-overlay\.feed-card\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
+  assert.match(css, /\.library-menu button,\s*\.library-menu a\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#close-machine\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#machine-sheet li\s*\{[^}]*min-height:\s*44px/);
   assert.match(chromeCss, /#satellite-menu\s*\{[^}]*z-index:\s*40/);
   assert.match(chromeCss, /\.studio-chrome ~ \.studio-chrome\s*\{[^}]*display:\s*none/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
@@ -1629,6 +1648,8 @@ test("leftover UI 쇼츠 becomes 영상 and batch Back ignores stale hash", asyn
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   assert.equal(html.includes("쇼츠"), false);
+  assert.equal(html.includes("공장"), false);
+  assert.equal(html.includes("402"), false);
   assert.equal(html.includes("새 쇼츠"), false);
   assert.equal(html.includes("쇼츠 재생"), false);
   assert.equal(html.includes('aria-label="쇼츠"'), false);
@@ -1663,12 +1684,17 @@ test("failJobsLoad paints create+empty, batch is a button, and health sheet stay
   assert.match(html, /short-skeleton is-skeleton/);
   assert.match(html, /<button type="button" id="menu-batch">양산</);
   assert.doesNotMatch(html, /id="menu-batch"[^>]*href="#batch"/);
+  assert.match(app, /if \(view === "create"\) return "#create"/);
   assert.match(app, /const swap = state\.view === "create"/);
   assert.match(app, /setView\("create", \{ skipHash: swap \}\)/);
   assert.match(app, /const createSwap = prev === "create" && next === "create"/);
   assert.match(ui, /export function healthTextKo/);
+  assert.match(ui, /export function writeCreateModeHint/);
+  assert.match(ui, /export function takeCreateModeHint/);
+  assert.match(ui, /studioCreateMode/);
   assert.match(pipe, /healthTextKo\(stage\.label\)/);
   assert.match(pipe, /healthTextKo\(status\)/);
+  assert.match(pipe, /<ul id="machine-sheet">/);
   assert.match(css, /body\.template-page \.library-board-toggle\[href="\/backlot"\]/);
   assert.match(css, /body\.template-page \.library-board-toggle\[href="\/template"\]/);
   assert.equal(html.includes("쇼츠"), false);

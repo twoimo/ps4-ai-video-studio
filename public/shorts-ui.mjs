@@ -157,6 +157,27 @@ export function keepPaintedGrid(root) {
   return [...(root.children || [])].some((node) => !node.classList?.contains("is-skeleton"));
 }
 
+export const STUDIO_CREATE_MODE_KEY = "studioCreateMode";
+
+export function writeCreateModeHint(mode) {
+  try {
+    if (mode === "batch") sessionStorage.setItem(STUDIO_CREATE_MODE_KEY, "batch");
+    else sessionStorage.removeItem(STUDIO_CREATE_MODE_KEY);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+export function takeCreateModeHint() {
+  try {
+    const mode = sessionStorage.getItem(STUDIO_CREATE_MODE_KEY);
+    sessionStorage.removeItem(STUDIO_CREATE_MODE_KEY);
+    return mode === "batch" ? "batch" : "";
+  } catch {
+    return "";
+  }
+}
+
 export function displayPipelineLabel(name) {
   const key = String(name || "").trim();
   if (key === "ps4-studio") return "보드";

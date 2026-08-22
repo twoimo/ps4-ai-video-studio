@@ -233,9 +233,13 @@
           if (node) node.hidden = false;
           document.body.classList.add("overlay-open");
         }
+        var leftoverBatch = hash === "batch";
+        try {
+          leftoverBatch = leftoverBatch || (hash === "create" && sessionStorage.getItem("studioCreateMode") === "batch");
+        } catch (e) {}
         if (hash === "create" || hash === "batch") {
           show("create-overlay");
-          if (hash === "batch") {
+          if (leftoverBatch) {
             var title = document.getElementById("create-title");
             var single = document.getElementById("single-topic-field");
             var batch = document.getElementById("batch-field");

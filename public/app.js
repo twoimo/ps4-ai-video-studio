@@ -1,4 +1,4 @@
-import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, throwMappedFetchError } from "./shorts-ui.mjs";
+import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, takeCreateModeHint, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock, visualViewportKeyboardInset } from "./studio-chrome.mjs";
@@ -141,8 +141,7 @@ function skipStaleHashChange() {
 }
 
 function hashForView(view) {
-  if (view === "create") return state.createMode === "batch" ? "#batch" : "#create";
-  if (view === "batch") return "#batch";
+  if (view === "create") return "#create";
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "settings") return "#settings";
   if (view === "machine") return "#machine";
@@ -324,14 +323,14 @@ function syncDocumentTitle() {
 
 function applyHash() {
   const hash = location.hash.replace("#", "");
-  if (hash === "batch") {
-    state.createMode = "batch";
+  if (hash === "batch" || hash === "create") {
+    const leftoverBatch = hash === "batch";
+    const hinted = takeCreateModeHint();
+    state.createMode = leftoverBatch || hinted === "batch" ? "batch" : "single";
     setView("create", { skipHash: true });
-    return;
-  }
-  if (hash === "create") {
-    state.createMode = "single";
-    setView("create", { skipHash: true });
+    if (location.hash === "#batch") {
+      history.replaceState(history.state, "", `${location.pathname}${location.search}#create`);
+    }
     return;
   }
   if (hash === "template") {
@@ -419,7 +418,7 @@ function sizeShortsGrid() {
   const col = (height - chrome - gap) * 9 / 16;
   if (!(col > 0)) return;
   const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
-  const n = Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));
+  const n = shortLandscape ? 2 : Math.max(1, Math.ceil((width + gap) / (col + gap)));
   grid.style.setProperty("--n", String(n));
 }
 
@@ -1443,9 +1442,9 @@ function openBatch(event) {
   const swap = state.view === "create";
   state.createMode = "batch";
   setView("create", { skipHash: swap });
-  if (swap && location.hash !== "#batch") {
+  if (swap && location.hash !== "#create") {
     skipStaleHashChange();
-    history.replaceState(history.state, "", "#batch");
+    history.replaceState(history.state, "", "#create");
   }
   void hydrateCreateSlots();
 }
@@ -1637,17 +1636,30 @@ function settingsPayload() {
 let settingsWrite = null;
 
 async function persistSettings({ toast = false, keepalive = false } = {}) {
-  if (!keepalive) settingsWrite?.abort();
-  const controller = keepalive ? null : new AbortController();
-  if (controller) settingsWrite = controller;
+  const body = JSON.stringify(settingsPayload());
+  if (keepalive) {
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body,
+        keepalive: true
+      });
+    } catch {
+      /* pagehide persist does not parse the body or toast */
+    }
+    return;
+  }
+  settingsWrite?.abort();
+  const controller = new AbortController();
+  settingsWrite = controller;
   const seq = ++state.settingsSeq;
   try {
     const payload = await api("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(settingsPayload()),
-      keepalive,
-      ...(controller ? { signal: controller.signal } : {})
+      body,
+      signal: controller.signal
     });
     if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;

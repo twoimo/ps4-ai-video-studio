@@ -173,6 +173,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(library, />보드</);
   assert.match(library, />템플릿</);
   assert.match(library, /href="\/#create">새 영상</);
+  assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
   assert.match(library, /href="\/#settings">설정</);
   assert.equal(library.includes("aria-label=\"메뉴\""), false);
   assert.equal(library.includes("그림 · 멈춤"), false);
@@ -183,12 +184,15 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, />대본</);
   assert.match(board, />보드</);
   assert.match(board, /href="\/#create">새 영상</);
+  assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
   assert.match(board, /href="\/#settings">설정</);
   assert.equal(board.includes("그림 · 멈춤"), false);
   assert.match(board, /src="\/studio-chrome\.mjs"/);
   const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
   assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
-  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*bindCreateModeHints\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /export function bindCreateModeHints/);
+  assert.match(chrome, /writeCreateModeHint/);
   assert.doesNotMatch(boardJs, /main\.append\(script\)/);
   assert.doesNotMatch(boardJs, /if \(script\) main\.append/);
   assert.match(css, /\.wrap\s*\{\s*max-width:\s*1440px/);
@@ -373,6 +377,10 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /--bg:\s*#0b0d12/);
   assert.equal(library.includes("쇼츠"), false);
   assert.equal(board.includes("쇼츠"), false);
+  assert.equal(library.includes("공장"), false);
+  assert.equal(board.includes("공장"), false);
+  assert.equal(library.includes("402"), false);
+  assert.equal(board.includes("402"), false);
   assert.equal(library.includes("쇼츠 공장"), false);
   assert.equal(board.includes("쇼츠 공장"), false);
   assert.equal(boardJs.includes("쇼츠 공장"), false);
@@ -682,6 +690,12 @@ test("library posters are 9:16, cost wraps, and materials save stays opaque", as
   assert.match(materials, /button\.textContent = "저장 중…"/);
   assert.match(library, /href="\/#create">새 영상</);
   assert.match(board, /href="\/#create">새 영상</);
+  assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(css, /Studio extra: filmstrip 9:16 overflow/);
+  assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*max-height:\s*118px/);
+  assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*object-fit:\s*cover/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

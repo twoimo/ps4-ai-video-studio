@@ -127,6 +127,8 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /class="studio-chrome" id="studio-chrome"/);
   assert.equal(page.split('class="studio-chrome"').length - 1, 1);
   assert.equal(page.includes("쇼츠"), false);
+  assert.equal(page.includes("공장"), false);
+  assert.equal(page.includes("402"), false);
   assert.match(page, /id="studio-chips"/);
   assert.match(page, /id="template-root"/);
   assert.match(page, /class="template-skeleton"/);
@@ -195,6 +197,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, />보드</);
   assert.match(page, />템플릿</);
   assert.match(page, /href="\/#create">새 영상</);
+  assert.match(page, /href="\/#create" data-create-mode="batch">양산</);
   assert.match(page, /href="\/#settings">설정</);
   assert.match(page, /id="satellite-import">가져오기</);
   assert.match(page, /src="\/satellite-menu\.mjs"/);
@@ -272,6 +275,8 @@ test("template Back is 44px, hides the locked title, and bounces #watch", async 
   assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
   assert.equal(page.split('class="studio-chrome"').length - 1, 1);
   assert.equal(page.includes("쇼츠"), false);
+  assert.equal(page.includes("공장"), false);
+  assert.equal(page.includes("402"), false);
   assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
   assert.match(js, /title\.hidden = true/);
   assert.match(js, /raw === "template"/);

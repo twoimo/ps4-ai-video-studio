@@ -1366,3 +1366,12 @@ html, body {
 .wrap:not(#app) .lib-poster {
   aspect-ratio: 9 / 16;
 }
+
+/* Studio extra: filmstrip 9:16 overflow */
+.filmstrip .thumb {
+  aspect-ratio: 9 / 16;
+  height: auto;
+  max-height: 118px;
+  width: auto;
+  object-fit: cover;
+}
