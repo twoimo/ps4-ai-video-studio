@@ -238,6 +238,13 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(app.includes("경로 ${roots}"), false);
   assert.equal(app.includes("payload.roots"), false);
   assert.equal(app.includes("payload.catalog"), false);
+  assert.equal(app.includes("window.confirm"), false);
+  assert.match(app, /function askDeleteJob/);
+  assert.match(html, /id="delete-overlay"/);
+  assert.match(html, /id="delete-title">삭제할까요</);
+  assert.equal(html.includes("window.confirm"), false);
+  assert.equal(app.includes("빈 현장의 숨은 원리"), false);
+  assert.match(app, /topic: topic\.trim\(\),/);
   assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
   assert.match(app, /health\?\.imagine\?\.frozen/);
@@ -295,6 +302,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(server, /ytDlp: \{ installed: Boolean\(ytDlp\.installed\) \}/);
   assert.match(server, /\.\.\.importPublicView\(result\)/);
   assert.equal(server.includes("...result,"), false);
+  assert.match(server, /stripPublicPaths/);
+  assert.match(server, /if \(next\.service === "ps4-ai-video-studio"\) return stripPublicPaths\(next\)/);
   assert.match(server, /"\.webm": "video\/webm"/);
   assert.match(server, /"\.mov": "video\/quicktime"/);
   assert.match(server, /"\.m4v": "video\/x-m4v"/);

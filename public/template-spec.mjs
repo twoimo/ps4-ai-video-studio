@@ -99,7 +99,7 @@ export function renderLockedSpec(spec = {}) {
         <ul class="spec-list">${forbidden}</ul>
       </section>
       <section class="spec-section" id="spec-locks">
-        <h3>FACTORY_LOCKS</h3>
+        <h3>잠금</h3>
         ${renderLockTable(spec.locks)}
       </section>
       <section class="spec-section" id="spec-situation">

@@ -30,7 +30,8 @@ const state = {
   focusOpener: null,
   jobsLoaded: false,
   settingsSeq: 0,
-  createSeq: 0
+  createSeq: 0,
+  pendingDeleteId: null
 };
 
 function escapeHtml(value = "") {
@@ -612,10 +613,43 @@ function canDeleteJob(job) {
   return job && ["draft", "failed", "queued"].includes(job.status);
 }
 
+function closeDeleteConfirm() {
+  state.pendingDeleteId = null;
+  const overlay = $("#delete-overlay");
+  if (!overlay || overlay.hidden) return false;
+  overlay.hidden = true;
+  if ($("#menu-overlay")?.hidden && !["create", "settings", "machine"].includes(state.view)) {
+    document.body.classList.remove("overlay-open");
+    restoreOpener();
+  }
+  return true;
+}
+
+function askDeleteJob(job) {
+  state.pendingDeleteId = job.id;
+  const summary = $("#delete-summary");
+  const topic = String(job.topic || "").trim();
+  if (summary) {
+    summary.textContent = topic;
+    summary.hidden = !topic;
+  }
+  const overlay = $("#delete-overlay");
+  if (overlay) overlay.hidden = false;
+  document.body.classList.add("overlay-open");
+  trapOverlay("#delete-overlay");
+}
+
 async function deleteJob(jobId) {
   const job = state.jobs.find((item) => item.id === jobId);
   if (!canDeleteJob(job)) return;
-  if (!window.confirm(`삭제할까요? ${job.topic || "쇼츠"}`)) return;
+  askDeleteJob(job);
+}
+
+async function confirmDeleteJob() {
+  const jobId = state.pendingDeleteId;
+  const job = state.jobs.find((item) => item.id === jobId);
+  closeDeleteConfirm();
+  if (!canDeleteJob(job)) return;
   try {
     await api(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     state.jobs = state.jobs.filter((item) => item.id !== jobId);
@@ -845,7 +879,7 @@ async function refreshCreatePreview() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        topic: topic.trim() || "빈 현장의 숨은 원리",
+        topic: topic.trim(),
         facts,
         worldSlots,
         scriptDraft: $("#script-draft")?.value.trim() || ""
@@ -1413,6 +1447,7 @@ async function importLibrary(event) {
 function closeOverlays(event) {
   event?.preventDefault();
   if (state.view === "create") state.createSeq += 1;
+  if (closeDeleteConfirm()) return;
   if (closeMenu()) return;
   if (state.returnToWatch) {
     state.returnToWatch = false;
@@ -1479,6 +1514,9 @@ function bindEvents() {
   $("#close-menu")?.addEventListener("click", closeMenu);
   $("#menu-import-ok")?.addEventListener("click", closeMenu);
   $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
+  $("#close-delete")?.addEventListener("click", closeDeleteConfirm);
+  $("#delete-confirm")?.addEventListener("click", () => { void confirmDeleteJob(); });
+  $$("[data-close-delete]").forEach((node) => node.addEventListener("click", closeDeleteConfirm));
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome, (jobId) => notifyActive(jobId), (jobId) => {
     openMaterials(jobId || currentWatchSlide($("#watch-feed"))?.dataset?.jobId || state.selectedJobId);
@@ -1506,6 +1544,7 @@ function bindEvents() {
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (closeDeleteConfirm()) return;
       if (closeMenu()) return;
       if (state.view === "watch") {
         stopWatchFeed($("#watch-feed"));

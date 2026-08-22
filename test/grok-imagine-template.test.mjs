@@ -40,6 +40,11 @@ test("locked 2026-08-21 template returns slots, skeleton, and locks", () => {
   assert.ok(template.locks.every((lock) => lock.editable === false));
   assert.match(template.document, /everyday_thing/);
   assert.match(template.document, /FORBIDDEN/);
+  assert.equal(template.title, "잠긴 프롬프트");
+  assert.match(template.document, /^# 잠긴 프롬프트/m);
+  assert.match(template.document, /^## 잠금/m);
+  assert.equal(template.document.includes("공장 잠금"), false);
+  assert.equal(template.document.includes("Grok Imagine 공장"), false);
 });
 
 test("slot overrides fill prompts but cannot rewrite locked rules", () => {
@@ -103,6 +108,12 @@ test("createJob stores editable world slot overrides", async () => {
   await rm(join(process.cwd(), "workspace", "jobs", job.id), { recursive: true, force: true });
 });
 
+test("createJob rejects a topic shorter than 4 characters", async () => {
+  await assert.rejects(() => createJob({ topic: "짧", provider: "local", draftOnly: true }), /4자/);
+  await assert.rejects(() => createJob({ topic: "  이  ", provider: "local", draftOnly: true }), /4자/);
+  await assert.rejects(() => createJob({ provider: "local", draftOnly: true }), /4자/);
+});
+
 test("studio HTML exposes a prompt template surface", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   const page = await readFile(join(process.cwd(), "public", "template", "index.html"), "utf8");
@@ -125,6 +136,8 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
   assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
   assert.match(specJs, /<h2>잠긴 프롬프트<\/h2>/);
+  assert.match(specJs, /<h3>잠금<\/h3>/);
+  assert.equal(specJs.includes("<h3>FACTORY_LOCKS</h3>"), false);
   assert.doesNotMatch(specJs, /<h2>\$\{escapeSpecHtml\(spec\.title\)\}<\/h2>/);
   assert.ok(js.includes("템플릿을 불러오지 못했습니다"), "fail fallback leaves 불러오는 중");
   assert.match(specJs, /id="spec-corpus"/);

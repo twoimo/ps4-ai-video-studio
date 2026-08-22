@@ -30,6 +30,7 @@ import { handleTemplatePage } from "./template-page.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
 import { compareLibraryJobs, ensureLibraryEpisodes, importPublicView } from "./episode-import.mjs";
+import { stripPublicPaths } from "./public-copy.mjs";
 import { studioDocsHtml, studioOpenApi } from "./openapi.mjs";
 import { draftScriptFromTopic } from "./studio-script.mjs";
 import { EDGE_VOICES, chirpConfigured, readStudioSettings, settingsPublicView, writeStudioSettings } from "./studio-settings.mjs";
@@ -58,8 +59,18 @@ function hashJson(value) {
 await ensureWorkspace();
 await ensureLibraryEpisodes().catch((error) => console.error(`library seed failed: ${error.message}`));
 
+function publicPayload(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const next = { ...data };
+  if ("jobs" in next) next.jobs = stripPublicPaths(next.jobs);
+  if ("job" in next) next.job = stripPublicPaths(next.job);
+  if ("error" in next) next.error = stripPublicPaths(next.error);
+  if (next.service === "ps4-ai-video-studio") return stripPublicPaths(next);
+  return next;
+}
+
 function json(data, status = 200) {
-  return Response.json(data, { status, headers: { "cache-control": "no-store" } });
+  return Response.json(publicPayload(data), { status, headers: { "cache-control": "no-store" } });
 }
 
 function errorResponse(error, status = 400) {

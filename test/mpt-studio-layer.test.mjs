@@ -32,6 +32,7 @@ import {
   ttsTimingFromWords
 } from "../src/studio-tts.mjs";
 import { listBgmFiles, listBgmPublicNames } from "../src/studio-bgm.mjs";
+import { stripPublicPaths } from "../src/public-copy.mjs";
 
 test("Edge TTS token is assembled from public parts or env", () => {
   const assembled = assemblePublicEdgeTrustedClientToken();
@@ -287,6 +288,31 @@ test("resource/songs stays empty of MoneyPrinterTurbo rips", async () => {
   assert.deepEqual(names.filter((name) => !name.startsWith(".") && name !== "README.md"), []);
   const listed = await listBgmFiles(join(process.cwd()));
   assert.equal(listed.every((path) => !path.includes("resource/songs/") || !/\.(mp3|m4a|wav)$/i.test(path)), true);
+});
+
+test("stripPublicPaths removes filesystem paths from job and health messages", () => {
+  assert.equal(
+    stripPublicPaths("클립을 /workspace/jobs/demo/master.mp4 에서 읽지 못했습니다."),
+    "클립을 에서 읽지 못했습니다."
+  );
+  assert.equal(stripPublicPaths("대기 1번"), "대기 1번");
+  const job = stripPublicPaths({
+    message: "실패 /opt/homebrew/bin/ffmpeg",
+    error: "ENOENT workspace/imports/a.mp4",
+    artifacts: [{ url: "/api/jobs/demo/artifacts/master.mp4" }]
+  });
+  assert.equal(job.message.includes("/opt/"), false);
+  assert.equal(job.error.includes("workspace/imports"), false);
+  assert.equal(job.artifacts[0].url, "/api/jobs/demo/artifacts/master.mp4");
+  const health = stripPublicPaths({
+    service: "ps4-ai-video-studio",
+    browser: { connected: true },
+    capabilities: { ytDlp: { installed: true } },
+    message: "profile /Users/demo/.ps4-ai-video-studio/chrome"
+  });
+  assert.equal(health.browser.connected, true);
+  assert.equal(health.capabilities.ytDlp.installed, true);
+  assert.equal(health.message.includes("/Users/"), false);
 });
 
 test("BGM public list is filenames only", async () => {

@@ -1,6 +1,6 @@
 export const TEMPLATE_ID = "grok-imagine-2026-08-21";
 export const TEMPLATE_DATE = "2026-08-21";
-export const TEMPLATE_TITLE = "Grok Imagine 공장 잠금 프롬프트";
+export const TEMPLATE_TITLE = "잠긴 프롬프트";
 
 export const WORLD_SLOT_IDS = [
   "site",
@@ -225,7 +225,7 @@ export function renderTemplateDocument() {
     "",
     ...emptySkeleton().lines.map((line) => `- ${line}`),
     "",
-    "## 공장 잠금",
+    "## 잠금",
     "",
     locks,
     ""

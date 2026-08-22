@@ -1,3 +1,5 @@
+import { stripPublicPaths } from "./public-copy.mjs";
+
 export const FACTORY_LIVE_STAGES = [
   { id: "plan", label: "기획/슬롯" },
   { id: "hook-lock", label: "훅 스틸 잠금" },
@@ -158,7 +160,7 @@ export function encodeSse(event, id) {
 }
 
 export function liveJobView(job = {}) {
-  return {
+  return stripPublicPaths({
     id: job.id,
     topic: job.topic,
     facts: job.facts || [],
@@ -172,7 +174,7 @@ export function liveJobView(job = {}) {
     runId: job.runId || null,
     duration: job.duration || null,
     updatedAt: job.updatedAt
-  };
+  });
 }
 
 export function channelOneLiner(job = {}, editorial = null) {
