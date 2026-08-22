@@ -500,8 +500,7 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
         if (video) {
           video.muted = false;
           if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
-          const play = playWatchMedia(video, root, watchEpochOf(root));
-          if (play && typeof play.catch === "function") play.catch(() => {});
+          void playWatchMedia(video, root, watchEpochOf(root));
         }
         syncWatchSound(root, video);
         return;
