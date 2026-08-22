@@ -627,7 +627,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /requested\?\.id \|\| playable\[0\]\.id/);
   assert.match(app, /createSeq/);
   assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
-  assert.match(app, /#batch-topics"\)\?\.focus\(\)/);
+  assert.match(app, /#batch-topics"\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(app, /hash === "short"/);
   assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
   assert.match(app, /\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}/);
@@ -951,11 +951,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /querySelector\?\.\("#topic"\)/);
   assert.match(app, /active && root\.contains\(active\)/);
   assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
-  assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\)/);
+  assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
   assert.match(html, /id="close-create"[^>]*tabindex="-1"/);
   assert.match(html, /id="settings-overlay"[\s\S]*class="draft-close"[\s\S]*id="settings-tts-provider"/);
-  assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\?\.\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\);[\s\S]*?return;/);
+  assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\?\.\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\{ preventScroll: true \}\);[\s\S]*?return;/);
   assert.match(html, /id="machine-overlay"[\s\S]*class="overlay-panel machine-overlay-panel"[^>]*tabindex="-1"/);
   assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
   assert.match(app, /\/\^\(p\|materials\)/);
