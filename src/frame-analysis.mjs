@@ -1,9 +1,15 @@
-import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { closeSync, constants as fsConstants, existsSync, openSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { closeFd, mkdirAt, openDirectoryAt, openFileAt, replaceFileAt, statFd, syncFd } from "./dirfd.mjs";
+import { readSemanticEvidenceSnapshot, runLocalSemanticProcess } from "./local-semantic-verifier.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const FULL_BIN = process.env.FFMPEG_FULL_BIN || "/opt/homebrew/opt/ffmpeg-full/bin";
+const FRAME_ANALYSIS_PROCESS_MAX_BYTES = 16 * 1024 * 1024;
+const FRAME_ANALYSIS_PROCESS_TIMEOUT_MS = 120_000;
+const FRAME_ANALYSIS_CAPTION_MAX_BYTES = 4 * 1024 * 1024;
+const FRAME_ANALYSIS_OUTPUT_MAX_BYTES = 32 * 1024 * 1024;
 
 function binary(command) {
   const override = command === "ffmpeg" ? process.env.FFMPEG_BINARY : command === "ffprobe" ? process.env.FFPROBE_BINARY : null;
@@ -12,17 +18,16 @@ function binary(command) {
   return typeof Bun.which === "function" ? Bun.which(command) : null;
 }
 
-async function run(command, args) {
+export async function runFrameAnalysisCommand(command, args, options = {}) {
   const path = binary(command);
   if (!path) throw new Error(`${command}가 설치되어 있지 않습니다.`);
-  const processHandle = Bun.spawn([path, ...args], { stdout: "pipe", stderr: "pipe" });
-  const stdoutPromise = new Response(processHandle.stdout).text();
-  const stderrPromise = new Response(processHandle.stderr).text();
-  const code = await processHandle.exited;
-  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-  if (code !== 0) throw new Error(`${command} 실행 실패 (${code}): ${(stderr || stdout).trim().slice(-1200)}`);
-  return { stdout, stderr };
+  return runLocalSemanticProcess(path, args, {
+    maximumBytes: options.maximumBytes ?? FRAME_ANALYSIS_PROCESS_MAX_BYTES,
+    timeoutMs: options.timeoutMs ?? FRAME_ANALYSIS_PROCESS_TIMEOUT_MS
+  });
 }
+
+const run = runFrameAnalysisCommand;
 
 async function probe(path) {
   const { stdout } = await run("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", path]);
@@ -151,6 +156,9 @@ function parseInlineWordTimings(value, cueStartSec, cueEndSec) {
   }).filter((word) => word.text && word.endSec >= word.startSec);
 }
 export function analyzeCaptions(text) {
+  if (Buffer.byteLength(String(text || ""), "utf8") > FRAME_ANALYSIS_CAPTION_MAX_BYTES) {
+    throw new Error("자막 분석 입력 크기가 제한을 초과했습니다.");
+  }
   const blocks = text.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
   const mergedBlocks = [];
   for (let index = 0; index < blocks.length; index += 1) {
@@ -207,7 +215,7 @@ export function analyzeCaptions(text) {
 
 async function readBenchmarkProfile(path = null) {
   try {
-    return JSON.parse(await readFile(path || join(ROOT, "data/shorts-metadata.json"), "utf8"));
+    return (await readSemanticEvidenceSnapshot(path || join(ROOT, "data/shorts-metadata.json"), { maxBytes: 16 * 1024 * 1024 })).value;
   } catch {
     return null;
   }
@@ -256,11 +264,75 @@ export async function analyzeVideo(path, options = {}) {
   return { schemaVersion: 1, analyzedAt: new Date().toISOString(), runId: options.runId || null, file: path, media, frames, audio, captions, cutReconciliation, benchmarkDuration: compareDuration(media.durationSec, benchmark, options.expectedDuration) };
 }
 
+function existingExclusiveAnalysisFile(directoryFd, name) {
+  let fd;
+  try {
+    fd = openFileAt(directoryFd, name, fsConstants.O_RDONLY);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const identity = statFd(fd);
+    if (!identity.isFile() || identity.nlink !== 1n) {
+      throw new Error(`프레임 분석 출력 대상 ${name}은 단독 regular file이어야 합니다.`);
+    }
+    return identity;
+  } finally {
+    closeFd(fd);
+  }
+}
+
+function openPinnedAnalysisOutputTree(jobDir) {
+  const exactJobDir = resolve(jobDir);
+  const parentPath = dirname(exactJobDir);
+  const jobName = basename(exactJobDir);
+  const descriptors = [];
+  const remember = (fd) => {
+    descriptors.push(fd);
+    return fd;
+  };
+  try {
+    const parentFd = remember(openSync(parentPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_DIRECTORY || 0)));
+    const jobFd = remember(openDirectoryAt(parentFd, jobName));
+    const rootIdentity = existingExclusiveAnalysisFile(jobFd, "frame-audio-caption.json");
+    let qualityFd;
+    try {
+      qualityFd = openDirectoryAt(jobFd, "quality");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      mkdirAt(jobFd, "quality", 0o700);
+      syncFd(jobFd);
+      qualityFd = openDirectoryAt(jobFd, "quality");
+    }
+    remember(qualityFd);
+    const qualityIdentity = existingExclusiveAnalysisFile(qualityFd, "frame-audio-caption.json");
+    return {
+      jobFd,
+      qualityFd,
+      rootIdentity,
+      qualityIdentity,
+      close() {
+        for (const fd of descriptors.reverse()) {
+          try { closeSync(fd); } catch {}
+        }
+      }
+    };
+  } catch (error) {
+    for (const fd of descriptors.reverse()) {
+      try { closeSync(fd); } catch {}
+    }
+    throw error;
+  }
+}
+
 export async function analyzeJobMedia(jobDir, options = {}) {
   const finalPath = join(jobDir, "final.mp4");
   if (!existsSync(finalPath)) throw new Error("프레임 분석할 final.mp4가 없습니다.");
   const captionPath = existsSync(join(jobDir, "captions.vtt")) ? join(jobDir, "captions.vtt") : join(jobDir, "captions.srt");
-  const captionText = existsSync(captionPath) ? await readFile(captionPath, "utf8") : "";
+  const captionText = existsSync(captionPath)
+    ? (await readSemanticEvidenceSnapshot(captionPath, { json: false, maxBytes: FRAME_ANALYSIS_CAPTION_MAX_BYTES })).text
+    : "";
   const normalizedNames = (await readdir(join(jobDir, "normalized")).catch(() => [])).filter((name) => /\.(mp4|mov|webm|m4v|mkv)$/i.test(name)).sort();
   const expectedCutTimes = [];
   let cursor = 0;
@@ -270,9 +342,14 @@ export async function analyzeJobMedia(jobDir, options = {}) {
     if (index < normalizedNames.length - 1) expectedCutTimes.push(cursor);
   }
   const analysis = await analyzeVideo(finalPath, { ...options, captionText, expectedCutTimes });
-  const qualityDir = join(jobDir, "quality");
-  await mkdir(qualityDir, { recursive: true });
-  await writeFile(join(qualityDir, "frame-audio-caption.json"), JSON.stringify(analysis, null, 2));
-  await writeFile(join(jobDir, "frame-audio-caption.json"), JSON.stringify(analysis, null, 2));
+  const bytes = Buffer.from(JSON.stringify(analysis, null, 2));
+  if (bytes.byteLength > FRAME_ANALYSIS_OUTPUT_MAX_BYTES) throw new Error("프레임 분석 결과 크기가 제한을 초과했습니다.");
+  const pinned = openPinnedAnalysisOutputTree(jobDir);
+  try {
+    replaceFileAt(pinned.jobFd, "frame-audio-caption.json", bytes, { mode: 0o600, expectedIdentity: pinned.rootIdentity });
+    replaceFileAt(pinned.qualityFd, "frame-audio-caption.json", bytes, { mode: 0o600, expectedIdentity: pinned.qualityIdentity });
+  } finally {
+    pinned.close();
+  }
   return analysis;
 }

@@ -1,17 +1,111 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { closeSync, constants as fsConstants, fstatSync, openSync } from "node:fs";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { extname, join, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
-import { hashFile, writeJsonAtomic } from "./run-ledger.mjs";
+import {
+  closeFd,
+  mkdirAt,
+  openDirectoryAt,
+  openFileAt,
+  replaceFileAt,
+  statFd,
+  syncFd
+} from "./dirfd.mjs";
 
 export const LOCAL_SEMANTIC_MODEL = "Qwen3.6-27B-8bit";
 export const LOCAL_SEMANTIC_SCHEMA_VERSION = 2;
 export const LOCAL_SEMANTIC_MIN_CONFIDENCE = 0.75;
+const OMLX_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+const SEMANTIC_JSON_MAX_BYTES = 16 * 1024 * 1024;
+const SEMANTIC_MEDIA_MAX_BYTES = 64 * 1024 * 1024;
+const SEMANTIC_FRAME_MAX_BYTES = 16 * 1024 * 1024;
+const SEMANTIC_PROCESS_MAX_BYTES = 2 * 1024 * 1024;
+const SEMANTIC_PROCESS_TIMEOUT_MS = 120_000;
+const PRIVATE_MEDIA_COPY_CHUNK_BYTES = 64 * 1024;
+export const PRIVATE_MEDIA_SNAPSHOT_POLICY = Object.freeze({
+  maximumFiles: 64,
+  maximumFileBytes: 1024 * 1024 * 1024,
+  maximumAggregateBytes: 4 * 1024 * 1024 * 1024
+});
+const trustedPrivateMediaSnapshots = new WeakSet();
+export const LOCAL_SUBPROCESS_ADMISSION_POLICY = Object.freeze({
+  maximumActive: 2,
+  maximumWaiters: 8,
+  waitTimeoutMs: 30_000
+});
+let activeLocalSubprocesses = 0;
+const localSubprocessWaiters = [];
 export const LOCAL_SEMANTIC_BLACK_FRAME_POLICY = Object.freeze({
   algorithm: "ffmpeg-blackframe-pblack-v1",
   pixelThreshold: 32,
   maximumBlackPercentExclusive: 98
 });
+
+function localSubprocessRelease() {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeLocalSubprocesses = Math.max(0, activeLocalSubprocesses - 1);
+    while (localSubprocessWaiters.length) {
+      const waiter = localSubprocessWaiters.shift();
+      if (waiter.settled) continue;
+      waiter.settled = true;
+      clearTimeout(waiter.timer);
+      activeLocalSubprocesses += 1;
+      waiter.resolve(localSubprocessRelease());
+      break;
+    }
+  };
+}
+
+export async function acquireLocalSubprocessPermit({ timeoutMs = LOCAL_SUBPROCESS_ADMISSION_POLICY.waitTimeoutMs } = {}) {
+  const requestedTimeout = Number(timeoutMs);
+  if (!Number.isSafeInteger(requestedTimeout) || requestedTimeout < 1 || requestedTimeout > LOCAL_SUBPROCESS_ADMISSION_POLICY.waitTimeoutMs) {
+    throw new TypeError("로컬 subprocess admission timeout이 올바르지 않습니다.");
+  }
+  if (activeLocalSubprocesses < LOCAL_SUBPROCESS_ADMISSION_POLICY.maximumActive) {
+    activeLocalSubprocesses += 1;
+    return localSubprocessRelease();
+  }
+  if (localSubprocessWaiters.length >= LOCAL_SUBPROCESS_ADMISSION_POLICY.maximumWaiters) {
+    const error = new Error("로컬 subprocess 대기열이 가득 찼습니다.");
+    error.code = "LOCAL_SUBPROCESS_QUEUE_FULL";
+    throw error;
+  }
+  return new Promise((resolvePromise, rejectPromise) => {
+    const waiter = { settled: false, resolve: resolvePromise, timer: null };
+    waiter.timer = setTimeout(() => {
+      if (waiter.settled) return;
+      waiter.settled = true;
+      const index = localSubprocessWaiters.indexOf(waiter);
+      if (index >= 0) localSubprocessWaiters.splice(index, 1);
+      const error = new Error("로컬 subprocess 실행 슬롯 대기 시간이 초과되었습니다.");
+      error.code = "LOCAL_SUBPROCESS_ADMISSION_TIMEOUT";
+      rejectPromise(error);
+    }, requestedTimeout);
+    waiter.timer.unref?.();
+    localSubprocessWaiters.push(waiter);
+  });
+}
+
+export function terminateLocalSubprocessTree(pid, directKill) {
+  const numericPid = Number(pid);
+  if (
+    (process.platform === "darwin" || process.platform === "linux")
+    && Number.isSafeInteger(numericPid)
+    && numericPid > 1
+  ) {
+    try {
+      process.kill(-numericPid, "SIGKILL");
+    } catch {}
+  }
+  try {
+    directKill?.();
+  } catch {}
+}
 
 const RESPONSE_SCHEMA = Object.freeze({
   type: "object",
@@ -50,6 +144,188 @@ export function canonicalSemanticHash(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
 }
 
+/**
+ * Capture one owned byte snapshot and derive every representation from it.
+ * Callers must use the returned digest together with the returned parsed value
+ * or text; reopening the path after validation would reintroduce a TOCTOU gap.
+ */
+function snapshotOwnedSemanticEvidenceBuffer(buffer, { json = true } = {}) {
+  let text;
+  let value = null;
+  if (json) {
+    try {
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer);
+      value = JSON.parse(text);
+    } catch {
+      throw new Error("의미 JSON 증거가 올바른 UTF-8 JSON이 아닙니다.");
+    }
+  } else {
+    // Binary media and non-JSON text snapshots remain byte-oriented. Their
+    // integrity is established by the exact byte count and digest below.
+    text = buffer.toString("utf8");
+  }
+  return {
+    buffer,
+    bytes: buffer.byteLength,
+    sha256: `sha256:${createHash("sha256").update(buffer).digest("hex")}`,
+    text,
+    value
+  };
+}
+
+export function snapshotSemanticEvidenceBuffer(input, { json = true } = {}) {
+  if (!Buffer.isBuffer(input) && !(input instanceof Uint8Array)) {
+    throw new TypeError("의미 증거 스냅샷에는 Buffer 또는 Uint8Array가 필요합니다.");
+  }
+  return snapshotOwnedSemanticEvidenceBuffer(Buffer.from(input), { json });
+}
+
+export async function readSemanticEvidenceSnapshot(path, options = {}) {
+  const json = options.json !== false;
+  const maximumBytes = Number(options.maxBytes ?? (json ? SEMANTIC_JSON_MAX_BYTES : SEMANTIC_MEDIA_MAX_BYTES));
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+    throw new TypeError("의미 증거 스냅샷 크기 상한이 올바르지 않습니다.");
+  }
+  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(maximumBytes) || before.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("의미 증거는 크기가 제한된 단독 regular file이어야 합니다.");
+    }
+    const buffer = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < buffer.byteLength) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.byteLength - offset, offset);
+      if (bytesRead <= 0) throw new Error("의미 증거 파일이 선언된 크기보다 일찍 끝났습니다.");
+      offset += bytesRead;
+    }
+    const after = await handle.stat({ bigint: true });
+    if (
+      before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.nlink !== after.nlink
+      || after.nlink !== 1n
+      || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs
+      || before.ctimeNs !== after.ctimeNs
+    ) throw new Error("의미 증거 파일이 스냅샷 도중 변경되었습니다.");
+    return { path, ...snapshotOwnedSemanticEvidenceBuffer(buffer, { json }) };
+  } finally {
+    await handle.close();
+  }
+}
+
+export function createPrivateMediaSnapshotManager({ prefix = "ps4-private-media-" } = {}) {
+  if (typeof prefix !== "string" || !/^[A-Za-z0-9._-]{1,80}$/u.test(prefix)) {
+    throw new TypeError("private media 임시 디렉터리 prefix가 올바르지 않습니다.");
+  }
+  let rootPromise = null;
+  let fileCount = 0;
+  let aggregateBytes = 0;
+  let copyTail = Promise.resolve();
+  const root = async () => {
+    if (!rootPromise) rootPromise = mkdtemp(join(tmpdir(), prefix));
+    return rootPromise;
+  };
+  const copyExact = async (sourcePath, options = {}) => {
+    const maximumBytes = Number(options.maximumBytes ?? PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes);
+    const expectedBytes = options.expectedBytes == null ? null : Number(options.expectedBytes);
+    const expectedSha256 = options.expectedSha256 == null ? null : String(options.expectedSha256);
+    if (
+      !Number.isSafeInteger(maximumBytes)
+      || maximumBytes < 1
+      || maximumBytes > PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes
+      || (expectedBytes !== null && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 1 || expectedBytes > maximumBytes))
+      || (expectedSha256 !== null && !/^sha256:[a-f0-9]{64}$/u.test(expectedSha256))
+    ) throw new TypeError("private media 복사 제한 또는 영수증이 올바르지 않습니다.");
+    if (fileCount >= PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFiles) throw new Error("private media 복사 파일 수가 제한을 초과했습니다.");
+    const source = await open(sourcePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    let target = null;
+    let targetPath = null;
+    try {
+      const before = await source.stat({ bigint: true });
+      if (
+        !before.isFile()
+        || before.nlink !== 1n
+        || before.size < 1n
+        || before.size > BigInt(maximumBytes)
+        || before.size > BigInt(Number.MAX_SAFE_INTEGER)
+        || (expectedBytes !== null && before.size !== BigInt(expectedBytes))
+      ) throw new Error("private media 원본은 크기가 제한된 단독 regular file이어야 합니다.");
+      const bytes = Number(before.size);
+      if (aggregateBytes > PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumAggregateBytes - bytes) {
+        throw new Error("private media 복사 합산 크기가 제한을 초과했습니다.");
+      }
+      const directory = await root();
+      targetPath = join(directory, `media-${String(fileCount + 1).padStart(3, "0")}${extname(String(sourcePath || "")) || ".bin"}`);
+      target = await open(targetPath, "wx", 0o600);
+      const hash = createHash("sha256");
+      const chunk = Buffer.allocUnsafe(PRIVATE_MEDIA_COPY_CHUNK_BYTES);
+      let offset = 0;
+      while (offset < bytes) {
+        const length = Math.min(chunk.byteLength, bytes - offset);
+        const { bytesRead } = await source.read(chunk, 0, length, offset);
+        if (bytesRead <= 0) throw new Error("private media 원본이 복사 중 선언 크기보다 일찍 끝났습니다.");
+        const slice = chunk.subarray(0, bytesRead);
+        hash.update(slice);
+        let written = 0;
+        while (written < slice.byteLength) {
+          const { bytesWritten } = await target.write(slice, written, slice.byteLength - written, offset + written);
+          if (bytesWritten <= 0) throw new Error("private media 복사본 쓰기에 실패했습니다.");
+          written += bytesWritten;
+        }
+        offset += bytesRead;
+      }
+      await target.sync();
+      const after = await source.stat({ bigint: true });
+      const copied = await target.stat({ bigint: true });
+      if (
+        before.dev !== after.dev
+        || before.ino !== after.ino
+        || before.nlink !== after.nlink
+        || after.nlink !== 1n
+        || before.size !== after.size
+        || before.mtimeNs !== after.mtimeNs
+        || before.ctimeNs !== after.ctimeNs
+        || !copied.isFile()
+        || copied.nlink !== 1n
+        || copied.size !== before.size
+      ) throw new Error("private media 원본 또는 복사본이 복사 중 변경되었습니다.");
+      const sha256 = `sha256:${hash.digest("hex")}`;
+      if (expectedSha256 !== null && sha256 !== expectedSha256) throw new Error("private media 복사본 해시가 선언과 일치하지 않습니다.");
+      fileCount += 1;
+      aggregateBytes += bytes;
+      const snapshot = { path: targetPath, privatePath: targetPath, bytes, sha256, text: null, value: null };
+      trustedPrivateMediaSnapshots.add(snapshot);
+      return snapshot;
+    } catch (error) {
+      await target?.close().catch(() => {});
+      target = null;
+      if (targetPath) await rm(targetPath, { force: true }).catch(() => {});
+      throw error;
+    } finally {
+      await target?.close().catch(() => {});
+      await source.close();
+    }
+  };
+  return {
+    copy(sourcePath, options = {}) {
+      const result = copyTail.then(() => copyExact(sourcePath, options));
+      copyTail = result.catch(() => {});
+      return result;
+    },
+    async cleanup() {
+      await copyTail.catch(() => {});
+      const directory = rootPromise ? await rootPromise.catch(() => null) : null;
+      if (directory) await rm(directory, { recursive: true, force: true });
+    }
+  };
+}
+
+function semanticJsonOutputSnapshot(value) {
+  return snapshotSemanticEvidenceBuffer(Buffer.from(JSON.stringify(value, null, 2)));
+}
+
 export const LOCAL_SEMANTIC_POLICY_V2 = Object.freeze({
   name: "purpose-aware-semantic-verdict",
   version: 2,
@@ -78,10 +354,6 @@ export const LOCAL_SEMANTIC_POLICY_BINDING = Object.freeze({
   version: LOCAL_SEMANTIC_POLICY_V2.version,
   hash: LOCAL_SEMANTIC_POLICY_V2_HASH
 });
-
-function textHash(value) {
-  return `sha256:${createHash("sha256").update(String(value)).digest("hex")}`;
-}
 
 function withoutKey(value, key) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -136,6 +408,117 @@ function boundedOmlxTimeout(value, fallback, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Number.isFinite(parsed) && parsed > 0 ? parsed : fallback));
 }
 
+function exactOmlxJsonContentType(value) {
+  return typeof value === "string"
+    && /^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?$/iu.test(value.trim());
+}
+
+function cancelOmlxResponse(response, reason) {
+  try { void Promise.resolve(response?.body?.cancel?.(reason)).catch(() => {}); } catch {}
+}
+
+export async function readBoundedOmlxJsonResponse(response, {
+  maximumBytes = OMLX_RESPONSE_MAX_BYTES,
+  signal,
+  label = "OMLX 응답"
+} = {}) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) throw new TypeError("OMLX 응답 크기 상한이 올바르지 않습니다.");
+  let contentType;
+  let contentEncoding;
+  let contentLength;
+  try {
+    contentType = response?.headers?.get?.("content-type") ?? null;
+    contentEncoding = response?.headers?.get?.("content-encoding") ?? null;
+    contentLength = response?.headers?.get?.("content-length") ?? null;
+  } catch {
+    cancelOmlxResponse(response, `${label} headers rejected`);
+    throw new Error(`${label} 헤더를 읽을 수 없습니다.`);
+  }
+  if (!exactOmlxJsonContentType(contentType)) {
+    cancelOmlxResponse(response, `${label} content type rejected`);
+    throw new Error(`${label} Content-Type이 application/json UTF-8이 아닙니다.`);
+  }
+  if (contentEncoding !== null && String(contentEncoding).trim().toLowerCase() !== "identity") {
+    cancelOmlxResponse(response, `${label} content encoding rejected`);
+    throw new Error(`${label} Content-Encoding은 identity만 허용됩니다.`);
+  }
+  let declaredLength = null;
+  if (contentLength !== null) {
+    const normalized = String(contentLength).trim();
+    if (!/^\d+$/u.test(normalized)) {
+      cancelOmlxResponse(response, `${label} content length rejected`);
+      throw new Error(`${label} Content-Length가 올바르지 않습니다.`);
+    }
+    declaredLength = Number(normalized);
+    if (!Number.isSafeInteger(declaredLength)) {
+      cancelOmlxResponse(response, `${label} content length rejected`);
+      throw new Error(`${label} Content-Length가 올바르지 않습니다.`);
+    }
+  }
+  if (declaredLength !== null && declaredLength > maximumBytes) {
+    cancelOmlxResponse(response, `${label} size limit exceeded`);
+    throw new Error(`${label} 크기가 제한을 초과했습니다.`);
+  }
+  let reader;
+  try { reader = response?.body?.getReader?.(); } catch { reader = null; }
+  if (!reader || typeof reader.read !== "function") throw new Error(`${label} 본문을 읽을 수 없습니다.`);
+  const chunks = [];
+  let total = 0;
+  let aborted = false;
+  const abortError = () => new Error(`${label} 읽기가 취소되었거나 시간이 초과되었습니다.`);
+  const readChunk = () => {
+    if (!signal) return reader.read().catch(() => { throw new Error(`${label} 본문을 읽을 수 없습니다.`); });
+    if (signal.aborted) return Promise.reject(abortError());
+    return new Promise((resolvePromise, rejectPromise) => {
+      const onAbort = () => {
+        aborted = true;
+        rejectPromise(abortError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      reader.read().then(
+        (value) => {
+          signal.removeEventListener("abort", onAbort);
+          resolvePromise(value);
+        },
+        () => {
+          signal.removeEventListener("abort", onAbort);
+          rejectPromise(new Error(`${label} 본문을 읽을 수 없습니다.`));
+        }
+      );
+    });
+  };
+  try {
+    while (true) {
+      const { done, value } = await readChunk();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.byteLength;
+      if (total > maximumBytes) throw new Error(`${label} 크기가 제한을 초과했습니다.`);
+      chunks.push(chunk);
+    }
+    if (declaredLength !== null && declaredLength !== total) {
+      throw new Error(`${label} 본문 크기가 Content-Length와 일치하지 않습니다.`);
+    }
+  } catch (error) {
+    await reader.cancel(aborted ? "aborted" : `${label} size limit exceeded`).catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = Buffer.concat(chunks, total);
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`${label} 본문이 올바른 UTF-8이 아닙니다.`);
+  }
+  return {
+    bytes,
+    text,
+    sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`
+  };
+}
+
 export async function preflightLocalSemanticVerifier({ fetchImpl = fetch, environment = process.env } = {}) {
   const endpoint = resolveOmlxEndpoint(environment);
   const timeoutMs = boundedOmlxTimeout(
@@ -145,6 +528,7 @@ export async function preflightLocalSemanticVerifier({ fetchImpl = fetch, enviro
     30_000
   );
   const apiKey = String(environment.OMLX_API_KEY || "").trim();
+  const signal = AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await fetchImpl(endpoint.modelsUrl, {
@@ -154,7 +538,7 @@ export async function preflightLocalSemanticVerifier({ fetchImpl = fetch, enviro
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
       },
       redirect: "error",
-      signal: AbortSignal.timeout(timeoutMs)
+      signal
     });
   } catch (error) {
     const timedOut = /timeout|timed out|abort/i.test(String(error?.name || "")) || /timeout|timed out|abort/i.test(String(error?.message || ""));
@@ -165,11 +549,11 @@ export async function preflightLocalSemanticVerifier({ fetchImpl = fetch, enviro
   if (!response?.ok) throw new Error(`로컬 OMLX 의미 검증기 사전 점검이 HTTP ${Number(response?.status) || 0}으로 실패했습니다.`);
   let rawBody;
   try {
-    rawBody = await response.text();
-  } catch {
+    rawBody = (await readBoundedOmlxJsonResponse(response, { signal, label: "로컬 OMLX 모델 목록 응답" })).text;
+  } catch (error) {
+    if (/크기가 제한을 초과/.test(String(error?.message || error))) throw error;
     throw new Error("로컬 OMLX 모델 목록 응답을 읽을 수 없습니다.");
   }
-  if (Buffer.byteLength(rawBody) > 2 * 1024 * 1024) throw new Error("로컬 OMLX 모델 목록 응답 크기가 제한을 초과했습니다.");
   let payload;
   try {
     payload = JSON.parse(rawBody);
@@ -381,29 +765,77 @@ function parseRawDecision(rawBody, expectedFrameId, secrets = []) {
   };
 }
 
-function runProcess(command, args, options = {}) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const stdout = [];
-    const stderr = [];
-    let bytes = 0;
-    const maximumBytes = Number(options.maximumBytes || 2 * 1024 * 1024);
-    const collect = (target) => (chunk) => {
-      bytes += chunk.length;
-      if (bytes <= maximumBytes) target.push(chunk);
-    };
-    child.stdout.on("data", collect(stdout));
-    child.stderr.on("data", collect(stderr));
-    child.once("error", rejectPromise);
-    child.once("close", (code) => {
-      const stdoutBytes = Buffer.concat(stdout);
-      const output = stdoutBytes.toString("utf8");
-      const errors = Buffer.concat(stderr).toString("utf8");
-      if (code !== 0) rejectPromise(new Error(`${command} 실패(${code}): ${errors.slice(-1000)}`));
-      else resolvePromise({ stdout: output, stderr: errors, stdoutBytes });
-    });
+export async function runLocalSemanticProcess(command, args, options = {}) {
+  const maximumBytes = Number(options.maximumBytes ?? SEMANTIC_PROCESS_MAX_BYTES);
+  const timeoutMs = Number(options.timeoutMs ?? SEMANTIC_PROCESS_TIMEOUT_MS);
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 64 * 1024 * 1024) {
+    throw new TypeError("의미 검사 subprocess 출력 상한이 올바르지 않습니다.");
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+    throw new TypeError("의미 검사 subprocess timeout이 올바르지 않습니다.");
+  }
+  const releasePermit = await acquireLocalSubprocessPermit({
+    timeoutMs: options.admissionTimeoutMs ?? LOCAL_SUBPROCESS_ADMISSION_POLICY.waitTimeoutMs
   });
+  try {
+    return await new Promise((resolvePromise, rejectPromise) => {
+      const child = spawn(command, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      const stdout = [];
+      const stderr = [];
+      let bytes = 0;
+      let terminalError = null;
+      let finished = false;
+      let timer = null;
+      const finish = (error, result = null) => {
+        if (finished) return;
+        finished = true;
+        if (timer) clearTimeout(timer);
+        if (error) rejectPromise(error);
+        else resolvePromise(result);
+      };
+      const terminate = (error) => {
+        if (terminalError) return;
+        terminalError = error;
+        terminateLocalSubprocessTree(child.pid, () => child.kill("SIGKILL"));
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(error);
+      };
+      const collect = (target) => (chunk) => {
+        if (terminalError) return;
+        bytes += chunk.length;
+        if (bytes > maximumBytes) {
+          terminate(new Error(`${command} 출력이 허용 크기를 초과했습니다.`));
+          return;
+        }
+        target.push(Buffer.from(chunk));
+      };
+      child.stdout.on("data", collect(stdout));
+      child.stderr.on("data", collect(stderr));
+      timer = setTimeout(() => terminate(new Error(`${command} 실행 시간이 제한을 초과했습니다.`)), timeoutMs);
+      timer.unref?.();
+      child.once("error", (error) => {
+        finish(error);
+      });
+      child.once("close", (code) => {
+        if (finished) return;
+        if (terminalError) {
+          finish(terminalError);
+          return;
+        }
+        const stdoutBytes = Buffer.concat(stdout);
+        const output = stdoutBytes.toString("utf8");
+        const errors = Buffer.concat(stderr).toString("utf8");
+        if (code !== 0) finish(new Error(`${command} 실패(${code}): ${errors.slice(-1000)}`));
+        else finish(null, { stdout: output, stderr: errors, stdoutBytes });
+      });
+    });
+  } finally {
+    releasePermit();
+  }
 }
+
+const runProcess = runLocalSemanticProcess;
 
 function bytesHash(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -643,28 +1075,114 @@ export function buildNarrationGenerationBinding({ script, voiceoverSync, fileHas
   return { ...payload, bindingHash: canonicalSemanticHash(payload) };
 }
 
-async function imageDataUrl(framePath) {
-  const bytes = await readFile(framePath);
-  return `data:image/png;base64,${bytes.toString("base64")}`;
+function openExistingSemanticFileIdentity(directoryFd, name) {
+  let fd;
+  try {
+    fd = openFileAt(directoryFd, name, fsConstants.O_RDONLY);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const identity = statFd(fd);
+    if (!identity.isFile() || identity.nlink !== 1n) {
+      throw new Error(`의미 검사 출력 대상 ${name}은 단독 regular file이어야 합니다.`);
+    }
+    return identity;
+  } finally {
+    closeFd(fd);
+  }
 }
 
-async function extractFrame(finalPath, framePath, timestampSec) {
-  await mkdir(dirname(framePath), { recursive: true });
-  await runProcess("ffmpeg", [
-    "-v", "error",
-    "-y",
-    "-ss", Number(timestampSec).toFixed(3),
-    "-i", finalPath,
-    "-frames:v", "1",
-    "-vf", "scale=576:-2:flags=lanczos",
-    "-compression_level", "9",
-    framePath
-  ]);
-  const fileStat = await stat(framePath);
-  if (!fileStat.isFile() || fileStat.size <= 0) throw new Error("의미 검사 입력 프레임을 생성하지 못했습니다.");
+function replaceOwnedSemanticFile(directoryFd, name, bytes, expectedIdentity) {
+  replaceFileAt(directoryFd, name, bytes, { mode: 0o600, expectedIdentity });
+}
+
+function openPinnedSemanticDirectories({ jobDir, runDir, runId }) {
+  const expectedRunDir = resolve(jobDir, "runs", String(runId));
+  if (resolve(runDir) !== expectedRunDir) throw new Error("의미 검사 runDir이 요청된 run과 일치하지 않습니다.");
+  const descriptors = [];
+  const remember = (fd) => {
+    descriptors.push(fd);
+    return fd;
+  };
+  try {
+    const jobFd = remember(openSync(resolve(jobDir), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_DIRECTORY || 0)));
+    const jobIdentity = fstatSync(jobFd, { bigint: true });
+    if (!jobIdentity.isDirectory()) throw new Error("의미 검사 jobDir이 디렉터리가 아닙니다.");
+    const runsFd = remember(openDirectoryAt(jobFd, "runs"));
+    const runFd = remember(openDirectoryAt(runsFd, String(runId)));
+
+    let semanticFd;
+    try {
+      semanticFd = openDirectoryAt(runFd, "semantic");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      mkdirAt(runFd, "semantic", 0o700);
+      syncFd(runFd);
+      semanticFd = openDirectoryAt(runFd, "semantic");
+    }
+    remember(semanticFd);
+
+    const childFds = new Map();
+    const missing = [];
+    for (const name of ["frames", "responses"]) {
+      try {
+        childFds.set(name, remember(openDirectoryAt(semanticFd, name)));
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        missing.push(name);
+      }
+    }
+    for (const name of missing) {
+      mkdirAt(semanticFd, name, 0o700);
+      syncFd(semanticFd);
+      childFds.set(name, remember(openDirectoryAt(semanticFd, name)));
+    }
+    return {
+      semanticFd,
+      framesFd: childFds.get("frames"),
+      responsesFd: childFds.get("responses"),
+      inputIdentity: openExistingSemanticFileIdentity(semanticFd, "input.json"),
+      receiptIdentity: openExistingSemanticFileIdentity(semanticFd, "receipt.json"),
+      close() {
+        for (const fd of descriptors.reverse()) {
+          try { closeSync(fd); } catch {}
+        }
+      }
+    };
+  } catch (error) {
+    for (const fd of descriptors.reverse()) {
+      try { closeSync(fd); } catch {}
+    }
+    throw error;
+  }
+}
+
+async function extractFrame(finalPath, timestampSec) {
+  const root = await mkdtemp(join(tmpdir(), "ps4-semantic-frame-"));
+  const framePath = join(root, "frame.png");
+  try {
+    await runProcess("ffmpeg", [
+      "-v", "error",
+      "-y",
+      "-ss", Number(timestampSec).toFixed(3),
+      "-i", finalPath,
+      "-frames:v", "1",
+      "-vf", "scale=576:-2:flags=lanczos",
+      "-compression_level", "9",
+      framePath
+    ]);
+    const snapshot = await readSemanticEvidenceSnapshot(framePath, { json: false, maxBytes: SEMANTIC_FRAME_MAX_BYTES });
+    if (snapshot.bytes <= 0) throw new Error("의미 검사 입력 프레임을 생성하지 못했습니다.");
+    return snapshot;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 async function postOmlx(endpoint, body, fetchImpl, timeoutMs, apiKey = "") {
+  const signal = AbortSignal.timeout(timeoutMs);
   const response = await fetchImpl(endpoint.chatCompletionsUrl, {
     method: "POST",
     headers: {
@@ -673,11 +1191,10 @@ async function postOmlx(endpoint, body, fetchImpl, timeoutMs, apiKey = "") {
     },
     body: JSON.stringify(body),
     redirect: "error",
-    signal: AbortSignal.timeout(timeoutMs)
+    signal
   });
-  const rawBody = await response.text();
-  if (Buffer.byteLength(rawBody) > 2 * 1024 * 1024) throw new Error("OMLX 응답 크기가 제한을 초과했습니다.");
-  return { httpStatus: response.status, ok: response.ok, rawBody };
+  const bodySnapshot = await readBoundedOmlxJsonResponse(response, { signal, label: "OMLX 응답" });
+  return { httpStatus: response.status, ok: response.ok, rawBody: bodySnapshot.text, rawBodySha256: bodySnapshot.sha256 };
 }
 
 async function postOmlxWithRetry(endpoint, body, fetchImpl, timeoutMs, apiKey = "") {
@@ -708,15 +1225,8 @@ function semanticArtifact(relativePath, kind) {
   return { name: relativePath, kind, url: `/api/jobs/__JOB_ID__/artifacts/${encodeURIComponent(relativePath)}` };
 }
 
-export async function createLocalSemanticReceipt({ job, script, runId, jobDir, runDir, sourceEntailment, fetchImpl = fetch, environment = process.env }) {
-  const semanticDir = join(runDir, "semantic");
-  const framesDir = join(semanticDir, "frames");
-  const responsesDir = join(semanticDir, "responses");
-  await mkdir(framesDir, { recursive: true });
-  await mkdir(responsesDir, { recursive: true });
+async function createLocalSemanticReceiptExact({ job, script, runId, jobDir, runDir, sourceEntailment, fetchImpl = fetch, environment = process.env }, snapshotFiles, semanticDirectories) {
   const relativeRoot = `runs/${runId}/semantic`;
-  const receiptPath = join(semanticDir, "receipt.json");
-  const inputPath = join(semanticDir, "input.json");
   const failureCodes = [];
   let endpoint = null;
   try {
@@ -725,28 +1235,60 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
     failureCodes.push(safeFailureCode(error));
   }
 
-  const [captionTiming, voiceoverSync] = await Promise.all([
-    readFile(join(jobDir, "caption-timing.json"), "utf8").then(JSON.parse).catch(() => null),
-    readFile(join(jobDir, "voiceover-sync.json"), "utf8").then(JSON.parse).catch(() => null)
+  const [scriptSnapshot, captionTimingSnapshot, voiceoverSyncSnapshot] = await Promise.all([
+    readSemanticEvidenceSnapshot(join(jobDir, "script.json")).catch(() => null),
+    readSemanticEvidenceSnapshot(join(jobDir, "caption-timing.json")).catch(() => null),
+    readSemanticEvidenceSnapshot(join(jobDir, "voiceover-sync.json")).catch(() => null)
   ]);
+  const exactScript = scriptSnapshot?.value || null;
+  const captionTiming = captionTimingSnapshot?.value || null;
+  const voiceoverSync = voiceoverSyncSnapshot?.value || null;
   const captionCues = parseCaptionCues(captionTiming);
-  const expectedSceneSegmentCount = Array.isArray(script?.segments) ? script.segments.length : 0;
+  const expectedSceneSegmentCount = Array.isArray(exactScript?.segments) ? exactScript.segments.length : 0;
   const expectedCaptionCueCount = captionCues.length;
-  const plans = semanticFramePlan(script, captionTiming, voiceoverSync);
+  const plans = semanticFramePlan(exactScript, captionTiming, voiceoverSync);
   if (!plans.length) failureCodes.push("missing-semantic-frame-plan");
   if (!captionCues.length) failureCodes.push("missing-caption-cues");
+  const frameTargetIdentities = new Map();
+  const responseTargetIdentities = new Map();
+  for (const plan of plans) {
+    frameTargetIdentities.set(plan.frameId, openExistingSemanticFileIdentity(semanticDirectories.framesFd, `${plan.frameId}.png`));
+    responseTargetIdentities.set(plan.frameId, openExistingSemanticFileIdentity(semanticDirectories.responsesFd, `${plan.frameId}.json`));
+  }
+  const finalVideoSnapshot = await snapshotFiles.copyMedia(join(jobDir, "final.mp4"), {
+    maximumBytes: PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes
+  }).catch(() => null);
+  const voiceoverMasteredSnapshot = await snapshotFiles.copyMedia(join(jobDir, "voiceover-mastered.wav"), {
+    maximumBytes: PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes
+  }).catch(() => null);
+  const exactFinalPath = await snapshotFiles.pathFor(finalVideoSnapshot, join(jobDir, "final.mp4"));
+  // Voiceover is an optional job setting. Missing narration evidence must
+  // close the semantic gate through narrationGenerationBinding, not abort the
+  // entire run before a fail-closed semantic receipt can be sealed.
+  const exactVoiceoverPath = voiceoverMasteredSnapshot
+    ? await snapshotFiles.pathFor(voiceoverMasteredSnapshot, join(jobDir, "voiceover-mastered.wav"))
+    : null;
   const frameInputs = [];
+  const frameSnapshots = new Map();
   for (const plan of plans) {
     const frameRelativePath = `${relativeRoot}/frames/${plan.frameId}.png`;
     const framePath = join(jobDir, frameRelativePath);
     try {
-      await extractFrame(join(jobDir, "final.mp4"), framePath, plan.timestampSec);
-      const frameSha256 = await hashFile(framePath);
-      const blackFrame = await analyzeFfmpegBlackFrame(framePath);
-      const decodedPixels = await decodedFramePixels(join(jobDir, "final.mp4"), plan.timestampSec);
-      const storedPixels = await decodedFramePixels(framePath);
+      const frameSnapshot = await extractFrame(exactFinalPath, plan.timestampSec);
+      replaceOwnedSemanticFile(
+        semanticDirectories.framesFd,
+        `${plan.frameId}.png`,
+        frameSnapshot.buffer,
+        frameTargetIdentities.get(plan.frameId)
+      );
+      const exactFramePath = await snapshotFiles.pathFor(frameSnapshot, framePath);
+      frameSnapshots.set(plan.frameId, frameSnapshot);
+      const frameSha256 = frameSnapshot.sha256;
+      const blackFrame = await analyzeFfmpegBlackFrame(exactFramePath);
+      const decodedPixels = await decodedFramePixels(exactFinalPath, plan.timestampSec);
+      const storedPixels = await decodedFramePixels(exactFramePath);
       if (decodedPixels.sha256 !== storedPixels.sha256 || decodedPixels.bytes !== storedPixels.bytes) throw new Error("의미 검사 프레임이 final.mp4 픽셀과 결속되지 않았습니다.");
-      const dataUrl = await imageDataUrl(framePath);
+      const dataUrl = `data:image/png;base64,${frameSnapshot.buffer.toString("base64")}`;
       const request = buildOmlxSemanticRequest(plan, dataUrl);
       frameInputs.push({ ...plan, framePath: frameRelativePath, frameSha256, finalPixelBinding: decodedPixels, blackFrame, requestCanonicalHash: canonicalSemanticHash(request) });
       if (plan.purpose === "caption-cue" && !plan.expectedCaption) failureCodes.push(`${plan.frameId}:missing-expected-caption`);
@@ -774,22 +1316,25 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
     frames: frameInputs
   };
   const input = { ...inputPayload, canonicalHash: canonicalSemanticHash(inputPayload) };
-  await writeJsonAtomic(inputPath, input);
-  const inputSha256 = await hashFile(inputPath);
+  const inputSnapshot = semanticJsonOutputSnapshot(input);
+  replaceOwnedSemanticFile(semanticDirectories.semanticFd, "input.json", inputSnapshot.buffer, semanticDirectories.inputIdentity);
+  const inputSha256 = inputSnapshot.sha256;
 
   const responseRecords = [];
   const timeoutMs = Math.max(10_000, Math.min(300_000, Number(environment.PS4_OMLX_TIMEOUT_MS || 120_000)));
   for (const frame of frameInputs) {
     const responseRelativePath = `${relativeRoot}/responses/${frame.frameId}.json`;
-    const responsePath = join(jobDir, responseRelativePath);
     let wrapperPayload;
     try {
       if (!endpoint) throw new Error("OMLX loopback endpoint unavailable");
-      const dataUrl = await imageDataUrl(join(jobDir, frame.framePath));
+      const dataUrl = `data:image/png;base64,${frameSnapshots.get(frame.frameId).buffer.toString("base64")}`;
       const request = buildOmlxSemanticRequest(frame, dataUrl);
       if (canonicalSemanticHash(request) !== frame.requestCanonicalHash) throw new Error("OMLX request hash mismatch");
       const response = await postOmlxWithRetry(endpoint, request, fetchImpl, timeoutMs, environment.OMLX_API_KEY);
-      const rawBodySha256 = textHash(response.rawBody);
+      const rawBodySha256 = response.rawBodySha256;
+      if (!/^sha256:[a-f0-9]{64}$/u.test(String(rawBodySha256 || ""))) {
+        throw new Error("OMLX 응답 원시 바이트 해시가 없습니다.");
+      }
       const parsed = parseRawDecision(response.rawBody, frame.frameId, [environment.OMLX_API_KEY]);
       wrapperPayload = {
         schemaVersion: LOCAL_SEMANTIC_SCHEMA_VERSION,
@@ -842,11 +1387,17 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       }
     }
     const wrapper = { ...wrapperPayload, canonicalHash: canonicalSemanticHash(wrapperPayload) };
-    await writeJsonAtomic(responsePath, wrapper);
+    const wrapperSnapshot = semanticJsonOutputSnapshot(wrapper);
+    replaceOwnedSemanticFile(
+      semanticDirectories.responsesFd,
+      `${frame.frameId}.json`,
+      wrapperSnapshot.buffer,
+      responseTargetIdentities.get(frame.frameId)
+    );
     responseRecords.push({
       frameId: frame.frameId,
       path: responseRelativePath,
-      sha256: await hashFile(responsePath),
+      sha256: wrapperSnapshot.sha256,
       canonicalHash: wrapper.canonicalHash,
       decision: wrapper.decision,
       decisionCanonicalHash: wrapper.decisionCanonicalHash,
@@ -858,13 +1409,26 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
   }
 
   const fileHashes = {
-    scriptSha256: await hashFile(join(jobDir, "script.json")).catch(() => null),
-    voiceoverSyncSha256: await hashFile(join(jobDir, "voiceover-sync.json")).catch(() => null),
-    voiceoverMasteredSha256: await hashFile(join(jobDir, "voiceover-mastered.wav")).catch(() => null),
-    finalVideoSha256: await hashFile(join(jobDir, "final.mp4")).catch(() => null)
+    scriptSha256: scriptSnapshot?.sha256 || null,
+    voiceoverSyncSha256: voiceoverSyncSnapshot?.sha256 || null,
+    voiceoverMasteredSha256: voiceoverMasteredSnapshot?.sha256 || null,
+    finalVideoSha256: finalVideoSnapshot?.sha256 || null
   };
-  const voiceoverMedia = await probeNarrationWav(join(jobDir, "voiceover-mastered.wav"));
-  const narrationGenerationBinding = buildNarrationGenerationBinding({ script, voiceoverSync, fileHashes, voiceoverMedia });
+  const voiceoverMedia = exactVoiceoverPath
+    ? await probeNarrationWav(exactVoiceoverPath)
+    : {
+        schemaVersion: 1,
+        method: "ffprobe-wav-audio-stream-v1",
+        container: null,
+        audioStreamCount: 0,
+        videoStreamCount: 0,
+        codec: null,
+        sampleRate: null,
+        channels: null,
+        durationSec: null,
+        passed: false
+      };
+  const narrationGenerationBinding = buildNarrationGenerationBinding({ script: exactScript, voiceoverSync, fileHashes, voiceoverMedia });
   if (!narrationGenerationBinding.passed) failureCodes.push("narration-generation-binding-failed");
   const sourceEntailmentCheck = {
     method: "deterministic-extractive-source-binding",
@@ -923,8 +1487,9 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
     failureCodes: uniqueFailureCodes
   };
   const receipt = { ...receiptPayload, receiptCanonicalHash: canonicalSemanticHash(receiptPayload) };
-  await writeJsonAtomic(receiptPath, receipt);
-  const receiptSha256 = await hashFile(receiptPath);
+  const receiptSnapshot = semanticJsonOutputSnapshot(receipt);
+  replaceOwnedSemanticFile(semanticDirectories.semanticFd, "receipt.json", receiptSnapshot.buffer, semanticDirectories.receiptIdentity);
+  const receiptSha256 = receiptSnapshot.sha256;
   const relativeArtifacts = [
     `${relativeRoot}/receipt.json`,
     `${relativeRoot}/input.json`,
@@ -939,6 +1504,18 @@ export async function createLocalSemanticReceipt({ job, script, runId, jobDir, r
       return semanticArtifact(path, kind);
     }).map((artifact) => ({ ...artifact, url: artifact.url.replace("__JOB_ID__", encodeURIComponent(job.id)) }))
   };
+}
+
+export async function createLocalSemanticReceipt(options) {
+  const snapshotFiles = semanticSnapshotFileManager();
+  let semanticDirectories;
+  try {
+    semanticDirectories = openPinnedSemanticDirectories(options);
+    return await createLocalSemanticReceiptExact(options, snapshotFiles, semanticDirectories);
+  } finally {
+    semanticDirectories?.close();
+    await snapshotFiles.cleanup();
+  }
 }
 
 function safeSemanticRelativePath(jobDir, runId, relativePath, suffixPattern) {
@@ -961,14 +1538,122 @@ export function semanticReceiptArtifactPaths(runId, receipt) {
   return [...new Set(paths)].filter((path) => String(path).startsWith(prefix) && allowed.test(String(path).slice(prefix.length)));
 }
 
-export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script, sourceEntailment, voiceoverSync, runManifest, immutableArtifacts = [], requireImmutable = true }) {
+function semanticImmutableDeclaration(immutableArtifacts, runId, name) {
+  const declarations = (immutableArtifacts || []).filter((artifact) => artifact?.name === name);
+  if (declarations.length !== 1) return null;
+  const declaration = declarations[0];
+  const expectedPath = `runs/${runId}/artifacts/${String(name).replaceAll("/", "__")}`;
+  if (
+    declaration.path !== expectedPath
+    || !/^sha256:[a-f0-9]{64}$/u.test(String(declaration.sha256 || ""))
+    || !Number.isSafeInteger(Number(declaration.bytes))
+    || Number(declaration.bytes) < 0
+  ) return null;
+  return declaration;
+}
+
+function semanticSnapshotPath(jobDir, runId, name, fallbackPath, declaration) {
+  const jobRoot = resolve(jobDir);
+  const path = declaration?.path ? resolve(jobRoot, declaration.path) : resolve(fallbackPath);
+  if (!path.startsWith(`${jobRoot}${sep}`)) return null;
+  if (declaration?.path !== undefined && declaration.path !== `runs/${runId}/artifacts/${String(name).replaceAll("/", "__")}`) return null;
+  return path;
+}
+
+function semanticSnapshotFileManager() {
+  const paths = new WeakMap();
+  const roots = [];
+  const privateMedia = createPrivateMediaSnapshotManager({ prefix: "ps4-semantic-media-" });
+  return {
+    async pathFor(snapshot, sourcePath) {
+      if (snapshot?.privatePath && trustedPrivateMediaSnapshots.has(snapshot)) return snapshot.privatePath;
+      if (!snapshot?.buffer) throw new Error(`의미 증거 스냅샷이 없습니다: ${sourcePath}`);
+      const existing = paths.get(snapshot);
+      if (existing) return existing;
+      const root = await mkdtemp(join(tmpdir(), "ps4-semantic-snapshot-"));
+      roots.push(root);
+      const suffix = extname(String(sourcePath || "")) || ".bin";
+      const path = join(root, `evidence${suffix}`);
+      await writeFile(path, snapshot.buffer, { mode: 0o600 });
+      paths.set(snapshot, path);
+      return path;
+    },
+    copyMedia(sourcePath, options = {}) {
+      return privateMedia.copy(sourcePath, options);
+    },
+    async cleanup() {
+      await Promise.all([
+        privateMedia.cleanup(),
+        ...roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+      ]);
+    }
+  };
+}
+
+async function verifyLocalSemanticReceiptExact({
+  jobDir,
+  jobId,
+  runId,
+  script,
+  sourceEntailment,
+  voiceoverSync,
+  runManifest,
+  immutableArtifacts = [],
+  requireImmutable = true,
+  evidenceSnapshots = new Map()
+}, snapshotFiles) {
   const blockers = [];
+  const snapshots = new Map(evidenceSnapshots instanceof Map ? evidenceSnapshots : []);
+  const loadSnapshot = async (name, fallbackPath, { json = true, privateMedia = false } = {}) => {
+    const declaration = semanticImmutableDeclaration(immutableArtifacts, runId, name);
+    if (requireImmutable && !declaration) {
+      blockers.push(`immutable:${name}`);
+      return null;
+    }
+    let snapshot = snapshots.get(name) || null;
+    if (snapshot?.privatePath) {
+      const privatePath = resolve(snapshot.privatePath);
+      const expectedPath = resolve(fallbackPath);
+      if (
+        json
+        || !privateMedia
+        || !trustedPrivateMediaSnapshots.has(snapshot)
+        || !snapshot.sha256
+        || !Number.isSafeInteger(Number(snapshot.bytes))
+        || Number(snapshot.bytes) < 1
+        || privatePath === expectedPath
+      ) {
+        blockers.push(`immutable:${name}`);
+        snapshot = null;
+      }
+    }
+    if (!snapshot) {
+      const path = semanticSnapshotPath(jobDir, runId, name, fallbackPath, declaration);
+      snapshot = path
+        ? privateMedia
+          ? await snapshotFiles.copyMedia(path, {
+              expectedBytes: declaration?.bytes ?? null,
+              expectedSha256: declaration?.sha256 ?? null,
+              maximumBytes: declaration?.bytes ?? PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes
+            }).catch(() => null)
+          : await readSemanticEvidenceSnapshot(path, { json }).catch(() => null)
+        : null;
+    }
+    if (
+      requireImmutable
+      && declaration
+      && (!snapshot
+        || snapshot.sha256 !== declaration.sha256
+        || (declaration.bytes !== undefined && snapshot.bytes !== Number(declaration.bytes)))
+    ) blockers.push(`immutable:${name}`);
+    if (snapshot) snapshots.set(name, snapshot);
+    return snapshot;
+  };
   const receiptRelativePath = `runs/${runId}/semantic/receipt.json`;
   const receiptPath = join(jobDir, receiptRelativePath);
-  let receipt;
-  try {
-    receipt = JSON.parse(await readFile(receiptPath, "utf8"));
-  } catch {
+  const receiptSnapshot = await loadSnapshot(receiptRelativePath, receiptPath);
+  const receipt = receiptSnapshot?.value || null;
+  if (!receipt) {
     return { verified: false, blockers: ["local-semantic-receipt-missing"], artifactPaths: [receiptRelativePath], receipt: null };
   }
   const receiptSchemaVersion = Number(receipt?.schemaVersion);
@@ -985,8 +1670,9 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
   if (!inputAbsolute) blockers.push("semantic-input-path");
   else {
     try {
-      input = JSON.parse(await readFile(inputAbsolute, "utf8"));
-      if (await hashFile(inputAbsolute) !== receipt.input.sha256) blockers.push("semantic-input-file-hash");
+      const inputSnapshot = await loadSnapshot(receipt.input.path, inputAbsolute);
+      input = inputSnapshot?.value || null;
+      if (!input || inputSnapshot.sha256 !== receipt.input.sha256) blockers.push("semantic-input-file-hash");
       if (input.canonicalHash !== receipt.input.canonicalHash || input.canonicalHash !== canonicalSemanticHash(withoutKey(input, "canonicalHash"))) blockers.push("semantic-input-canonical-hash");
       if (input.schemaVersion !== receiptSchemaVersion || input.kind !== "local-semantic-input" || input.jobId !== jobId || input.runId !== runId || input.engine?.provider !== "loopback-omlx" || input.engine?.model !== LOCAL_SEMANTIC_MODEL) blockers.push("semantic-input-run-binding");
       if (input.requestPolicy?.temperature !== 0 || input.requestPolicy?.enableThinking !== false || input.requestPolicy?.chatTemplateEnableThinking !== false || input.requestPolicy?.responseFormat !== "json_schema" || input.requestPolicy?.responseSchemaHash !== canonicalSemanticHash(RESPONSE_SCHEMA) || (purposeAwarePolicy && input.requestPolicy?.verdictPolicyHash !== LOCAL_SEMANTIC_POLICY_HASH)) blockers.push("semantic-input-request-policy");
@@ -1000,9 +1686,16 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
       blockers.push("semantic-input-invalid");
     }
   }
-  const captionTiming = await readFile(join(jobDir, "caption-timing.json"), "utf8").then(JSON.parse).catch(() => null);
-  const expectedPlans = semanticFramePlan(script, captionTiming, voiceoverSync);
-  const expectedSceneCount = Array.isArray(script?.segments) ? script.segments.length : 0;
+  const [scriptSnapshot, captionTimingSnapshot, voiceoverSyncSnapshot] = await Promise.all([
+    loadSnapshot("script.json", join(jobDir, "script.json")),
+    loadSnapshot("caption-timing.json", join(jobDir, "caption-timing.json")),
+    loadSnapshot("voiceover-sync.json", join(jobDir, "voiceover-sync.json"))
+  ]);
+  const semanticScript = scriptSnapshot?.value || null;
+  const captionTiming = captionTimingSnapshot?.value || null;
+  const semanticVoiceoverSync = voiceoverSyncSnapshot?.value || null;
+  const expectedPlans = semanticFramePlan(semanticScript, captionTiming, semanticVoiceoverSync);
+  const expectedSceneCount = Array.isArray(semanticScript?.segments) ? semanticScript.segments.length : 0;
   const expectedCueCount = parseCaptionCues(captionTiming).length;
   const receiptFrames = Array.isArray(receipt.frames) ? receipt.frames : [];
   const inputFrames = Array.isArray(input?.frames) ? input.frames : [];
@@ -1032,16 +1725,22 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
       continue;
     }
     try {
-      if (await hashFile(framePath) !== frame.frameSha256) blockers.push(`${expectedId}:frame-file-hash`);
-      const storedPixels = await decodedFramePixels(framePath);
-      const finalPixels = await decodedFramePixels(join(jobDir, "final.mp4"), frame.timestampSec);
+      const frameSnapshot = await loadSnapshot(frame.framePath, framePath, { json: false });
+      if (!frameSnapshot || frameSnapshot.sha256 !== frame.frameSha256) blockers.push(`${expectedId}:frame-file-hash`);
+      const finalSnapshot = await loadSnapshot("final.mp4", join(jobDir, "final.mp4"), { json: false, privateMedia: true });
+      if (!frameSnapshot || !finalSnapshot) throw new Error("의미 프레임 또는 최종 영상의 불변 스냅샷이 없습니다.");
+      const exactFramePath = await snapshotFiles.pathFor(frameSnapshot, framePath);
+      const exactFinalPath = await snapshotFiles.pathFor(finalSnapshot, join(jobDir, "final.mp4"));
+      const storedPixels = await decodedFramePixels(exactFramePath);
+      const finalPixels = await decodedFramePixels(exactFinalPath, frame.timestampSec);
       if (canonicalSemanticHash(storedPixels) !== canonicalSemanticHash(frame.finalPixelBinding) || canonicalSemanticHash(finalPixels) !== canonicalSemanticHash(frame.finalPixelBinding)) blockers.push(`${expectedId}:final-pixel-binding`);
-      const blackFrame = await analyzeFfmpegBlackFrame(framePath);
+      const blackFrame = await analyzeFfmpegBlackFrame(exactFramePath);
       if (canonicalSemanticHash(blackFrame) !== canonicalSemanticHash(frame.blackFrame) || !blackFrame.passed) blockers.push(`${expectedId}:black-frame`);
-      const request = buildOmlxSemanticRequest(frame, await imageDataUrl(framePath));
+      const request = buildOmlxSemanticRequest(frame, `data:image/png;base64,${frameSnapshot.buffer.toString("base64")}`);
       if (canonicalSemanticHash(request) !== frame.requestCanonicalHash) blockers.push(`${expectedId}:request-canonical-hash`);
-      const wrapper = JSON.parse(await readFile(responsePath, "utf8"));
-      if (await hashFile(responsePath) !== frame.response.sha256) blockers.push(`${expectedId}:response-file-hash`);
+      const responseSnapshot = await loadSnapshot(frame.response.path, responsePath);
+      const wrapper = responseSnapshot?.value || null;
+      if (!wrapper || responseSnapshot.sha256 !== frame.response.sha256) blockers.push(`${expectedId}:response-file-hash`);
       if (wrapper.canonicalHash !== frame.response.canonicalHash || wrapper.canonicalHash !== canonicalSemanticHash(withoutKey(wrapper, "canonicalHash"))) blockers.push(`${expectedId}:response-canonical-hash`);
       if (wrapper.schemaVersion !== receiptSchemaVersion || wrapper.kind !== "omlx-sanitized-response" || wrapper.jobId !== jobId || wrapper.runId !== runId || wrapper.frameId !== expectedId || wrapper.model !== LOCAL_SEMANTIC_MODEL || wrapper.envelope?.model !== LOCAL_SEMANTIC_MODEL || wrapper.requestCanonicalHash !== frame.requestCanonicalHash) blockers.push(`${expectedId}:response-run-binding`);
       if (purposeAwarePolicy && !semanticPolicyBindingMatches(wrapper.semanticPolicy)) blockers.push(`${expectedId}:response-semantic-policy`);
@@ -1060,26 +1759,33 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
       blockers.push(`${expectedId}:artifact-invalid`);
     }
   }
+  const voiceoverMasteredSnapshot = await loadSnapshot("voiceover-mastered.wav", join(jobDir, "voiceover-mastered.wav"), { json: false, privateMedia: true });
+  const finalVideoSnapshot = await loadSnapshot("final.mp4", join(jobDir, "final.mp4"), { json: false, privateMedia: true });
   const fileHashes = {
-    scriptSha256: await hashFile(join(jobDir, "script.json")).catch(() => null),
-    voiceoverSyncSha256: await hashFile(join(jobDir, "voiceover-sync.json")).catch(() => null),
-    voiceoverMasteredSha256: await hashFile(join(jobDir, "voiceover-mastered.wav")).catch(() => null),
-    finalVideoSha256: await hashFile(join(jobDir, "final.mp4")).catch(() => null)
+    scriptSha256: scriptSnapshot?.sha256 || null,
+    voiceoverSyncSha256: voiceoverSyncSnapshot?.sha256 || null,
+    voiceoverMasteredSha256: voiceoverMasteredSnapshot?.sha256 || null,
+    finalVideoSha256: finalVideoSnapshot?.sha256 || null
   };
-  const voiceoverMedia = await probeNarrationWav(join(jobDir, "voiceover-mastered.wav"));
-  const narrationGenerationBinding = buildNarrationGenerationBinding({ script, voiceoverSync, fileHashes, voiceoverMedia });
+  const voiceoverMedia = voiceoverMasteredSnapshot
+    ? await probeNarrationWav(await snapshotFiles.pathFor(voiceoverMasteredSnapshot, join(jobDir, "voiceover-mastered.wav")))
+    : { passed: false, durationSec: null, codec: null, audioStreamCount: 0, videoStreamCount: 0 };
+  const narrationGenerationBinding = buildNarrationGenerationBinding({ script: semanticScript, voiceoverSync: semanticVoiceoverSync, fileHashes, voiceoverMedia });
   if (!receipt.narrationGenerationBinding || !narrationGenerationBinding.passed || canonicalSemanticHash(narrationGenerationBinding) !== canonicalSemanticHash(receipt.narrationGenerationBinding) || narrationGenerationBinding.bindingHash !== receipt.narrationGenerationBinding?.bindingHash) blockers.push("narration-generation-binding");
   if (sourceEntailment?.verified !== true || !sourceEntailment.bindingHash || receipt.sourceEntailment?.passed !== true || receipt.sourceEntailment?.bindingHash !== sourceEntailment.bindingHash || receipt.sourceEntailment?.method !== "deterministic-extractive-source-binding") blockers.push("extractive-source-entailment");
-  const receiptSha256 = await hashFile(receiptPath).catch(() => null);
+  const receiptSha256 = receiptSnapshot.sha256;
   if (runManifest?.semanticReceipt?.path !== receiptRelativePath || runManifest?.semanticReceipt?.sha256 !== receiptSha256 || runManifest?.semanticReceipt?.canonicalHash !== receipt.receiptCanonicalHash) blockers.push("run-manifest-semantic-receipt");
   const immutableByName = new Map((immutableArtifacts || []).map((artifact) => [artifact?.name, artifact]));
   if (requireImmutable) {
     for (const relativePath of artifactPaths) {
       const absolute = safeSemanticRelativePath(jobDir, runId, relativePath, /^(?:receipt\.json|input\.json|frames\/frame-\d{3}\.png|responses\/frame-\d{3}\.json)$/);
-      const actualHash = absolute ? await hashFile(absolute).catch(() => null) : null;
+      const artifactSnapshot = absolute
+        ? await loadSnapshot(relativePath, absolute, { json: relativePath.endsWith(".json") })
+        : null;
+      const actualHash = artifactSnapshot?.sha256 || null;
       if (!actualHash || immutableByName.get(relativePath)?.sha256 !== actualHash) blockers.push(`immutable:${relativePath}`);
     }
-    const voiceoverHash = await hashFile(join(jobDir, "voiceover-mastered.wav")).catch(() => null);
+    const voiceoverHash = voiceoverMasteredSnapshot?.sha256 || null;
     if (!voiceoverHash || immutableByName.get("voiceover-mastered.wav")?.sha256 !== voiceoverHash) blockers.push("immutable:voiceover-mastered.wav");
   }
   const requiredChecks = purposeAwarePolicy
@@ -1091,6 +1797,11 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
     blockers: [...new Set(blockers)],
     artifactPaths,
     receipt,
+    evidenceSnapshots: new Map([...snapshots].map(([name, snapshot]) => (
+      trustedPrivateMediaSnapshots.has(snapshot)
+        ? [name, { bytes: snapshot.bytes, sha256: snapshot.sha256, text: null, value: null }]
+        : [name, snapshot]
+    ))),
     metrics: {
       model: receipt.evaluator?.model || null,
       frameCount: receiptFrames.length,
@@ -1100,4 +1811,13 @@ export async function verifyLocalSemanticReceipt({ jobDir, jobId, runId, script,
       extractiveSourceEntailment: sourceEntailment?.verified === true
     }
   };
+}
+
+export async function verifyLocalSemanticReceipt(options) {
+  const snapshotFiles = semanticSnapshotFileManager();
+  try {
+    return await verifyLocalSemanticReceiptExact(options, snapshotFiles);
+  } finally {
+    await snapshotFiles.cleanup();
+  }
 }

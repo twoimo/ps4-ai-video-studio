@@ -1,13 +1,18 @@
-import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { extname, join, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { closeSync, constants as fsConstants, existsSync, openSync } from "node:fs";
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { analyzeClipMotion, clipMotionGatePolicy, clipMotionGateRequired, hasEvidenceHookFraming, JOBS_DIR, ROOT, readJob, verifyEvidenceBoundScript } from "./pipeline.mjs";
-import { analyzeJobMedia } from "./frame-analysis.mjs";
-import { semanticReceiptArtifactPaths, verifyLocalSemanticReceipt } from "./local-semantic-verifier.mjs";
+import { analyzeVideo } from "./frame-analysis.mjs";
+import { createPrivateMediaSnapshotManager, PRIVATE_MEDIA_SNAPSHOT_POLICY, readSemanticEvidenceSnapshot, runLocalSemanticProcess, semanticReceiptArtifactPaths, snapshotSemanticEvidenceBuffer, verifyLocalSemanticReceipt } from "./local-semantic-verifier.mjs";
 import { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 import { hashFile } from "./run-ledger.mjs";
 import { buildGeminiClipPrompt, providerPromptBindingForSegment, providerRequestFieldsForSegment, shotPatternRequiredForScript, verifyShotPatternReceipt } from "./shot-patterns.mjs";
 import { loadSemanticRevalidationSource, verifySemanticRevalidationProviderZeroBinding } from "./semantic-revalidation-closure.mjs";
+import { buildLocalVideoRequest, localVideoProviderRequestBodyClosureBound, withStoredBflAuthorization } from "./local-video-provider.mjs";
+import { geminiSourceGenerationEvidenceName, verifyGeminiSubmissionLineageClosure } from "./gemini-submission-lineage.mjs";
+import { closeFd, mkdirAt, openDirectoryAt, openFileAt, replaceFileAt, statFd, syncFd } from "./dirfd.mjs";
 
 export { canonicalGeminiSessionBinding, canonicalJsonHash, geminiSessionBindingHash } from "./provenance.mjs";
 
@@ -25,8 +30,29 @@ const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".m4v", ".mkv"]);
 const REQUIRED_ARTIFACTS = ["final.mp4", "captions.srt", "script.json", "thumbnail.jpg"];
 const QUALITY_DIR = "quality";
 const SUPPORTED_PROVIDERS = new Set(["local", "local-video", "gemini-browser"]);
+const QUALITY_FRAME_MAX_BYTES = 16 * 1024 * 1024;
 const QUALITY_REVISION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{5,120}$/;
 export const QUALITY_REVISION_SCHEMA_VERSION = 2;
+const QUALITY_JSON_MAX_BYTES = 16 * 1024 * 1024;
+const QUALITY_REVISION_EVENTS_MAX_BYTES = 64 * 1024 * 1024;
+const QUALITY_REVISION_BUFFER_BUDGET_BYTES = 64 * 1024 * 1024;
+const QUALITY_REVISION_MAX_COUNT = 64;
+const QUALITY_IMMUTABLE_MAX_ARTIFACTS = 64;
+const QUALITY_IMMUTABLE_MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024;
+const QUALITY_IMMUTABLE_DECLARED_BUDGET_BYTES = 4 * 1024 * 1024 * 1024;
+const QUALITY_IMMUTABLE_HASH_CHUNK_BYTES = 64 * 1024;
+export const QUALITY_RESOURCE_POLICY = Object.freeze({
+  immutableMaximumArtifacts: QUALITY_IMMUTABLE_MAX_ARTIFACTS,
+  immutableMaximumArtifactBytes: QUALITY_IMMUTABLE_MAX_ARTIFACT_BYTES,
+  immutableDeclaredBudgetBytes: QUALITY_IMMUTABLE_DECLARED_BUDGET_BYTES,
+  privateMediaMaximumFiles: PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFiles,
+  privateMediaMaximumFileBytes: PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes,
+  privateMediaBudgetBytes: PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumAggregateBytes,
+  revisionMaximumCount: QUALITY_REVISION_MAX_COUNT,
+  revisionJsonMaximumBytes: QUALITY_JSON_MAX_BYTES,
+  revisionEventsMaximumBytes: QUALITY_REVISION_EVENTS_MAX_BYTES,
+  revisionBufferedBudgetBytes: QUALITY_REVISION_BUFFER_BUDGET_BYTES
+});
 const runtimeQualityEvaluationHashes = new WeakMap();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -160,7 +186,9 @@ export function validateQualityRevisionContext(context) {
   if (!context || typeof context !== "object") throw new Error("품질 revision context가 필요합니다.");
   const { jobId, runId, revisionId, sequence, baseManifest, baseQuality, supersedes } = context;
   if (!jobId || !runId || !QUALITY_REVISION_ID_PATTERN.test(String(revisionId || ""))) throw new Error("품질 revision의 jobId·runId·revisionId가 유효하지 않습니다.");
-  if (!Number.isInteger(Number(sequence)) || Number(sequence) < 1) throw new Error("품질 revision sequence는 1 이상의 정수여야 합니다.");
+  if (!Number.isInteger(Number(sequence)) || Number(sequence) < 1 || Number(sequence) > QUALITY_REVISION_MAX_COUNT) {
+    throw new Error(`품질 revision sequence는 1 이상 ${QUALITY_REVISION_MAX_COUNT} 이하여야 합니다.`);
+  }
   const expectedBaseManifestPath = `runs/${runId}/manifest.json`;
   const expectedBaseQualityPath = `runs/${runId}/artifacts/quality.json`;
   if (baseManifest?.path !== expectedBaseManifestPath || !normalizedSha256(baseManifest?.sha256) || baseManifest?.status !== "needs-improvement") {
@@ -228,41 +256,7 @@ function expectedGeminiRequest(job, script) {
 }
 
 function expectedLocalVideoRequest(job, script, runId, scriptHash) {
-  const base = {
-    schemaVersion: 1,
-    jobId: job.id,
-    runId,
-    provider: "local-video",
-    topic: job.topic || "",
-    format: job.format || "vertical",
-    targetDurationSec: Number(job.targetDurationSec || 0),
-    targetDurationRangeSec: job.targetDurationRangeSec || null,
-    segments: (script?.segments || []).map((segment, index) => {
-      const providerBinding = providerPromptBindingForSegment(segment, "local-video");
-      return {
-        index: index + 1,
-        durationHint: segment.durationHint || null,
-        prompt: providerBinding.providerVisualPrompt,
-        visualPrompt: segment.visualPrompt || "",
-        caption: segment.caption || "",
-        narration: segment.narration || "",
-        ...providerRequestFieldsForSegment(segment, "local-video")
-      };
-    }),
-    ...(script?.shotPatternPlan ? {
-      shotPatternPlan: {
-        catalogId: script.shotPatternPlan.catalogId,
-        catalogHash: script.shotPatternPlan.catalogHash,
-        planHash: script.shotPatternPlan.planHash,
-        continuityContractHash: script.shotPatternPlan.continuityContractHash,
-        applicationMode: script.shotPatternPlan.applicationMode,
-        providerEligible: script.shotPatternPlan.providerEligible,
-        providerSubmissionPlanned: script.shotPatternPlan.providerSubmissionPlanned
-      }
-    } : {})
-  };
-  const requestHash = hashJson({ ...base, scriptHash });
-  return { ...base, requestHash, scriptHash };
+  return buildLocalVideoRequest(job, script, runId, scriptHash);
 }
 
 function providerPolicy(provider) {
@@ -369,13 +363,16 @@ function commandPath(command) {
 async function commandOutput(command, args) {
   const binary = commandPath(command);
   if (!binary) return null;
-  const processHandle = Bun.spawn([binary, ...args], { stdout: "pipe", stderr: "pipe" });
-  const stdoutPromise = new Response(processHandle.stdout).text();
-  const stderrPromise = new Response(processHandle.stderr).text();
-  const code = await processHandle.exited;
-  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-  if (code !== 0) return null;
-  return { stdout: stdout.trim(), stderr: stderr.trim() };
+  try {
+    const { stdout, stderr } = await runLocalSemanticProcess(binary, args, {
+      maximumBytes: 2 * 1024 * 1024,
+      timeoutMs: 120_000
+    });
+    return { stdout: stdout.trim(), stderr: stderr.trim() };
+  } catch (error) {
+    if (/실패\(\d+\)/.test(String(error?.message || error))) return null;
+    throw error;
+  }
 }
 
 async function probeMedia(path) {
@@ -420,15 +417,6 @@ async function readJsonOptional(path) {
   }
 }
 
-async function readTextOptional(path) {
-  if (!existsSync(path)) return "";
-  try {
-    return await readFile(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-
 async function readDirectoryOrEmptyWhenMissing(path) {
   try {
     return await readdir(path, { withFileTypes: true });
@@ -438,15 +426,319 @@ async function readDirectoryOrEmptyWhenMissing(path) {
   }
 }
 
+/**
+ * Materialize one immutable in-memory view of a quality evidence file. Length,
+ * digest, text, and parsed JSON must all be derived from this copied Buffer so
+ * an on-disk replacement cannot make validation and interpretation observe
+ * different bytes.
+ *
+ * Exported for a pure regression test; file-backed closure readers below are
+ * the production callers.
+ */
+export function snapshotQualityEvidenceBuffer(input, { json = true } = {}) {
+  return snapshotSemanticEvidenceBuffer(input, { json });
+}
+
+async function readQualityEvidenceSnapshot(path, options) {
+  return readSemanticEvidenceSnapshot(path, options);
+}
+
+function exactImmutableArtifactPath(runId, name) {
+  return `runs/${runId}/artifacts/${name.replace(/[^A-Za-z0-9._-]+/g, "__")}`;
+}
+
+function validateImmutableArtifactName(name) {
+  return typeof name === "string"
+    && name.length > 0
+    && name.length <= 512
+    && !name.startsWith("/")
+    && !name.includes("\\")
+    && name.split("/").every((part) => part && part !== "." && part !== "..");
+}
+
+export function validateImmutableQualityDeclarations(artifacts, runId) {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    throw new Error("불변 품질 산출물 선언이 비어 있습니다.");
+  }
+  if (artifacts.length > QUALITY_IMMUTABLE_MAX_ARTIFACTS) {
+    throw new Error(`불변 품질 산출물 선언 수가 제한을 초과했습니다: ${artifacts.length}/${QUALITY_IMMUTABLE_MAX_ARTIFACTS}`);
+  }
+  const seen = new Set();
+  let declaredBytes = 0;
+  for (const artifact of artifacts) {
+    const name = artifact?.name;
+    const bytes = artifact?.bytes;
+    if (
+      !validateImmutableArtifactName(name)
+      || seen.has(name)
+      || artifact.path !== exactImmutableArtifactPath(runId, name)
+      || artifact.sha256 !== normalizedSha256(artifact.sha256)
+      || !Number.isSafeInteger(bytes)
+      || bytes < 0
+      || bytes > QUALITY_IMMUTABLE_MAX_ARTIFACT_BYTES
+    ) throw new Error("불변 품질 산출물의 name·path·hash·bytes 선언이 유효하지 않습니다.");
+    seen.add(name);
+    if (declaredBytes > QUALITY_IMMUTABLE_DECLARED_BUDGET_BYTES - bytes) {
+      throw new Error("불변 품질 산출물 선언의 합산 크기가 제한을 초과했습니다.");
+    }
+    declaredBytes += bytes;
+  }
+  return artifacts;
+}
+
+async function streamQualityEvidenceReceipt(path, { maximumBytes, expectedBytes } = {}) {
+  const byteLimit = Number(maximumBytes);
+  if (!Number.isSafeInteger(byteLimit) || byteLimit < 0) throw new TypeError("불변 품질 산출물 크기 상한이 올바르지 않습니다.");
+  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (
+      !before.isFile()
+      || before.nlink !== 1n
+      || before.size > BigInt(byteLimit)
+      || before.size > BigInt(Number.MAX_SAFE_INTEGER)
+      || (expectedBytes !== undefined && before.size !== BigInt(expectedBytes))
+    ) throw new Error("불변 품질 산출물은 선언 크기와 일치하는 단독 regular file이어야 합니다.");
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(Math.min(QUALITY_IMMUTABLE_HASH_CHUNK_BYTES, Math.max(1, Number(before.size))));
+    let offset = 0;
+    while (offset < Number(before.size)) {
+      const length = Math.min(chunk.byteLength, Number(before.size) - offset);
+      const { bytesRead } = await handle.read(chunk, 0, length, offset);
+      if (bytesRead <= 0) throw new Error("불변 품질 산출물이 선언된 크기보다 일찍 끝났습니다.");
+      hash.update(chunk.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    const after = await handle.stat({ bigint: true });
+    if (
+      before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.nlink !== after.nlink
+      || after.nlink !== 1n
+      || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs
+      || before.ctimeNs !== after.ctimeNs
+    ) throw new Error("불변 품질 산출물이 해시 계산 중 변경되었습니다.");
+    return {
+      path,
+      bytes: Number(before.size),
+      sha256: `sha256:${hash.digest("hex")}`
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function verifyImmutableQualityClosure({ jobDir, runId, artifacts, reader = streamQualityEvidenceReceipt }) {
+  const declarations = validateImmutableQualityDeclarations(artifacts, runId);
+  const receipts = new Map();
+  for (const artifact of declarations) {
+    const artifactPath = resolve(jobDir, artifact.path);
+    if (!artifactPath.startsWith(`${resolve(jobDir)}${sep}`)) return { binding: false, receipts: new Map() };
+    let receipt;
+    try {
+      receipt = await reader(artifactPath, {
+        maximumBytes: artifact.bytes,
+        expectedBytes: artifact.bytes,
+        artifact
+      });
+    } catch {
+      receipt = null;
+    }
+    if (!receipt || receipt.bytes !== artifact.bytes || receipt.sha256 !== artifact.sha256) {
+      return { binding: false, receipts: new Map() };
+    }
+    receipts.set(artifact.name, receipt);
+  }
+  return { binding: true, receipts };
+}
+
+function existingExclusiveQualityFile(directoryFd, name) {
+  let fd;
+  try {
+    fd = openFileAt(directoryFd, name, fsConstants.O_RDONLY);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const identity = statFd(fd);
+    if (!identity.isFile() || identity.nlink !== 1n) {
+      throw new Error(`품질 출력 대상 ${name}은 단독 regular file이어야 합니다.`);
+    }
+    return identity;
+  } finally {
+    closeFd(fd);
+  }
+}
+
+function openOrCreatePinnedQualityDirectory(jobFd) {
+  try {
+    return openDirectoryAt(jobFd, QUALITY_DIR);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  mkdirAt(jobFd, QUALITY_DIR, 0o700);
+  syncFd(jobFd);
+  return openDirectoryAt(jobFd, QUALITY_DIR);
+}
+
+function openOrCreatePinnedQualityFramesDirectory(qualityFd) {
+  try {
+    return openDirectoryAt(qualityFd, "frames");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  mkdirAt(qualityFd, "frames", 0o700);
+  syncFd(qualityFd);
+  return openDirectoryAt(qualityFd, "frames");
+}
+
+function openPinnedQualityTree(jobDir, { frames = false, beforeQuality = null } = {}) {
+  const expectedJobDir = resolve(jobDir);
+  const expectedRoot = resolve(JOBS_DIR);
+  const jobName = basename(expectedJobDir);
+  if (
+    dirname(expectedJobDir) !== expectedRoot
+    || !jobName
+    || jobName === "."
+    || jobName === ".."
+    || jobName.includes(sep)
+  ) throw new Error("품질 출력 경로는 jobs root의 단일 작업 디렉터리여야 합니다.");
+  const descriptors = [];
+  const remember = (fd) => {
+    descriptors.push(fd);
+    return fd;
+  };
+  try {
+    const jobsFd = remember(openSync(expectedRoot, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | (fsConstants.O_DIRECTORY || 0)));
+    const jobFd = remember(openDirectoryAt(jobsFd, jobName));
+    const beforeQualityResult = beforeQuality?.(jobFd);
+    const qualityFd = remember(openOrCreatePinnedQualityDirectory(jobFd));
+    const framesFd = frames ? remember(openOrCreatePinnedQualityFramesDirectory(qualityFd)) : null;
+    return {
+      jobFd,
+      qualityFd,
+      framesFd,
+      beforeQualityResult,
+      close() {
+        for (const fd of descriptors.reverse()) {
+          try { closeSync(fd); } catch {}
+        }
+      }
+    };
+  } catch (error) {
+    for (const fd of descriptors.reverse()) {
+      try { closeSync(fd); } catch {}
+    }
+    throw error;
+  }
+}
+
+function replacePinnedQualityFile(directoryFd, name, input, expectedIdentity) {
+  replaceFileAt(directoryFd, name, input, { mode: 0o600, expectedIdentity });
+}
+
+function qualitySnapshotFileManager() {
+  const paths = new WeakMap();
+  const roots = [];
+  const privateMedia = createPrivateMediaSnapshotManager({ prefix: "ps4-quality-media-" });
+  return {
+    async pathFor(snapshot, sourcePath) {
+      if (!snapshot?.buffer) throw new Error(`품질 증거 스냅샷이 없습니다: ${sourcePath}`);
+      const existing = paths.get(snapshot);
+      if (existing) return existing;
+      const root = await mkdtemp(join(tmpdir(), "ps4-quality-snapshot-"));
+      roots.push(root);
+      const suffix = extname(String(sourcePath || "")) || ".bin";
+      const path = join(root, `evidence${suffix}`);
+      await writeFile(path, snapshot.buffer, { mode: 0o600 });
+      paths.set(snapshot, path);
+      return path;
+    },
+    copyMedia(sourcePath, options = {}) {
+      return privateMedia.copy(sourcePath, options);
+    },
+    async cleanup() {
+      await Promise.all([
+        privateMedia.cleanup(),
+        ...roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+      ]);
+    }
+  };
+}
+
+export function frameAnalysisSourceReceipt({ finalSnapshot, captionsSnapshot = null, captionsPath = null, normalized = [], benchmarkSnapshot = null, benchmarkPath = null } = {}) {
+  if (
+    !finalSnapshot?.sha256
+    || !Number.isSafeInteger(Number(finalSnapshot.bytes))
+    || normalized.some(({ name, snapshot }) => !name || !snapshot?.sha256 || !Number.isSafeInteger(Number(snapshot.bytes)))
+  ) return null;
+  return {
+    schemaVersion: 1,
+    algorithm: "exact-buffer-media-analysis-v1",
+    path: "final.mp4",
+    sha256: finalSnapshot.sha256,
+    bytes: Number(finalSnapshot.bytes),
+    captions: captionsSnapshot?.sha256 && captionsPath ? {
+      path: captionsPath,
+      sha256: captionsSnapshot.sha256,
+      bytes: Number(captionsSnapshot.bytes)
+    } : null,
+    normalized: normalized.map(({ name, snapshot }) => ({
+      path: name,
+      sha256: snapshot?.sha256 || null,
+      bytes: Number(snapshot?.bytes)
+    })),
+    benchmark: benchmarkSnapshot?.sha256 && benchmarkPath ? {
+      path: benchmarkPath,
+      sha256: benchmarkSnapshot.sha256,
+      bytes: Number(benchmarkSnapshot.bytes)
+    } : null
+  };
+}
+
+export function frameAnalysisSourceBindingMatches(actual, expected) {
+  return Boolean(actual && expected && hashJson(actual) === hashJson(expected));
+}
+
+function immutableEvaluationDeclaration(runManifest, runId, name) {
+  const expectedPath = exactImmutableArtifactPath(runId, String(name));
+  const declarations = (runManifest?.immutableArtifacts || []).filter((artifact) => artifact?.name === name);
+  if (
+    declarations.length !== 1
+    || declarations[0].path !== expectedPath
+    || !normalizedSha256(declarations[0].sha256)
+    || !Number.isSafeInteger(Number(declarations[0].bytes))
+    || Number(declarations[0].bytes) < 0
+  ) return null;
+  return declarations[0];
+}
+
+async function readEvaluationEvidenceSnapshot({ jobDir, runId, runManifest, immutableEvaluation, name, mutablePath, json = true, maxBytes = QUALITY_JSON_MAX_BYTES }) {
+  const maximumBytes = Number(maxBytes);
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) return null;
+  if (!immutableEvaluation) return readQualityEvidenceSnapshot(mutablePath, { json, maxBytes: maximumBytes }).catch(() => null);
+  const declaration = immutableEvaluationDeclaration(runManifest, runId, name);
+  if (!declaration || !normalizedSha256(declaration.sha256) || !Number.isSafeInteger(Number(declaration.bytes)) || Number(declaration.bytes) < 0) return null;
+  const jobRoot = resolve(jobDir);
+  const path = resolve(jobRoot, declaration.path);
+  if (!path.startsWith(`${jobRoot}${sep}`)) return null;
+  if (Number(declaration.bytes) > maximumBytes) return null;
+  const snapshot = await readQualityEvidenceSnapshot(path, { json, maxBytes: maximumBytes }).catch(() => null);
+  if (!snapshot || snapshot.sha256 !== declaration.sha256 || snapshot.bytes !== Number(declaration.bytes)) return null;
+  return { ...snapshot, name, declaration };
+}
+
 async function readBaseQuality(jobDir, runId, baseManifest) {
   const expectedPath = `runs/${runId}/artifacts/quality.json`;
   const declaration = (baseManifest?.immutableArtifacts || []).find((artifact) => artifact?.name === "quality.json" && artifact.path === expectedPath);
   if (!declaration || !normalizedSha256(declaration.sha256)) throw new Error("base run manifest에 불변 quality.json 선언이 없습니다.");
   const path = resolve(jobDir, declaration.path);
   if (!path.startsWith(`${resolve(jobDir)}${sep}`)) throw new Error("base quality 산출물 경로가 작업 디렉터리를 벗어납니다.");
-  const fileStat = await stat(path).catch(() => null);
-  if (!fileStat?.isFile() || Number(declaration.bytes) !== fileStat.size || await hashExisting(path) !== declaration.sha256) throw new Error("base quality 산출물 무결성 검증에 실패했습니다.");
-  const value = await readJsonOptional(path);
+  const snapshot = await readQualityEvidenceSnapshot(path, { maxBytes: QUALITY_JSON_MAX_BYTES }).catch(() => null);
+  if (!snapshot || Number(declaration.bytes) !== snapshot.bytes || snapshot.sha256 !== declaration.sha256) throw new Error("base quality 산출물 무결성 검증에 실패했습니다.");
+  const value = snapshot.value;
   if (!value || value.jobId !== baseManifest.jobId || value.runId !== runId) throw new Error("base quality 산출물이 jobId·runId에 결속되어 있지 않습니다.");
   const qualityMatchesStatus = baseManifest.status === "completed"
     ? value.status === "passed" && value.semanticGate === true
@@ -456,23 +748,42 @@ async function readBaseQuality(jobDir, runId, baseManifest) {
   if (!baseManifest.qualitySummary || summaryFields.some((field) => JSON.stringify(baseManifest.qualitySummary[field]) !== JSON.stringify(value[field]))) {
     throw new Error("base quality 판정이 run manifest qualitySummary와 일치하지 않습니다.");
   }
-  return { path: declaration.path, sha256: declaration.sha256, bytes: fileStat.size, value };
+  return { path: declaration.path, sha256: declaration.sha256, bytes: snapshot.bytes, value };
 }
 
 async function readRevisionArtifact(jobDir, declaration, expectedPath, label, json = true) {
   validateRevisionArtifact(declaration, expectedPath, label);
   const path = resolve(jobDir, declaration.path);
   if (!path.startsWith(`${resolve(jobDir)}${sep}`)) throw new Error(`${label} revision 산출물 경로가 작업 디렉터리를 벗어납니다.`);
-  const fileStat = await stat(path).catch(() => null);
-  if (!fileStat?.isFile() || Number(declaration.bytes) !== fileStat.size || await hashExisting(path) !== declaration.sha256) throw new Error(`${label} revision 산출물 무결성 검증에 실패했습니다.`);
-  return { path, value: json ? await readJsonOptional(path) : null };
+  const maximumBytes = json ? QUALITY_JSON_MAX_BYTES : QUALITY_REVISION_EVENTS_MAX_BYTES;
+  if (declaration.bytes > maximumBytes) throw new Error(`${label} revision 산출물 크기가 제한을 초과했습니다.`);
+  const snapshot = await readQualityEvidenceSnapshot(path, { json, maxBytes: maximumBytes }).catch(() => null);
+  if (!snapshot || Number(declaration.bytes) !== snapshot.bytes || snapshot.sha256 !== declaration.sha256) throw new Error(`${label} revision 산출물 무결성 검증에 실패했습니다.`);
+  return { path, ...snapshot };
+}
+
+async function preflightExclusiveQualityFile(path, maximumBytes) {
+  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const metadata = await handle.stat({ bigint: true });
+    if (
+      !metadata.isFile()
+      || metadata.nlink !== 1n
+      || metadata.size > BigInt(maximumBytes)
+      || metadata.size > BigInt(Number.MAX_SAFE_INTEGER)
+    ) throw new Error("품질 revision 파일은 크기가 제한된 단독 regular file이어야 합니다.");
+    return Number(metadata.size);
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function readQualityRevisionState(jobId, runId) {
   const jobDir = join(JOBS_DIR, jobId);
   const runDir = join(jobDir, "runs", runId);
   const baseManifestPath = join(runDir, "manifest.json");
-  const baseManifest = await readJsonOptional(baseManifestPath);
+  const baseManifestSnapshot = await readQualityEvidenceSnapshot(baseManifestPath, { maxBytes: QUALITY_JSON_MAX_BYTES }).catch(() => null);
+  const baseManifest = baseManifestSnapshot?.value || null;
   if (
     !baseManifest
     || baseManifest.schemaVersion !== 1
@@ -483,11 +794,11 @@ export async function readQualityRevisionState(jobId, runId) {
     || !Array.isArray(baseManifest.ledgerErrors)
     || baseManifest.ledgerErrors.length !== 0
     || !Array.isArray(baseManifest.immutableArtifacts)
-    || new Set(baseManifest.immutableArtifacts.map((artifact) => artifact?.name)).size !== baseManifest.immutableArtifacts.length
   ) {
     throw new Error("봉인된 base run manifest가 없거나 jobId·runId에 결속되어 있지 않습니다.");
   }
-  const baseManifestHash = await hashExisting(baseManifestPath);
+  validateImmutableQualityDeclarations(baseManifest.immutableArtifacts, runId);
+  const baseManifestHash = baseManifestSnapshot.sha256;
   if (!baseManifestHash) throw new Error("base run manifest 해시를 계산하지 못했습니다.");
   const baseQuality = await readBaseQuality(jobDir, runId, baseManifest);
   const baseProvider = immutableRunProvider(baseManifest);
@@ -498,19 +809,47 @@ export async function readQualityRevisionState(jobId, runId) {
   const entries = (await readDirectoryOrEmptyWhenMissing(revisionsDir))
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".quality-revision-staging-"));
   if (baseManifest.status === "completed" && entries.length) throw new Error("completed base run에는 품질 revision을 추가할 수 없습니다.");
-  const records = [];
+  if (entries.length > QUALITY_REVISION_MAX_COUNT) throw new Error(`품질 revision 수가 제한을 초과했습니다: ${entries.length}/${QUALITY_REVISION_MAX_COUNT}`);
+  const expectedRevisionFiles = new Set(["manifest.json", "committee-review.json", "quality.json", "events.jsonl"]);
+  const revisionFileSizes = new Map();
+  let revisionBufferedBytes = 0;
   for (const entry of entries) {
     if (!QUALITY_REVISION_ID_PATTERN.test(entry.name)) throw new Error(`유효하지 않은 품질 revision 디렉터리입니다: ${entry.name}`);
     const revisionEntries = await readdir(join(revisionsDir, entry.name), { withFileTypes: true });
-    const expectedRevisionFiles = new Set(["manifest.json", "committee-review.json", "quality.json", "events.jsonl"]);
     if (
       revisionEntries.length !== expectedRevisionFiles.size
       || revisionEntries.some((revisionEntry) => !revisionEntry.isFile() || !expectedRevisionFiles.has(revisionEntry.name))
     ) throw new Error(`품질 revision 디렉터리는 봉인 manifest에 선언된 네 파일만 포함해야 합니다: ${entry.name}`);
+    const sizes = {};
+    for (const name of expectedRevisionFiles) {
+      const maximumBytes = name === "events.jsonl" ? QUALITY_REVISION_EVENTS_MAX_BYTES : QUALITY_JSON_MAX_BYTES;
+      const size = await preflightExclusiveQualityFile(join(revisionsDir, entry.name, name), maximumBytes);
+      if (revisionBufferedBytes > QUALITY_REVISION_BUFFER_BUDGET_BYTES - size) {
+        throw new Error("품질 revision 파일의 합산 크기가 제한을 초과했습니다.");
+      }
+      revisionBufferedBytes += size;
+      sizes[name] = size;
+    }
+    revisionFileSizes.set(entry.name, sizes);
+  }
+  const records = [];
+  for (const entry of entries) {
     const manifestPath = join(revisionsDir, entry.name, "manifest.json");
-    const manifest = await readJsonOptional(manifestPath);
-    const manifestHash = await hashExisting(manifestPath);
+    const manifestSnapshot = await readQualityEvidenceSnapshot(manifestPath, { maxBytes: QUALITY_JSON_MAX_BYTES }).catch(() => null);
+    const manifest = manifestSnapshot?.value || null;
+    const manifestHash = manifestSnapshot?.sha256 || null;
     if (!manifest || !manifestHash) throw new Error(`미완성 품질 revision을 복구하거나 제거해야 합니다: ${entry.name}`);
+    const revisionRoot = `runs/${runId}/revisions/${entry.name}`;
+    validateRevisionArtifact(manifest.committeeReview, `${revisionRoot}/committee-review.json`, "위원회 리뷰");
+    validateRevisionArtifact(manifest.quality, `${revisionRoot}/quality.json`, "품질");
+    validateRevisionArtifact(manifest.events, `${revisionRoot}/events.jsonl`, "이벤트");
+    const sizes = revisionFileSizes.get(entry.name);
+    if (
+      manifestSnapshot.bytes !== sizes["manifest.json"]
+      || manifest.committeeReview.bytes !== sizes["committee-review.json"]
+      || manifest.quality.bytes !== sizes["quality.json"]
+      || manifest.events.bytes !== sizes["events.jsonl"]
+    ) throw new Error(`품질 revision 산출물 선언 크기가 실제 파일과 일치하지 않습니다: ${entry.name}`);
     records.push({ revisionId: entry.name, manifest, manifestPath, manifestHash });
   }
   records.sort((left, right) => Number(left.manifest.sequence) - Number(right.manifest.sequence));
@@ -544,7 +883,7 @@ export async function readQualityRevisionState(jobId, runId) {
     const reviewArtifact = await readRevisionArtifact(jobDir, manifest.committeeReview, `${revisionRoot}/committee-review.json`, "위원회 리뷰");
     const qualityArtifact = await readRevisionArtifact(jobDir, manifest.quality, `${revisionRoot}/quality.json`, "품질");
     const eventsArtifact = await readRevisionArtifact(jobDir, manifest.events, `${revisionRoot}/events.jsonl`, "이벤트", false);
-    const eventLines = (await readTextOptional(eventsArtifact.path)).split("\n").filter(Boolean);
+    const eventLines = eventsArtifact.text.split("\n").filter(Boolean);
     if (eventLines.length !== 1) throw new Error("품질 revision 이벤트 로그는 정확히 하나의 봉인 이벤트를 포함해야 합니다.");
     let eventRecord;
     try {
@@ -601,16 +940,14 @@ export async function readQualityRevisionState(jobId, runId) {
   };
 }
 
-export async function prepareQualityRevision(jobId, runId, revisionId) {
-  const job = await readJob(jobId);
+function preparedQualityRevisionContext(job, state, runId, revisionId) {
   if (job.runId !== runId) throw new Error("품질 revision은 현재 작업의 runId만 허용합니다.");
-  const state = await readQualityRevisionState(jobId, runId);
   if (state.baseManifest.status !== "needs-improvement" || state.baseManifest.runStatus !== "needs-improvement") throw new Error("품질 revision은 needs-improvement base run에서만 시작할 수 있습니다.");
   if (state.effectiveStatus !== "needs-improvement") throw new Error("이미 completed로 승격된 품질 revision은 terminal 상태입니다.");
   if (job.status !== state.effectiveStatus) throw new Error("작업 상태와 봉인된 품질 revision 상태가 일치하지 않습니다.");
   const context = {
     schemaVersion: QUALITY_REVISION_SCHEMA_VERSION,
-    jobId,
+    jobId: job.id,
     runId,
     revisionId,
     sequence: state.nextSequence,
@@ -620,6 +957,13 @@ export async function prepareQualityRevision(jobId, runId, revisionId) {
   };
   validateQualityRevisionContext(context);
   return context;
+}
+
+export async function prepareQualityRevision(jobId, runId, revisionId) {
+  const job = await readJob(jobId);
+  if (job.runId !== runId) throw new Error("품질 revision은 현재 작업의 runId만 허용합니다.");
+  const state = await readQualityRevisionState(jobId, runId);
+  return preparedQualityRevisionContext(job, state, runId, revisionId);
 }
 
 function parseSrtEntries(value) {
@@ -702,28 +1046,46 @@ function mediaTarget(format) {
   return format === "landscape" ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 };
 }
 
-async function extractEvidenceFrames(jobDir, media) {
-  const frameDir = join(jobDir, QUALITY_DIR, "frames");
-  await mkdir(frameDir, { recursive: true });
+export async function extractEvidenceFrames(jobDir, media) {
   if (!media?.duration || !commandPath("ffmpeg")) return [];
+  const pinned = openPinnedQualityTree(jobDir, { frames: true });
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "ps4-quality-frame-"));
   const moments = [...new Set([0.5, Math.max(0.5, media.duration / 2), Math.max(0.5, media.duration - 0.5)].map((value) => Math.min(Math.max(value, 0.1), Math.max(0.1, media.duration - 0.05))))];
   const frames = [];
-  for (let index = 0; index < moments.length; index += 1) {
-    const path = join(frameDir, `frame-${String(index + 1).padStart(2, "0")}.jpg`);
-    const result = await commandOutput("ffmpeg", ["-y", "-i", media.path, "-ss", String(moments[index]), "-frames:v", "1", "-q:v", "2", path]);
-    if (result && existsSync(path)) frames.push({ path, time: round(moments[index], 2), sha256: await hashFile(path) });
+  try {
+    const existingIdentities = moments.map((_, index) => existingExclusiveQualityFile(pinned.framesFd, `frame-${String(index + 1).padStart(2, "0")}.jpg`));
+    for (let index = 0; index < moments.length; index += 1) {
+      const leafName = `frame-${String(index + 1).padStart(2, "0")}.jpg`;
+      const name = `${QUALITY_DIR}/frames/${leafName}`;
+      const path = join(jobDir, name);
+      const temporaryPath = join(temporaryRoot, leafName);
+      const result = await commandOutput("ffmpeg", ["-y", "-i", media.path, "-ss", String(moments[index]), "-frames:v", "1", "-q:v", "2", temporaryPath]);
+      const snapshot = result
+        ? await readQualityEvidenceSnapshot(temporaryPath, { json: false, maxBytes: QUALITY_FRAME_MAX_BYTES }).catch(() => null)
+        : null;
+      if (snapshot) {
+        replacePinnedQualityFile(pinned.framesFd, leafName, snapshot.buffer, existingIdentities[index]);
+        frames.push({ path, name, time: round(moments[index], 2), sha256: snapshot.sha256, snapshot });
+      }
+    }
+  } finally {
+    pinned.close();
+    await rm(temporaryRoot, { recursive: true, force: true });
   }
   return frames;
 }
-async function readExistingEvidenceFrames(jobDir, media) {
+async function readExistingEvidenceFrames(jobDir, media, evidenceReader = null) {
   if (!media?.duration) return [];
   const moments = [...new Set([0.5, Math.max(0.5, media.duration / 2), Math.max(0.5, media.duration - 0.5)].map((value) => Math.min(Math.max(value, 0.1), Math.max(0.1, media.duration - 0.05))))];
   const frames = [];
   for (let index = 0; index < moments.length; index += 1) {
-    const path = join(jobDir, QUALITY_DIR, "frames", `frame-${String(index + 1).padStart(2, "0")}.jpg`);
-    const frameStat = await stat(path).catch(() => null);
-    if (!frameStat?.isFile()) return [];
-    frames.push({ path, time: round(moments[index], 2), sha256: await hashFile(path) });
+    const name = `${QUALITY_DIR}/frames/frame-${String(index + 1).padStart(2, "0")}.jpg`;
+    const path = join(jobDir, name);
+    const snapshot = evidenceReader
+      ? await evidenceReader(name, path, { json: false, maxBytes: QUALITY_FRAME_MAX_BYTES })
+      : await readQualityEvidenceSnapshot(path, { json: false, maxBytes: QUALITY_FRAME_MAX_BYTES }).catch(() => null);
+    if (!snapshot) return [];
+    frames.push({ path, name, time: round(moments[index], 2), sha256: snapshot.sha256, snapshot });
   }
   return frames;
 }
@@ -850,9 +1212,9 @@ function committeeReviewValid(review) {
 function validateRevisionArtifact(declaration, expectedPath, label) {
   if (
     declaration?.path !== expectedPath
-    || !normalizedSha256(declaration?.sha256)
-    || !Number.isInteger(Number(declaration?.bytes))
-    || Number(declaration.bytes) <= 0
+    || declaration?.sha256 !== normalizedSha256(declaration?.sha256)
+    || !Number.isSafeInteger(declaration?.bytes)
+    || declaration.bytes <= 0
   ) throw new Error(`${label} revision 산출물 선언이 유효하지 않습니다.`);
   return true;
 }
@@ -1121,7 +1483,7 @@ export async function saveCommitteeReview(jobId, review, options = {}) {
   }
   const revisionContext = options.revisionContext;
   if (!revisionContext) throw new Error("위원회 리뷰에는 준비된 append-only revision context가 필요합니다.");
-  const expectedContext = await prepareQualityRevision(jobId, job.runId, revisionContext.revisionId);
+  const expectedContext = preparedQualityRevisionContext(job, state, job.runId, revisionContext.revisionId);
   if (hashJson(revisionContext) !== hashJson(expectedContext)) throw new Error("위원회 리뷰의 revision context가 현재 append-only head와 일치하지 않습니다.");
   if (review.revisionId !== revisionContext.revisionId || Number(review.revisionSequence) !== Number(revisionContext.sequence)) {
     throw new Error("위원회 리뷰가 준비된 revisionId·sequence에 결속되어 있지 않습니다.");
@@ -1164,28 +1526,90 @@ export async function persistQuality(jobDir, quality) {
   if (!job || job.runId !== quality.runId) throw new Error("품질 산출물이 현재 실행 runId에 결속되어 있지 않습니다.");
   if (["running", "verifying"].includes(job.status) && quality.finalization !== true && quality.prePublication !== true) throw new Error("실행 중인 작업의 품질은 봉인할 수 없습니다.");
   if (["completed", "needs-improvement"].includes(job.status)) throw new Error("봉인된 base run 품질은 덮어쓸 수 없습니다. 별도 append-only revision 디렉터리에 봉인하세요.");
-  await mkdir(join(jobDir, QUALITY_DIR), { recursive: true });
-  await writeFile(join(jobDir, QUALITY_DIR, `iteration-${String(quality.iteration).padStart(2, "0")}.json`), JSON.stringify(quality, null, 2));
-  await writeFile(join(jobDir, QUALITY_DIR, "latest.json"), JSON.stringify(quality, null, 2));
-  await writeFile(join(jobDir, "quality.json"), JSON.stringify(quality, null, 2));
+  const iterationName = `iteration-${String(quality.iteration).padStart(2, "0")}.json`;
+  const pinned = openPinnedQualityTree(jobDir, {
+    beforeQuality: (jobFd) => existingExclusiveQualityFile(jobFd, "quality.json")
+  });
+  try {
+    const iterationIdentity = existingExclusiveQualityFile(pinned.qualityFd, iterationName);
+    const latestIdentity = existingExclusiveQualityFile(pinned.qualityFd, "latest.json");
+    const rootIdentity = pinned.beforeQualityResult;
+    const bytes = Buffer.from(JSON.stringify(quality, null, 2));
+    replacePinnedQualityFile(pinned.qualityFd, iterationName, bytes, iterationIdentity);
+    replacePinnedQualityFile(pinned.qualityFd, "latest.json", bytes, latestIdentity);
+    replacePinnedQualityFile(pinned.jobFd, "quality.json", bytes, rootIdentity);
+  } finally {
+    pinned.close();
+  }
 }
-export async function evaluateJob(jobId, options = {}) {
-  const job = await readJob(jobId);
-  if (!SUPPORTED_PROVIDERS.has(job.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
-  if (options.runId && options.runId !== job.runId) throw new Error("품질 검사는 현재 작업의 runId만 허용합니다.");
-  const currentRunId = job.runId || null;
+async function evaluateJobExact(jobId, options = {}, snapshotFiles) {
+  const mutableJob = await readJob(jobId);
+  if (!SUPPORTED_PROVIDERS.has(mutableJob.provider)) throw new Error("지원하지 않는 생성 소스입니다. local, local-video 또는 gemini-browser만 사용할 수 있습니다.");
+  if (options.runId && options.runId !== mutableJob.runId) throw new Error("품질 검사는 현재 작업의 runId만 허용합니다.");
+  const currentRunId = mutableJob.runId || null;
   if (!currentRunId) throw new Error("현재 실행 산출물이 없어 품질 검사를 시작할 수 없습니다.");
   const jobDir = join(JOBS_DIR, jobId);
-  const script = await readJsonOptional(join(jobDir, "script.json"));
-  const committee = options.committee || await readJsonOptional(join(jobDir, QUALITY_DIR, "committee-review.json")) || await readJsonOptional(join(jobDir, "committee-review.json"));
-  const sourceBundle = await readJsonOptional(join(jobDir, "sources.json"));
   const runDir = join(jobDir, "runs", currentRunId);
-  const runManifest = await readJsonOptional(join(runDir, "manifest.json"));
+  const runManifestSnapshot = await readQualityEvidenceSnapshot(join(runDir, "manifest.json")).catch(() => null);
+  const runManifest = runManifestSnapshot?.value || null;
   if (!runManifest || runManifest.schemaVersion !== 1 || runManifest.jobId !== jobId || runManifest.runId !== currentRunId) {
     throw new Error("현재 실행의 run manifest가 없거나 작업 식별자와 일치하지 않습니다.");
   }
+  const immutableArtifacts = Array.isArray(runManifest.immutableArtifacts) ? runManifest.immutableArtifacts : [];
+  const immutableEvaluation = ["completed", "needs-improvement"].includes(mutableJob.status)
+    || (options.finalization === true && mutableJob.status === "verifying");
+  if (immutableEvaluation) {
+    validateImmutableQualityDeclarations(immutableArtifacts, currentRunId);
+    assertSealedJobRequestBinding(mutableJob, runManifest);
+  }
+  const sealedRequest = runManifest.request || {};
+  const job = immutableEvaluation ? {
+    ...mutableJob,
+    topic: sealedRequest.topic,
+    provider: sealedRequest.provider,
+    format: sealedRequest.format,
+    clipCount: sealedRequest.clipCount,
+    targetDurationSec: sealedRequest.targetDurationSec,
+    targetDurationRangeSec: sealedRequest.targetDurationRangeSec,
+    captions: sealedRequest.captions,
+    voiceover: sealedRequest.voiceover
+  } : mutableJob;
+  const readEvaluationEvidence = (name, mutablePath, settings = {}) => readEvaluationEvidenceSnapshot({
+    jobDir,
+    runId: currentRunId,
+    runManifest,
+    immutableEvaluation,
+    name,
+    mutablePath,
+    ...settings
+  });
+  const evaluationEvidenceNameByPath = new Map();
+  const exactMediaEvidence = new Map();
+  const evaluationMediaPath = async (name, mutablePath) => {
+    const declaration = immutableEvaluation ? immutableEvaluationDeclaration(runManifest, currentRunId, name) : null;
+    const sourcePath = declaration ? resolve(jobDir, declaration.path) : mutablePath;
+    let snapshot = null;
+    if (!immutableEvaluation || declaration) {
+      snapshot = await snapshotFiles.copyMedia(sourcePath, {
+        expectedBytes: declaration?.bytes ?? null,
+        expectedSha256: declaration?.sha256 ?? null,
+        maximumBytes: declaration?.bytes ?? PRIVATE_MEDIA_SNAPSHOT_POLICY.maximumFileBytes
+      }).catch(() => null);
+    }
+    const path = snapshot?.privatePath || join(runDir, ".missing-evidence", String(name).replaceAll("/", "__"));
+    if (snapshot) exactMediaEvidence.set(name, snapshot);
+    evaluationEvidenceNameByPath.set(path, name);
+    return path;
+  };
+  const scriptSnapshot = await readEvaluationEvidence("script.json", join(jobDir, "script.json"));
+  const sourceBundleSnapshot = await readEvaluationEvidence("sources.json", join(jobDir, "sources.json"));
+  const script = scriptSnapshot?.value || null;
+  const sourceBundle = sourceBundleSnapshot?.value || null;
+  const committee = options.committee || (!immutableEvaluation
+    ? (await readQualityEvidenceSnapshot(join(jobDir, QUALITY_DIR, "committee-review.json")).catch(() => null))?.value
+      || (await readQualityEvidenceSnapshot(join(jobDir, "committee-review.json")).catch(() => null))?.value
+    : null);
   const sealedRun = ["completed", "needs-improvement"].includes(job.status) && ["completed", "needs-improvement"].includes(runManifest.status);
-  if (sealedRun) assertSealedJobRequestBinding(job, runManifest);
   let revisionContext = null;
   let revisionState = null;
   if (sealedRun) {
@@ -1195,9 +1619,13 @@ export async function evaluateJob(jobId, options = {}) {
     }
     if (!options.revisionContext) throw new Error("봉인 후 품질 재평가에는 append-only revision context가 필요합니다.");
     revisionContext = options.revisionContext;
-    const expectedContext = await prepareQualityRevision(jobId, currentRunId, revisionContext.revisionId);
-    if (hashJson(revisionContext) !== hashJson(expectedContext)) throw new Error("품질 재평가의 revision context가 현재 append-only head와 일치하지 않습니다.");
     revisionState = await readQualityRevisionState(jobId, currentRunId);
+    const expectedContext = preparedQualityRevisionContext(mutableJob, revisionState, currentRunId, revisionContext.revisionId);
+    if (hashJson(revisionContext) !== hashJson(expectedContext)) throw new Error("품질 재평가의 revision context가 현재 append-only head와 일치하지 않습니다.");
+    if (
+      runManifestSnapshot.sha256 !== revisionContext.baseManifest?.sha256
+      || runManifestSnapshot.sha256 !== revisionState.baseManifestHash
+    ) throw new Error("품질 revision context와 평가에 사용한 base manifest 바이트가 정확히 일치하지 않습니다.");
     if (!committee) throw new Error("봉인 후 품질 revision에는 위원회 리뷰가 필요합니다.");
     if (committee.revisionId !== revisionContext.revisionId || Number(committee.revisionSequence) !== Number(revisionContext.sequence)) {
       throw new Error("위원회 리뷰가 현재 revisionId·sequence에 결속되어 있지 않습니다.");
@@ -1211,58 +1639,110 @@ export async function evaluateJob(jobId, options = {}) {
     });
   }
   const runBenchmarkDir = join(runDir, "benchmarks");
+  const benchmarkChannelName = `runs/${currentRunId}/benchmarks/channel-analysis.json`;
+  const benchmarkDurationName = `runs/${currentRunId}/benchmarks/shorts-metadata.json`;
+  const benchmarkRlmName = `runs/${currentRunId}/benchmarks/rlm-benchmark-analysis.json`;
   const benchmarkChannelPath = join(runBenchmarkDir, "channel-analysis.json");
   const benchmarkDurationPath = existsSync(join(runBenchmarkDir, "shorts-metadata.json")) ? join(runBenchmarkDir, "shorts-metadata.json") : join(ROOT, "data/shorts-metadata.json");
   const benchmarkRlmPath = existsSync(join(runBenchmarkDir, "rlm-benchmark-analysis.json")) ? join(runBenchmarkDir, "rlm-benchmark-analysis.json") : join(ROOT, "data/rlm-benchmark-analysis.json");
-  const rlmBenchmark = await readJsonOptional(benchmarkRlmPath);
+  const benchmarkChannelSnapshot = await readEvaluationEvidence(benchmarkChannelName, benchmarkChannelPath);
+  const benchmarkDurationSnapshot = await readEvaluationEvidence(benchmarkDurationName, benchmarkDurationPath);
+  const benchmarkRlmSnapshot = await readEvaluationEvidence(benchmarkRlmName, benchmarkRlmPath);
+  const rlmBenchmark = benchmarkRlmSnapshot?.value || null;
   const inputManifestPath = join(runDir, "input-manifest.json");
-  const inputManifest = await readJsonOptional(inputManifestPath);
-  const inputManifestHash = await hashExisting(inputManifestPath);
+  const inputManifestName = `runs/${currentRunId}/input-manifest.json`;
+  const inputManifestSnapshot = await readEvaluationEvidence(inputManifestName, inputManifestPath);
+  const inputManifest = inputManifestSnapshot?.value || null;
+  const inputManifestHash = inputManifestSnapshot?.sha256 || null;
   const manifestEntries = Array.isArray(inputManifest?.entries) ? inputManifest.entries : null;
-  const manifestClipPaths = manifestEntries
-    ? manifestEntries.map((entry) => {
-        const relativePath = String(entry.relativePath || "");
-        const candidate = join(jobDir, relativePath);
-        return candidate.startsWith(`${join(jobDir, "clips")}/`) ? candidate : null;
-      }).filter(Boolean)
+  const localClipImportName = `runs/${currentRunId}/local-clip-import.json`;
+  const localClipImportPath = join(runDir, "local-clip-import.json");
+  const localClipImportSnapshot = job.provider === "local"
+    ? await readEvaluationEvidence(localClipImportName, localClipImportPath)
     : null;
-  const clipDirectoryEntries = (await readdir(join(jobDir, "clips"), { withFileTypes: true }).catch(() => []))
+  const localClipImport = localClipImportSnapshot?.value || null;
+  const clipDirectoryEntries = immutableEvaluation ? [] : (await readdir(join(jobDir, "clips"), { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isFile() && VIDEO_EXTENSIONS.has(extname(entry.name).toLowerCase()))
     .sort((left, right) => left.name.localeCompare(right.name));
-  const currentClipNames = clipDirectoryEntries.map((entry) => entry.name);
-  const currentClipPaths = currentClipNames.map((name) => join(jobDir, "clips", name));
-  const currentClipStats = await Promise.all(currentClipNames.map(async (name) => {
-    const fileStat = await stat(join(jobDir, "clips", name)).catch(() => null);
-    const sha256 = fileStat ? await hashExisting(join(jobDir, "clips", name)) : null;
-    return { name, bytes: fileStat?.size || null, sha256 };
-  }));
-  const clips = manifestClipPaths?.length ? manifestClipPaths : currentClipPaths;
-  const normalized = (await readdir(join(jobDir, "normalized"), { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === ".mp4").map((entry) => join(jobDir, "normalized", entry.name)).sort();
-  const finalPath = join(jobDir, "final.mp4");
-  const assembledPath = join(jobDir, "assembled.mp4");
+  const currentClipNames = immutableEvaluation && manifestEntries
+    ? manifestEntries.map((entry, index) => {
+        const name = String(entry.name || "");
+        return name === basename(name) && VIDEO_EXTENSIONS.has(extname(name).toLowerCase())
+          ? name
+          : `invalid-immutable-clip-${index + 1}.invalid`;
+      })
+    : clipDirectoryEntries.map((entry) => entry.name);
+  const currentClipPaths = [];
+  for (const name of currentClipNames) currentClipPaths.push(await evaluationMediaPath(`clips/${name}`, join(jobDir, "clips", name)));
+  const currentClipStats = currentClipNames.map((name) => {
+    const snapshot = exactMediaEvidence.get(`clips/${name}`);
+    return { name, bytes: snapshot?.bytes || null, sha256: snapshot?.sha256 || null };
+  });
+  const clips = currentClipPaths;
+  const normalizedNames = immutableEvaluation
+    ? immutableArtifacts.map((artifact) => artifact?.name).filter((name) => /^normalized\/[^/]+\.mp4$/u.test(String(name))).sort()
+    : (await readdir(join(jobDir, "normalized"), { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === ".mp4")
+      .map((entry) => `normalized/${entry.name}`)
+      .sort();
+  const normalized = [];
+  for (const name of normalizedNames) normalized.push(await evaluationMediaPath(name, join(jobDir, name)));
+  const finalPath = await evaluationMediaPath("final.mp4", join(jobDir, "final.mp4"));
+  const assembledPath = await evaluationMediaPath("assembled.mp4", join(jobDir, "assembled.mp4"));
+  const thumbnailPath = await evaluationMediaPath("thumbnail.jpg", join(jobDir, "thumbnail.jpg"));
   const finalMedia = await probeMedia(finalPath);
-  const normalizedMedia = await Promise.all(normalized.map(probeMedia));
-  const clipMedia = await Promise.all(clips.map(probeMedia));
-  const captions = parseSrtEntries(await readTextOptional(join(jobDir, "captions.srt")));
-  const sources = normalizeSources(script?.sources || job.sources);
-  const captionTiming = await readJsonOptional(join(jobDir, "caption-timing.json"));
-  const voiceoverSync = await readJsonOptional(join(jobDir, "voiceover-sync.json"));
+  const normalizedMedia = [];
+  for (const path of normalized) normalizedMedia.push(await probeMedia(path));
+  const clipMedia = [];
+  for (const path of clips) clipMedia.push(await probeMedia(path));
+  const captionsSnapshot = await readEvaluationEvidence("captions.srt", join(jobDir, "captions.srt"), { json: false });
+  const captionsVttSnapshot = await readEvaluationEvidence("captions.vtt", join(jobDir, "captions.vtt"), { json: false });
+  const captionTimingSnapshot = await readEvaluationEvidence("caption-timing.json", join(jobDir, "caption-timing.json"));
+  const voiceoverSyncSnapshot = await readEvaluationEvidence("voiceover-sync.json", join(jobDir, "voiceover-sync.json"));
+  const voiceoverMasteredPath = job.voiceover
+    ? await evaluationMediaPath("voiceover-mastered.wav", join(jobDir, "voiceover-mastered.wav"))
+    : null;
+  const voiceoverMasteredSnapshot = voiceoverMasteredPath ? exactMediaEvidence.get("voiceover-mastered.wav") || null : null;
+  const captions = parseSrtEntries(captionsSnapshot?.text || "");
+  const sources = normalizeSources(Array.isArray(script?.sources) ? script.sources : immutableEvaluation ? [] : job.sources);
+  const captionTiming = captionTimingSnapshot?.value || null;
+  const voiceoverSync = voiceoverSyncSnapshot?.value || null;
   const localSemanticReceiptPath = join(runDir, "semantic", "receipt.json");
-  const localSemanticReceipt = await readJsonOptional(localSemanticReceiptPath);
+  const localSemanticReceiptName = `runs/${currentRunId}/semantic/receipt.json`;
+  const localSemanticReceiptSnapshot = await readEvaluationEvidence(localSemanticReceiptName, localSemanticReceiptPath);
+  const localSemanticReceipt = localSemanticReceiptSnapshot?.value || null;
   const localSemanticEvidencePaths = semanticReceiptArtifactPaths(currentRunId, localSemanticReceipt).map((path) => join(jobDir, path));
   const target = mediaTarget(job.format);
   const expectedSegments = Math.max(1, Number(script?.segments?.length || job.clipCount || 1));
   const actualClipTarget = Math.max(1, Number(job.clipCount || expectedSegments));
   const geminiGenerationPath = join(jobDir, "gemini-generation.json");
-  const geminiGeneration = await readJsonOptional(geminiGenerationPath);
-  const geminiGenerationFileHash = await hashExisting(geminiGenerationPath);
+  const geminiGenerationSnapshot = await readEvaluationEvidence("gemini-generation.json", geminiGenerationPath);
+  const geminiGeneration = geminiGenerationSnapshot?.value || null;
+  const geminiGenerationFileHash = geminiGenerationSnapshot?.sha256 || null;
+  const geminiSourceGenerationName = geminiSourceGenerationEvidenceName(currentRunId);
+  const geminiSourceReceipt = runManifest?.geminiSubmissionLineage?.sourceGenerationReceipt;
+  const geminiSourceGenerationSnapshot = geminiSourceReceipt?.path === geminiSourceGenerationName
+    ? await readEvaluationEvidence(geminiSourceGenerationName, join(jobDir, geminiSourceGenerationName))
+    : null;
+  const geminiSourceGenerationDeclaration = immutableArtifacts.find((artifact) => artifact?.name === geminiSourceGenerationName) || null;
+  const geminiSubmissionLineageBinding = job.provider !== "gemini-browser" || verifyGeminiSubmissionLineageClosure({
+    generation: geminiGeneration,
+    runId: currentRunId,
+    manifestLineage: runManifest?.geminiSubmissionLineage,
+    sourceSnapshot: geminiSourceGenerationSnapshot,
+    sourceDeclaration: geminiSourceGenerationDeclaration
+  });
   const localVideoGenerationPath = join(runDir, "local-video-generation.json");
-  const localVideoGeneration = await readJsonOptional(localVideoGenerationPath);
-  const localVideoReceiptHash = await hashExisting(localVideoGenerationPath);
+  const localVideoGenerationName = `runs/${currentRunId}/local-video-generation.json`;
+  const localVideoGenerationSnapshot = await readEvaluationEvidence(localVideoGenerationName, localVideoGenerationPath);
+  const localVideoGeneration = localVideoGenerationSnapshot?.value || null;
+  const localVideoReceiptHash = localVideoGenerationSnapshot?.sha256 || null;
   const shotPatternReceiptPath = join(runDir, "shot-pattern-receipt.json");
-  const shotPatternReceipt = await readJsonOptional(shotPatternReceiptPath);
-  const shotPatternReceiptHash = await hashExisting(shotPatternReceiptPath);
-  const currentClipHashes = await Promise.all(clips.map((path) => hashExisting(path)));
+  const shotPatternReceiptName = `runs/${currentRunId}/shot-pattern-receipt.json`;
+  const shotPatternReceiptSnapshot = await readEvaluationEvidence(shotPatternReceiptName, shotPatternReceiptPath);
+  const shotPatternReceipt = shotPatternReceiptSnapshot?.value || null;
+  const shotPatternReceiptHash = shotPatternReceiptSnapshot?.sha256 || null;
+  const currentClipHashes = currentClipStats.map((entry) => entry.sha256);
   const generationSegments = Array.isArray(geminiGeneration?.segments) ? geminiGeneration.segments : [];
   const geminiRequest = expectedGeminiRequest(job, script);
   const expectedGeminiScriptHash = hashJson(script);
@@ -1308,13 +1788,14 @@ export async function evaluateJob(jobId, options = {}) {
     && geminiGeneration.requestHash === expectedGeminiRequestHash
     && geminiGeneration.scriptHash === expectedGeminiScriptHash
     && geminiGeneration.requestScriptHash === expectedGeminiRequestHash
-    && geminiGeneration.providerDecisionHash === expectedProviderDecisionHash;
+    && geminiGeneration.providerDecisionHash === expectedProviderDecisionHash
+    && geminiSubmissionLineageBinding;
   const generationClipBinding = generationProvenance
     && geminiGeneration.status === "completed"
     && geminiGeneration.runId === currentRunId
     && generationSegments.length === actualClipTarget
     && generationSegments.every((segment, index) => {
-      const expectedPath = evidenceRelative(jobDir, clips[index] || "");
+      const expectedPath = evaluationEvidenceNameByPath.get(clips[index]) || evidenceRelative(jobDir, clips[index] || "");
       const expectedPattern = geminiRequest.segments[index]?.shotPattern || null;
       const expectedPrompt = buildGeminiClipPrompt(job, script, script.segments[index]);
       return segment.index === index + 1
@@ -1336,8 +1817,11 @@ export async function evaluateJob(jobId, options = {}) {
         ));
     });
   const localVideoScriptHash = hashJson(script);
-  const localVideoRequest = expectedLocalVideoRequest(job, script, currentRunId, localVideoScriptHash);
-  const localVideoRequestHash = localVideoRequest.requestHash;
+  const localVideoBaseRequest = expectedLocalVideoRequest(job, script, currentRunId, localVideoScriptHash);
+  const localVideoRequest = localVideoGeneration
+    ? withStoredBflAuthorization(localVideoBaseRequest, localVideoGeneration)
+    : null;
+  const localVideoRequestHash = localVideoBaseRequest.requestHash;
   const localVideoSegments = Array.isArray(localVideoGeneration?.segments) ? localVideoGeneration.segments : [];
   const localVideoModelBinding = Boolean(
     localVideoGeneration?.provider === "local-video"
@@ -1348,14 +1832,16 @@ export async function evaluateJob(jobId, options = {}) {
     && localVideoGeneration.modelId
     && localVideoGeneration.requestHash === localVideoRequestHash
     && localVideoGeneration.scriptHash === localVideoScriptHash
+    && localVideoRequest
     && localVideoGeneration.request
     && hashJson(localVideoGeneration.request) === hashJson(localVideoRequest)
   );
   const localVideoClipBinding = localVideoModelBinding
+    && localVideoProviderRequestBodyClosureBound(localVideoGeneration, localVideoRequest)
     && localVideoGeneration.status === "completed"
     && localVideoSegments.length === actualClipTarget
     && localVideoSegments.every((segment, index) => {
-      const expectedPath = evidenceRelative(jobDir, clips[index] || "");
+      const expectedPath = evaluationEvidenceNameByPath.get(clips[index]) || evidenceRelative(jobDir, clips[index] || "");
       const expectedPattern = localVideoRequest.segments[index]?.shotPattern || null;
       return segment.index === index + 1
         && segment.runId === currentRunId
@@ -1389,7 +1875,19 @@ export async function evaluateJob(jobId, options = {}) {
         && shotPatternReceipt?.providerGenerationHash === null
       : shotPatternReceipt?.submittedToProvider === true
         && shotPatternReceipt?.providerRequestHash === (job.provider === "gemini-browser" ? geminiGeneration?.requestHash : localVideoGeneration?.requestHash)
-        && shotPatternReceipt?.providerGenerationHash === (job.provider === "gemini-browser" ? await hashExisting(join(jobDir, "gemini-generation.json")) : localVideoReceiptHash))
+        && shotPatternReceipt?.providerGenerationHash === (job.provider === "gemini-browser" ? geminiGenerationFileHash : localVideoReceiptHash)
+        && (job.provider !== "gemini-browser" || (
+          shotPatternReceipt.providerRequestSentThisRun === geminiGeneration?.providerRequestSentThisRun
+          && shotPatternReceipt.inheritedProviderSubmission === geminiGeneration?.inheritedProviderSubmission
+          && shotPatternReceipt.sourceSubmissionRunId === (runManifest?.geminiSubmissionLineage?.sourceSubmissionRunId ?? null)
+          && shotPatternReceipt.sourceGenerationHash === (runManifest?.geminiSubmissionLineage?.sourceGenerationHash ?? null)
+          && shotPatternReceipt.segments?.every((segment, index) => (
+            segment.providerRequestSentThisRun === generationSegments[index]?.providerRequestSentThisRun
+            && segment.inheritedProviderSubmission === generationSegments[index]?.inheritedProviderSubmission
+            && segment.submissionRunId === generationSegments[index]?.submissionRunId
+            && segment.sourceRunId === (generationSegments[index]?.sourceRunId ?? null)
+          ))
+        )))
   );
   const shotPatternReceiptBinding = Boolean(
     !shotPatternRequired
@@ -1484,6 +1982,50 @@ export async function evaluateJob(jobId, options = {}) {
     && new Set(manifestEntries?.map((entry) => entry.sha256)).size === manifestEntries?.length
     && inputMotionGateBinding
   );
+  const localClipImportProjection = localClipImport ? {
+    schemaVersion: localClipImport.schemaVersion,
+    source: localClipImport.source,
+    providerEvidenceEligible: localClipImport.providerEvidenceEligible,
+    orderingPolicy: localClipImport.orderingPolicy,
+    clipCount: localClipImport.clipCount,
+    setHash: localClipImport.setHash,
+    receiptHash: localClipImport.receiptHash
+  } : null;
+  const localClipReceiptUnsigned = localClipImport && typeof localClipImport === "object" && !Array.isArray(localClipImport)
+    ? Object.fromEntries(Object.entries(localClipImport).filter(([key]) => key !== "receiptHash"))
+    : null;
+  const localClipImportBinding = job.provider !== "local" || Boolean(
+    localClipImport
+    && localClipImport.schemaVersion === 1
+    && localClipImport.type === "manual-local-clip-import"
+    && localClipImport.status === "ready"
+    && localClipImport.jobId === jobId
+    && localClipImport.source === "manual-user-upload"
+    && localClipImport.providerEvidenceEligible === false
+    && localClipImport.orderingPolicy === "multipart-file-order-v1"
+    && localClipImport.clipCount === job.clipCount
+    && Array.isArray(localClipImport.entries)
+    && localClipImport.entries.length === manifestEntries?.length
+    && localClipImport.receiptHash === hashJson(localClipReceiptUnsigned)
+    && localClipImport.receiptHash === job.localClipImport?.receiptHash
+    && localClipImport.setHash === job.localClipImport?.setHash
+    && localClipImport.entries.every((entry, index) => {
+      const input = manifestEntries?.[index];
+      return entry?.index === index + 1
+        && entry.storedName === input?.name
+        && entry.bytes === input?.bytes
+        && entry.sha256 === input?.sha256;
+    })
+    && hashJson(inputManifest?.localClipImport) === hashJson(localClipImportProjection)
+    && hashJson(runManifest?.request?.localClipImport) === hashJson(localClipImportProjection)
+    && runManifest?.localClipImportReceipt?.path === localClipImportName
+    && runManifest.localClipImportReceipt.sha256 === localClipImportSnapshot?.sha256
+    && runManifest.localClipImportReceipt.receiptHash === localClipImport.receiptHash
+    && runManifest.localClipImportReceipt.setHash === localClipImport.setHash
+    && runManifest.localClipImportReceipt.source === "manual-user-upload"
+    && runManifest.localClipImportReceipt.providerEvidenceEligible === false
+    && runManifest.localClipImportReceipt.clipCount === job.clipCount
+  );
   const inputManifestBinding = Boolean(
     inputManifest?.schemaVersion === 3
     && inputManifest.jobId === jobId
@@ -1501,12 +2043,13 @@ export async function evaluateJob(jobId, options = {}) {
         && entry.sha256 === current.sha256;
     })
     && inputDiversityBinding
+    && localClipImportBinding
     && inputManifestReceiptBound
   );
   const benchmarkSnapshot = runManifest?.benchmarkSnapshot;
-  const benchmarkChannelHash = await hashExisting(benchmarkChannelPath);
-  const benchmarkDurationHash = await hashExisting(benchmarkDurationPath);
-  const benchmarkRlmHash = await hashExisting(benchmarkRlmPath);
+  const benchmarkChannelHash = benchmarkChannelSnapshot?.sha256 || null;
+  const benchmarkDurationHash = benchmarkDurationSnapshot?.sha256 || null;
+  const benchmarkRlmHash = benchmarkRlmSnapshot?.sha256 || null;
   const request = runManifest?.request;
   const geminiRequestSessionBinding = job.provider !== "gemini-browser" || Boolean(
     expectedGeminiSessionBindingHash
@@ -1526,6 +2069,7 @@ export async function evaluateJob(jobId, options = {}) {
     && request?.provider === job.provider
     && request?.format === job.format
     && Number(request?.clipCount) === Number(job.clipCount)
+    && localClipImportBinding
     && Number(request?.targetDurationSec) === Number(job.targetDurationSec)
     && JSON.stringify(request?.targetDurationRangeSec || []) === JSON.stringify(job.targetDurationRangeSec || [])
     && request?.captions === job.captions
@@ -1555,8 +2099,7 @@ export async function evaluateJob(jobId, options = {}) {
     && benchmarkSnapshot.rlmMediaEvidence?.path === evidenceRelative(jobDir, benchmarkRlmPath)
     && benchmarkSnapshot.rlmMediaEvidence.sha256 === benchmarkRlmHash
   );
-  const immutableArtifacts = Array.isArray(runManifest?.immutableArtifacts) ? runManifest.immutableArtifacts : [];
-  const expectedImmutablePath = (name) => `runs/${currentRunId}/artifacts/${String(name).replaceAll("/", "__")}`;
+  const expectedImmutablePath = (name) => exactImmutableArtifactPath(currentRunId, String(name));
   const finalizationReady = options.finalization === true && job.status === "verifying";
   const evaluationState = qualityEvaluationState({
     jobStatus: job.status,
@@ -1575,8 +2118,13 @@ export async function evaluateJob(jobId, options = {}) {
     && Array.isArray(runManifest.ledgerErrors)
     && runManifest.ledgerErrors.length === 0
   );
-  const immutableEventArtifact = immutableArtifacts.filter((artifact) => artifact.name === `runs/${currentRunId}/events.jsonl` && artifact.path === expectedImmutablePath(artifact.name)).at(-1);
-  const eventLogText = terminalRunBinding && immutableEventArtifact ? await readTextOptional(resolve(jobDir, immutableEventArtifact.path)) : "";
+  const eventLogName = `runs/${currentRunId}/events.jsonl`;
+  const eventLogSnapshot = await readEvaluationEvidence(eventLogName, join(runDir, "events.jsonl"), {
+    json: false,
+    maxBytes: QUALITY_REVISION_EVENTS_MAX_BYTES
+  });
+  const immutableEventArtifact = immutableArtifacts.filter((artifact) => artifact.name === eventLogName && artifact.path === expectedImmutablePath(artifact.name)).at(-1);
+  const eventLogText = terminalRunBinding && immutableEventArtifact && eventLogSnapshot ? eventLogSnapshot.text : "";
   let eventLogParsePass = true;
   const eventRecords = [];
   for (const line of eventLogText.split("\n").filter(Boolean)) {
@@ -1620,23 +2168,16 @@ export async function evaluateJob(jobId, options = {}) {
           && terminalEvent.providerDecisionHash === expectedProviderDecisionHash
     )
   );
+  const immutableClosure = terminalRunBinding && terminalEventBinding
+    ? await verifyImmutableQualityClosure({ jobDir, runId: currentRunId, artifacts: immutableArtifacts })
+    : { binding: false, receipts: new Map() };
+  const immutableClosureSnapshots = immutableClosure.receipts;
   const immutableClosureBinding = Boolean(
     terminalRunBinding
     && terminalEventBinding
-    && immutableArtifacts.length > 0
-    && new Set(immutableArtifacts.map((artifact) => artifact.name)).size === immutableArtifacts.length
-    && (await Promise.all(immutableArtifacts.map(async (artifact) => {
-      const relativePath = String(artifact.path || "");
-      const artifactPath = resolve(jobDir, relativePath);
-      return artifact.path === expectedImmutablePath(artifact.name)
-        && artifactPath.startsWith(`${resolve(jobDir)}${sep}`)
-        && String(artifact.sha256 || "").startsWith("sha256:")
-        && Number(artifact.bytes) === (await stat(artifactPath).catch(() => null))?.size
-        && await hashExisting(artifactPath) === artifact.sha256;
-    }))).every(Boolean)
+    && immutableClosure.binding
   );
-  const providerProof = job.provider === "local"
-    || (job.provider === "gemini-browser" && generationClipBinding && shotPatternReceiptBinding && providerDecisionBinding && providerDecisionEventBinding && semanticRevalidationProviderZeroBinding)
+  const providerProof = (job.provider === "gemini-browser" && generationClipBinding && shotPatternReceiptBinding && providerDecisionBinding && providerDecisionEventBinding && semanticRevalidationProviderZeroBinding)
     || (job.provider === "local-video" && localVideoClipBinding && localVideoReceiptBinding && shotPatternReceiptBinding && providerDecisionBinding && providerDecisionEventBinding);
   const providerGenerationProvenance = job.provider === "gemini-browser" ? generationProvenance : job.provider === "local-video" ? localVideoModelBinding : false;
   const generatedCaptionCuesPerMinute = finalMedia?.duration > 0 ? round(captions.length * 60 / finalMedia.duration, 2) : null;
@@ -1657,66 +2198,105 @@ export async function evaluateJob(jobId, options = {}) {
   const evidenceTextBinding = verifyEvidenceBoundScript(script, sources, expectedSegments, job.format);
   const evidenceTextBindingVerified = evidenceTextBinding.verified === true;
   const claimEvidencePass = researchStatusVerified && evidenceTextBindingVerified && segmentClaimEvidence(script, sources);
-  const title = script?.title || job.topic || "";
+  const title = script?.title || (immutableEvaluation ? "" : job.topic || "");
   const titleHasHookPattern = hasEvidenceHookFraming(title);
   const completeSegments = Array.isArray(script?.segments) && script.segments.length >= expectedSegments && script.segments.every((segment) => segment.caption && segment.narration && segment.visualPrompt);
   const finalHasTarget = finalMedia?.width === target.width && finalMedia?.height === target.height;
   const sourceDurationSum = clipMedia.filter(Boolean).reduce((sum, media) => sum + media.duration, 0);
   const durationSum = normalizedMedia.filter(Boolean).reduce((sum, media) => sum + media.duration, 0);
   const durationDelta = finalMedia && durationSum ? Math.abs(finalMedia.duration - durationSum) : Number.POSITIVE_INFINITY;
-  const readOnlySealed = evaluationState.revisionEligible;
+  const readOnlySealed = immutableEvaluation;
+  const analysisCaption = captionsVttSnapshot
+    ? { path: "captions.vtt", snapshot: captionsVttSnapshot }
+    : captionsSnapshot
+      ? { path: "captions.srt", snapshot: captionsSnapshot }
+      : null;
+  const expectedAnalysisSourceMedia = frameAnalysisSourceReceipt({
+    finalSnapshot: exactMediaEvidence.get("final.mp4"),
+    captionsSnapshot: analysisCaption?.snapshot || null,
+    captionsPath: analysisCaption?.path || null,
+    normalized: normalizedNames.map((name) => ({ name, snapshot: exactMediaEvidence.get(name) })),
+    benchmarkSnapshot: benchmarkDurationSnapshot,
+    benchmarkPath: benchmarkDurationName
+  });
   const frameEvidence = options.reuseEvidenceFrames || readOnlySealed
-    ? await readExistingEvidenceFrames(jobDir, finalMedia)
+    ? await readExistingEvidenceFrames(jobDir, finalMedia, immutableEvaluation ? readEvaluationEvidence : null)
     : options.extractFrames === false ? [] : await extractEvidenceFrames(jobDir, finalMedia);
   let frameAudioCaption = null;
+  let frameAudioCaptionSnapshot = null;
+  let qualityFrameAudioCaptionSnapshot = null;
   let frameAudioCaptionError = null;
   if (finalMedia) {
     try {
-      const existingAnalysis = options.reuseExistingAnalysis || readOnlySealed ? await readJsonOptional(join(jobDir, QUALITY_DIR, "frame-audio-caption.json")) : null;
-      if (existingAnalysis?.runId === currentRunId) {
+      if (options.reuseExistingAnalysis || readOnlySealed) {
+        [frameAudioCaptionSnapshot, qualityFrameAudioCaptionSnapshot] = await Promise.all([
+          readEvaluationEvidence("frame-audio-caption.json", join(jobDir, "frame-audio-caption.json")),
+          readEvaluationEvidence("quality/frame-audio-caption.json", join(jobDir, QUALITY_DIR, "frame-audio-caption.json"))
+        ]);
+      }
+      const existingAnalysis = qualityFrameAudioCaptionSnapshot?.value || frameAudioCaptionSnapshot?.value || null;
+      const existingCopiesMatch = !readOnlySealed || Boolean(
+        frameAudioCaptionSnapshot
+        && qualityFrameAudioCaptionSnapshot
+        && frameAudioCaptionSnapshot.sha256 === qualityFrameAudioCaptionSnapshot.sha256
+      );
+      const existingAnalysisBound = existingAnalysis?.runId === currentRunId
+        && existingCopiesMatch
+        && frameAnalysisSourceBindingMatches(existingAnalysis.sourceMedia, expectedAnalysisSourceMedia);
+      if (existingAnalysisBound) {
         frameAudioCaption = existingAnalysis;
       } else if (readOnlySealed) {
-        frameAudioCaptionError = "봉인된 실행의 기존 프레임·음성·자막 분석을 찾지 못했습니다.";
+        frameAudioCaptionError = "봉인된 프레임·음성·자막 분석이 현재 final·captions·normalized exact bytes와 결속되지 않았습니다.";
       } else {
-        frameAudioCaption = await analyzeJobMedia(jobDir, {
+        if (!expectedAnalysisSourceMedia) throw new Error("프레임 분석에 필요한 exact media snapshot이 없습니다.");
+        const expectedCutTimes = [];
+        let cutCursor = 0;
+        for (let index = 0; index < normalizedMedia.length; index += 1) {
+          const media = normalizedMedia[index];
+          if (!media) throw new Error(`정규화 영상 ${index + 1}의 exact media probe에 실패했습니다.`);
+          cutCursor += media.duration;
+          if (index < normalizedMedia.length - 1) expectedCutTimes.push(cutCursor);
+        }
+        const analysisBenchmarkPath = await snapshotFiles.pathFor(benchmarkDurationSnapshot, benchmarkDurationPath);
+        const analysis = await analyzeVideo(finalPath, {
           frames: options.frames !== false,
           audio: options.audio !== false,
           runId: options.runId || job.runId || null,
-          benchmarkPath: benchmarkDurationPath,
+          captionText: analysisCaption?.snapshot?.text || "",
+          expectedCutTimes,
+          benchmarkPath: analysisBenchmarkPath,
           expectedDuration: { targetSec: job.targetDurationSec, rangeSec: job.targetDurationRangeSec }
         });
+        frameAudioCaption = { ...analysis, file: "final.mp4", sourceMedia: expectedAnalysisSourceMedia };
+        const analysisBytes = Buffer.from(JSON.stringify(frameAudioCaption, null, 2));
+        const analysisSnapshot = snapshotQualityEvidenceBuffer(analysisBytes);
+        const pinned = openPinnedQualityTree(jobDir, {
+          beforeQuality: (jobFd) => existingExclusiveQualityFile(jobFd, "frame-audio-caption.json")
+        });
+        try {
+          const rootIdentity = pinned.beforeQualityResult;
+          const qualityIdentity = existingExclusiveQualityFile(pinned.qualityFd, "frame-audio-caption.json");
+          replacePinnedQualityFile(pinned.jobFd, "frame-audio-caption.json", analysisBytes, rootIdentity);
+          replacePinnedQualityFile(pinned.qualityFd, "frame-audio-caption.json", analysisBytes, qualityIdentity);
+        } finally {
+          pinned.close();
+        }
+        frameAudioCaptionSnapshot = { path: join(jobDir, "frame-audio-caption.json"), ...analysisSnapshot };
+        qualityFrameAudioCaptionSnapshot = { path: join(jobDir, QUALITY_DIR, "frame-audio-caption.json"), ...analysisSnapshot };
       }
     } catch (error) {
       frameAudioCaptionError = error.message;
     }
   }
   const durationProfilePass = Boolean(frameAudioCaption?.benchmarkDuration?.insideRecommendedRange);
-  const analyzedPaths = [...new Set([
-    finalPath,
-    assembledPath,
-    join(jobDir, "captions.srt"),
-    join(jobDir, "script.json"),
-    join(jobDir, "sources.json"),
-    benchmarkChannelPath,
-    benchmarkDurationPath,
-    benchmarkRlmPath,
-    inputManifestPath,
-    join(jobDir, "frame-audio-caption.json"),
-    join(jobDir, "captions.vtt"),
-    join(jobDir, "caption-timing.json"),
-    ...(voiceoverSync ? [join(jobDir, "voiceover-sync.json")] : []),
-    ...(voiceoverSync ? [join(jobDir, "voiceover-mastered.wav")] : []),
-    ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
-    ...(localVideoGeneration ? [localVideoGenerationPath] : []),
-    ...(shotPatternReceipt ? [shotPatternReceiptPath] : []),
-    ...localSemanticEvidencePaths,
-    join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
-    ...clips,
-    ...normalized,
-    ...frameEvidence.map((frame) => frame.path)
-  ])];
-  const evidenceHashes = Object.fromEntries((await Promise.all(analyzedPaths.map(async (path) => [evidenceRelative(jobDir, path), await hashExisting(path)]))).filter(([, hash]) => hash));
-  const immutableByName = new Map(immutableArtifacts.map((artifact) => [artifact.name, artifact]));
+  const semanticVerifierSnapshots = new Map([
+    ["script.json", scriptSnapshot],
+    ["caption-timing.json", captionTimingSnapshot],
+    ["voiceover-sync.json", voiceoverSyncSnapshot],
+    ["voiceover-mastered.wav", voiceoverMasteredSnapshot],
+    ["final.mp4", exactMediaEvidence.get("final.mp4")],
+    [localSemanticReceiptName, localSemanticReceiptSnapshot]
+  ].filter(([, snapshot]) => snapshot));
   const localSemanticVerification = await verifyLocalSemanticReceipt({
     jobDir,
     jobId,
@@ -1726,8 +2306,85 @@ export async function evaluateJob(jobId, options = {}) {
     voiceoverSync,
     runManifest,
     immutableArtifacts,
-    requireImmutable: evaluationState.semanticGateEligible
+    requireImmutable: evaluationState.semanticGateEligible,
+    evidenceSnapshots: semanticVerifierSnapshots
   });
+  if (localSemanticVerification.evidenceSnapshots instanceof Map) {
+    for (const [name, snapshot] of localSemanticVerification.evidenceSnapshots) {
+      if (snapshot?.privatePath || snapshot?.buffer) {
+        localSemanticVerification.evidenceSnapshots.set(name, {
+          path: snapshot.path,
+          ...(snapshot.privatePath ? { privatePath: snapshot.privatePath } : {}),
+          bytes: snapshot.bytes,
+          sha256: snapshot.sha256,
+          text: null,
+          value: null
+        });
+      }
+    }
+  }
+  const analyzedPaths = [...new Set([
+    finalPath,
+    assembledPath,
+    thumbnailPath,
+    join(jobDir, "captions.srt"),
+    join(jobDir, "script.json"),
+    join(jobDir, "sources.json"),
+    benchmarkChannelPath,
+    benchmarkDurationPath,
+    benchmarkRlmPath,
+    inputManifestPath,
+    ...(localClipImport ? [localClipImportPath] : []),
+    join(jobDir, "frame-audio-caption.json"),
+    join(jobDir, "captions.vtt"),
+    join(jobDir, "caption-timing.json"),
+    ...(voiceoverSync ? [join(jobDir, "voiceover-sync.json")] : []),
+    ...(voiceoverSync ? [join(jobDir, "voiceover-mastered.wav")] : []),
+    ...(geminiGeneration ? [join(jobDir, "gemini-generation.json")] : []),
+    ...(geminiSourceGenerationSnapshot ? [join(jobDir, geminiSourceGenerationName)] : []),
+    ...(localVideoGeneration ? [localVideoGenerationPath] : []),
+    ...(shotPatternReceipt ? [shotPatternReceiptPath] : []),
+    ...localSemanticEvidencePaths,
+    join(jobDir, QUALITY_DIR, "frame-audio-caption.json"),
+    ...clips,
+    ...normalized,
+    ...frameEvidence.map((frame) => frame.path)
+  ])];
+  const exactEvidenceSnapshots = new Map([
+    ...immutableClosureSnapshots.entries(),
+    ["script.json", scriptSnapshot],
+    ["sources.json", sourceBundleSnapshot],
+    ["captions.srt", captionsSnapshot],
+    ["captions.vtt", captionsVttSnapshot],
+    ["caption-timing.json", captionTimingSnapshot],
+    ["voiceover-sync.json", voiceoverSyncSnapshot],
+    ["voiceover-mastered.wav", voiceoverMasteredSnapshot],
+    [benchmarkChannelName, benchmarkChannelSnapshot],
+    [benchmarkDurationName, benchmarkDurationSnapshot],
+    [benchmarkRlmName, benchmarkRlmSnapshot],
+    [inputManifestName, inputManifestSnapshot],
+    [localClipImportName, localClipImportSnapshot],
+    ["gemini-generation.json", geminiGenerationSnapshot],
+    [geminiSourceGenerationName, geminiSourceGenerationSnapshot],
+    [localVideoGenerationName, localVideoGenerationSnapshot],
+    [shotPatternReceiptName, shotPatternReceiptSnapshot],
+    [eventLogName, eventLogSnapshot],
+    ["frame-audio-caption.json", frameAudioCaptionSnapshot],
+    ["quality/frame-audio-caption.json", qualityFrameAudioCaptionSnapshot],
+    ...frameEvidence.filter((frame) => frame.snapshot).map((frame) => [frame.name, frame.snapshot]),
+    ...exactMediaEvidence.entries(),
+    ...[...(localSemanticVerification.evidenceSnapshots || new Map()).entries()]
+  ]);
+  const evidenceHashes = Object.fromEntries((await Promise.all(analyzedPaths.map(async (path) => {
+    const name = evaluationEvidenceNameByPath.get(path) || evidenceRelative(jobDir, path);
+    const hash = exactEvidenceSnapshots.has(name)
+      ? exactEvidenceSnapshots.get(name)?.sha256 || null
+      : immutableEvaluation
+        ? null
+        : await hashExisting(path);
+    return [name, hash];
+  }))).filter(([, hash]) => hash));
+  const immutableByName = new Map(immutableArtifacts.map((artifact) => [artifact.name, artifact]));
   const immutableEvidenceBinding = Boolean(
     immutableClosureBinding
     && Object.keys(evidenceHashes).length > 0
@@ -1754,6 +2411,7 @@ export async function evaluateJob(jobId, options = {}) {
   const audioQcPass = Boolean(frameAudioCaption?.audio?.audioQc?.status === "measured");
   const cutReconciliationPass = Boolean(frameAudioCaption?.cutReconciliation && ["matched", "not-applicable"].includes(frameAudioCaption.cutReconciliation.status));
   const captionDensityPass = !job.captions || Boolean(Number.isFinite(generatedCaptionCuesPerMinute) && Number.isFinite(benchmarkCaptionDensity) && generatedCaptionCuesPerMinute / benchmarkCaptionDensity >= 0.5 && generatedCaptionCuesPerMinute / benchmarkCaptionDensity <= 1.5);
+  const evaluationWarnings = immutableEvaluation ? (runManifest.ledgerErrors || []) : (job.warnings || []);
 
   const hookFactors = [
     { id: "title", label: "제목 존재", max: 15, pass: Boolean(title.trim()) },
@@ -1781,7 +2439,7 @@ export async function evaluateJob(jobId, options = {}) {
     { id: "cutReconciliation", label: "클립 경계·프레임 컷 정합", max: 10, pass: cutReconciliationPass },
     { id: "video", label: "최종 비디오 트랙", max: 15, pass: Boolean(finalMedia?.hasVideo) },
     { id: "audio", label: "최종 단일 오디오 트랙", max: 15, pass: finalMedia?.audioStreamCount === 1 },
-    { id: "thumbnail", label: "썸네일 생성", max: 5, pass: existsSync(join(jobDir, "thumbnail.jpg")) }
+    { id: "thumbnail", label: "썸네일 생성", max: 5, pass: Boolean(exactMediaEvidence.get("thumbnail.jpg")) }
   ];
   const audioFactors = [
     { id: "captionsFile", label: "SRT 생성", max: 15, pass: !job.captions || captions.length > 0 },
@@ -1792,7 +2450,7 @@ export async function evaluateJob(jobId, options = {}) {
     { id: "sampleRate", label: "48kHz 오디오", max: 10, pass: Boolean(finalMedia?.sampleRate === 48000) },
     { id: "frameCaptionAudio", label: "프레임·자막·음성 분석 완료", max: 15, pass: Boolean(frameAudioCaption && frameAudioCaption.captions.count === captions.length && frameAudioCaption.audio) },
     { id: "audioQc", label: "LUFS·true peak·클리핑 분석", max: 10, pass: audioQcPass },
-    { id: "warnings", label: "오디오 경고 없음", max: 5, pass: (job.warnings || []).length === 0 }
+    { id: "warnings", label: "오디오 경고 없음", max: 5, pass: evaluationWarnings.length === 0 }
   ];
   const sourceFactors = [
     { id: "sourceCount", label: "출처 1개 이상", max: 25, pass: sources.length > 0 },
@@ -1804,10 +2462,16 @@ export async function evaluateJob(jobId, options = {}) {
   ];
   const automationFactors = [
     { id: "completed", label: "작업 완료 상태", max: 20, pass: ["completed", "needs-improvement", "verifying"].includes(job.status) },
-    { id: "artifacts", label: "필수 산출물", max: 20, pass: REQUIRED_ARTIFACTS.every((name) => existsSync(join(jobDir, name))) },
+    { id: "artifacts", label: "필수 산출물", max: 20, pass: REQUIRED_ARTIFACTS.every((name) => (
+      name === "final.mp4" ? Boolean(exactMediaEvidence.get(name))
+        : name === "captions.srt" ? Boolean(captionsSnapshot)
+          : name === "script.json" ? Boolean(scriptSnapshot)
+            : name === "thumbnail.jpg" ? Boolean(exactMediaEvidence.get(name))
+              : false
+    )) },
     { id: "clips", label: "클립 수 충족", max: 20, pass: clips.length >= actualClipTarget },
-    { id: "jobId", label: "작업 디렉터리 영속성", max: 15, pass: existsSync(join(jobDir, "job.json")) && existsSync(join(jobDir, "script.json")) },
-    { id: "warnings", label: "실패·경고 없음", max: 15, pass: (job.warnings || []).length === 0 && ["completed", "needs-improvement", "verifying"].includes(job.status) },
+    { id: "jobId", label: "작업 디렉터리 영속성", max: 15, pass: Boolean(job?.id === jobId && scriptSnapshot) },
+    { id: "warnings", label: "실패·경고 없음", max: 15, pass: evaluationWarnings.length === 0 && ["completed", "needs-improvement", "verifying"].includes(job.status) },
     { id: "provider", label: "자동 소스 지정·입력 결속", max: 10, pass: providerProof && inputManifestBinding && runManifestBinding && benchmarkReceiptBinding && sourceSetBinding }
   ];
 
@@ -1893,6 +2557,9 @@ export async function evaluateJob(jobId, options = {}) {
   if (!claimEvidencePass) blockers.push("장면별 주장에 연결된 인용 가능한 출처 근거와 텍스트 결속이 없습니다.");
   if (!contentSemanticsVerified) blockers.push(`로컬 의미 영수증 검증을 통과하지 못했습니다. 장면 관련성·번인 자막 OCR·black-frame·extractive 출처·narrationGenerationBinding을 확인하세요${localSemanticVerification.blockers.length ? `: ${localSemanticVerification.blockers.join(", ")}` : ""}`);
   const reportedJobStatus = finalizationReady ? "verifying" : job.status;
+  const reportedFinalMedia = finalMedia
+    ? { ...finalMedia, path: evaluationEvidenceNameByPath.get(finalMedia.path) || evidenceRelative(jobDir, finalMedia.path) }
+    : null;
   const quality = {
     schemaVersion: 1,
     jobId,
@@ -1932,10 +2599,13 @@ export async function evaluateJob(jobId, options = {}) {
         supersedes: revisionContext.supersedes
       } : null,
       provider: job.provider,
+      providerEvidenceEligible: job.provider !== "local",
       providerProof,
       providerDecisionBinding,
       providerDecisionEventBinding,
       providerAttestationBinding,
+      geminiSubmissionLineageBinding,
+      geminiSubmissionLineage: runManifest?.geminiSubmissionLineage || null,
       geminiGeneration: geminiGeneration ? { status: geminiGeneration.status, segmentCount: geminiGeneration.segments?.length || 0, browser: geminiGeneration.browser, sessionBinding: geminiGeneration.sessionBinding, sessionBindingHash: geminiGeneration.sessionBindingHash } : null,
       localVideoGeneration: localVideoGeneration ? { status: localVideoGeneration.status, segmentCount: localVideoSegments.length, model: localVideoGeneration.model, modelVersion: localVideoGeneration.modelVersion, modelId: localVideoGeneration.modelId, receiptPath: evidenceRelative(jobDir, localVideoGenerationPath), receiptSha256: localVideoReceiptHash } : null,
       localVideoModelBinding,
@@ -2001,7 +2671,7 @@ export async function evaluateJob(jobId, options = {}) {
       expectedClips: actualClipTarget,
       clipCount: clips.length,
       normalizedCount: normalized.length,
-      finalMedia,
+      finalMedia: reportedFinalMedia,
       durationSum: round(durationSum, 3),
       sourceDurationSum: round(sourceDurationSum, 3),
       durationDelta: Number.isFinite(durationDelta) ? round(durationDelta, 3) : null,
@@ -2030,7 +2700,7 @@ export async function evaluateJob(jobId, options = {}) {
       sourceQuality,
       claimEvidencePass,
       sourceBundle: sourceBundle ? { status: sourceBundle.status, fetchedCount: sourceBundle.fetchedCount, totalCount: sourceBundle.totalCount, evidenceCount: sourceBundle.evidenceCount || 0 } : { status: "missing", fetchedCount: 0, totalCount: 0, evidenceCount: 0 },
-      evidenceFrames: frameEvidence.map((frame) => ({ path: evidenceRelative(jobDir, frame.path), time: frame.time, sha256: frame.sha256 })),
+      evidenceFrames: frameEvidence.map((frame) => ({ path: frame.name || evidenceRelative(jobDir, frame.path), time: frame.time, sha256: frame.sha256 })),
       evidenceHashes,
       frameAudioCaption: frameAudioCaption ? {
         path: "quality/frame-audio-caption.json",
@@ -2061,6 +2731,15 @@ export async function evaluateJob(jobId, options = {}) {
   runtimeQualityEvaluationHashes.set(quality, hashJson(quality));
   if (options.persist !== false) await persistQuality(jobDir, quality);
   return quality;
+}
+
+export async function evaluateJob(jobId, options = {}) {
+  const snapshotFiles = qualitySnapshotFileManager();
+  try {
+    return await evaluateJobExact(jobId, options, snapshotFiles);
+  } finally {
+    await snapshotFiles.cleanup();
+  }
 }
 
 export async function runQualityLoop(jobId, options = {}) {

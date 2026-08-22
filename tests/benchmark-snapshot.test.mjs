@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { snapshotBenchmarkFiles } from "../src/pipeline.mjs";
+import { hashFile } from "../src/run-ledger.mjs";
 
 const root = join(import.meta.dir, "..");
 
@@ -87,6 +91,60 @@ describe("published benchmark snapshot", () => {
       } else {
         expect(item.analysis.captions.sourceReceipt).toBeNull();
       }
+    }
+  });
+});
+
+describe("run benchmark snapshot byte binding", () => {
+  test("parses, writes, and receipts one captured Buffer even if every source path changes", async () => {
+    const temporary = await mkdtemp(join(tmpdir(), "ps4-benchmark-snapshot-"));
+    try {
+      const capturedAt = "2026-08-12T00:00:00.000Z";
+      const fixtures = [
+        {
+          key: "channel",
+          name: "channel-analysis.json",
+          value: { snapshot: { totalVideos: 3, shorts: 2, longVideos: 1, capturedAt } }
+        },
+        {
+          key: "duration",
+          name: "shorts-metadata.json",
+          value: { snapshotVideoCount: 2, sourceSnapshotAt: capturedAt }
+        },
+        {
+          key: "rlm",
+          name: "rlm-benchmark-analysis.json",
+          value: { reduction: { inputCount: 2 }, mediaEvidence: { sampleCount: 1 }, analyzedAt: capturedAt }
+        }
+      ];
+      const specs = [];
+      const originals = new Map();
+      for (const fixture of fixtures) {
+        const source = join(temporary, `source-${fixture.name}`);
+        const bytes = Buffer.from(JSON.stringify(fixture.value));
+        await writeFile(source, bytes);
+        specs.push({ key: fixture.key, name: fixture.name, source });
+        originals.set(source, bytes);
+      }
+      const runDir = join(temporary, "run");
+      const snapshot = await snapshotBenchmarkFiles(runDir, "run-byte-bound", {
+        specs,
+        readFileFn: async (source) => {
+          const bytes = await readFile(source);
+          await writeFile(source, JSON.stringify({ replacedAfterRead: true }));
+          return bytes;
+        }
+      });
+
+      for (const spec of specs) {
+        const target = join(runDir, "benchmarks", spec.name);
+        expect(await readFile(target)).toEqual(originals.get(spec.source));
+      }
+      expect(snapshot.sha256).toBe(await hashFile(join(runDir, "benchmarks", "channel-analysis.json")));
+      expect(snapshot.durationMetadata.sha256).toBe(await hashFile(join(runDir, "benchmarks", "shorts-metadata.json")));
+      expect(snapshot.rlmMediaEvidence.sha256).toBe(await hashFile(join(runDir, "benchmarks", "rlm-benchmark-analysis.json")));
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
     }
   });
 });

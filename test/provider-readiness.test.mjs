@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   PROVIDER_PROBE_TTL_MS,
   bflConfigurationReadiness,
@@ -10,7 +10,7 @@ import {
   geminiMonitorReadiness
 } from "../src/provider-readiness.mjs";
 import { providerReadinessMarkup } from "../public/provider-readiness-view.js";
-import { SESSION_COOKIE_NAME, createSessionToken, createStudioRequestHandler } from "../src/server.mjs";
+import { createSessionToken, createStudioRequestHandler } from "../src/server.mjs";
 
 const temporaryDirectories = [];
 const NOW = new Date("2026-08-12T12:00:00.000Z");
@@ -28,6 +28,48 @@ async function fixtureRoot() {
   await writeFile(adapter, "#!/usr/bin/env node\n", { mode: 0o755 });
   await chmod(adapter, 0o755);
   return { root, adapter };
+}
+
+async function mutationSnapshot(path) {
+  const [bytes, file, parent] = await Promise.all([
+    readFile(path),
+    stat(path, { bigint: true }),
+    stat(dirname(path), { bigint: true })
+  ]);
+  return {
+    bytes,
+    fileMtimeNs: file.mtimeNs,
+    fileCtimeNs: file.ctimeNs,
+    parentMtimeNs: parent.mtimeNs,
+    parentCtimeNs: parent.ctimeNs
+  };
+}
+
+function freshProbe(provider = "higgsfield") {
+  return {
+    schemaVersion: 1,
+    provider,
+    observedAt: "2026-08-12T11:59:00.000Z",
+    status: "available",
+    blockerCode: null
+  };
+}
+
+function freshMonitor() {
+  return {
+    schemaVersion: 2,
+    updatedAt: "2026-08-12T11:59:30.000Z",
+    status: "quota-available",
+    profiles: [{
+      id: "account-1",
+      observedAt: "2026-08-12T11:59:20.000Z",
+      authentication: "authenticated",
+      headless: true,
+      requestedHeadless: true,
+      videoMode: true,
+      available: true
+    }]
+  };
 }
 
 describe("strict provider probe receipts", () => {
@@ -140,6 +182,79 @@ describe("configuration-only BFL readiness", () => {
 });
 
 describe("readiness projection and UI", () => {
+  test("rejects linked external probe and monitor receipts without touching their bytes or metadata", async () => {
+    for (const kind of ["hardlink", "symlink"]) {
+      const { root } = await fixtureRoot();
+      const externalDir = join(root, `external-${kind}`);
+      await mkdir(externalDir);
+      const externalProbe = join(externalDir, "higgsfield.json");
+      const externalMonitor = join(externalDir, "gemini-monitor.json");
+      await writeFile(externalProbe, JSON.stringify(freshProbe()));
+      await writeFile(externalMonitor, JSON.stringify(freshMonitor()));
+      const probeLeaf = join(root, "workspace", "provider-probes", "higgsfield.json");
+      const monitorLeaf = join(root, "workspace", "gemini-monitor.json");
+      if (kind === "hardlink") {
+        await link(externalProbe, probeLeaf);
+        await link(externalMonitor, monitorLeaf);
+      } else {
+        await symlink(externalProbe, probeLeaf);
+        await symlink(externalMonitor, monitorLeaf);
+      }
+      const beforeProbe = await mutationSnapshot(externalProbe);
+      const beforeMonitor = await mutationSnapshot(externalMonitor);
+
+      const result = await buildProviderReadiness({ root, env: {}, now: NOW });
+
+      expect(result.providers.higgsfield.status).toBe("NOT_CONNECTED");
+      expect(result.providers.gemini.status).toBe("NOT_CONNECTED");
+      expect(await mutationSnapshot(externalProbe)).toEqual(beforeProbe);
+      expect(await mutationSnapshot(externalMonitor)).toEqual(beforeMonitor);
+    }
+  });
+
+  test("rejects oversized, non-UTF-8, and aliased probe ancestry as disconnected evidence", async () => {
+    const { root } = await fixtureRoot();
+    const probeRoot = join(root, "workspace", "provider-probes");
+    const higgsfieldPath = join(probeRoot, "higgsfield.json");
+    await writeFile(higgsfieldPath, Buffer.alloc(8 * 1024 + 1, 0x61));
+    expect((await buildProviderReadiness({ root, env: {}, now: NOW })).providers.higgsfield.status).toBe("NOT_CONNECTED");
+    await writeFile(higgsfieldPath, Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0xff, 0x7d]));
+    expect((await buildProviderReadiness({ root, env: {}, now: NOW })).providers.higgsfield.status).toBe("NOT_CONNECTED");
+
+    const externalProbeRoot = join(root, "external-probe-root");
+    await mkdir(externalProbeRoot);
+    const externalProbe = join(externalProbeRoot, "higgsfield.json");
+    await writeFile(externalProbe, JSON.stringify(freshProbe()));
+    await rm(probeRoot, { recursive: true });
+    await symlink(externalProbeRoot, probeRoot, "dir");
+    const before = await mutationSnapshot(externalProbe);
+    const result = await buildProviderReadiness({ root, env: {}, now: NOW });
+    expect(result.providers.higgsfield.status).toBe("NOT_CONNECTED");
+    expect(await mutationSnapshot(externalProbe)).toEqual(before);
+  });
+
+  test("does not follow an aliased workspace root for readiness evidence", async () => {
+    const { root } = await fixtureRoot();
+    const workspace = join(root, "workspace");
+    const externalWorkspace = join(root, "external-workspace");
+    await mkdir(join(externalWorkspace, "provider-probes"), { recursive: true });
+    const externalMonitor = join(externalWorkspace, "gemini-monitor.json");
+    const externalProbe = join(externalWorkspace, "provider-probes", "higgsfield.json");
+    await writeFile(externalMonitor, JSON.stringify(freshMonitor()));
+    await writeFile(externalProbe, JSON.stringify(freshProbe()));
+    await rm(workspace, { recursive: true });
+    await symlink(externalWorkspace, workspace, "dir");
+    const beforeMonitor = await mutationSnapshot(externalMonitor);
+    const beforeProbe = await mutationSnapshot(externalProbe);
+
+    const result = await buildProviderReadiness({ root, env: {}, now: NOW });
+
+    expect(result.providers.gemini.status).toBe("NOT_CONNECTED");
+    expect(result.providers.higgsfield.status).toBe("NOT_CONNECTED");
+    expect(await mutationSnapshot(externalMonitor)).toEqual(beforeMonitor);
+    expect(await mutationSnapshot(externalProbe)).toEqual(beforeProbe);
+  });
+
   test("projects a redacted Gemini monitor and fixed receipt locations", async () => {
     const { root } = await fixtureRoot();
     await writeFile(join(root, "workspace", "gemini-monitor.json"), JSON.stringify({
@@ -205,13 +320,14 @@ describe("readiness projection and UI", () => {
     const handler = createStudioRequestHandler({ token });
     const rejected = await handler(new Request("http://127.0.0.1:3000/api/providers/readiness"));
     const accepted = await handler(new Request("http://127.0.0.1:3000/api/providers/readiness", {
-      headers: { cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}` }
+      headers: { authorization: `Bearer ${token}` }
     }));
     const rejectedPost = await handler(new Request("http://127.0.0.1:3000/api/providers/readiness", {
       method: "POST",
       headers: {
         origin: "http://127.0.0.1:3000",
-        cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`
+        authorization: `Bearer ${token}`,
+        "sec-fetch-site": "same-origin"
       }
     }));
     expect(rejected.status).toBe(403);

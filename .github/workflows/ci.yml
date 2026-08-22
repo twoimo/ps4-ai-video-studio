@@ -26,12 +26,16 @@ jobs:
       GEMINI_CHROME_HEADLESS: "1"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        # v4.4.0. Pin third-party workflow code to the signed release commit;
+        # mutable major tags are not an acceptable CI execution boundary.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        # v2.2.0. Keep the action immutable independently of the Bun version.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.14
 
@@ -41,6 +45,9 @@ jobs:
           sudo apt-get install --yes --no-install-recommends ffmpeg
           ffmpeg -version | head -n 1
 
+      - name: Check release file closure
+        run: bun run check:release
+
       - name: Check JavaScript syntax
         shell: bash
         run: |
@@ -48,11 +55,30 @@ jobs:
             node --check "$file"
           done
 
-      # Tests must use local fixtures or mocked fetch implementations. This job
-      # intentionally provides no provider credentials and starts no monitor,
-      # browser automation, benchmark download, or paid generation command.
-      - name: Run offline tests
-        run: bun test
+      # The preload rejects network-capable JS APIs, while the private network
+      # namespace also blocks native Bun.fetch and any accidental child tool.
+      # Only loopback is brought up for the real-server and fixed-port fixtures.
+      - name: Run offline tests with outbound networking disabled
+        shell: bash
+        run: |
+          command -v sudo
+          command -v unshare
+          command -v ip
+          command -v setpriv
+          BUN_BIN="$(command -v bun)"
+          RUNNER_UID="$(id -u)"
+          RUNNER_GID="$(id -g)"
+          RUNNER_HOME="$HOME"
+          sudo --preserve-env=CI,BFL_API_KEY,BFL_DRY_RUN,GEMINI_API_KEY,PS4_LOCAL_VIDEO_GENERATOR,GEMINI_CHROME_HEADLESS \
+            unshare --net -- \
+            bash -euo pipefail -c '
+              ip link set lo up
+              # Prevent the unprivileged test process or any child tool from
+              # regaining runner root via setuid sudo and nsentering the host
+              # network namespace.
+              exec setpriv --reuid "$1" --regid "$2" --clear-groups --no-new-privs \
+                env HOME="$3" "$4" test
+            ' _ "$RUNNER_UID" "$RUNNER_GID" "$RUNNER_HOME" "$BUN_BIN"
 
       - name: Check whitespace errors
         env:

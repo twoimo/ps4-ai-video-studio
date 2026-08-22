@@ -1,8 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { LOCAL_SEMANTIC_POLICY_BINDING } from "./local-semantic-verifier.mjs";
+import { LOCAL_SEMANTIC_POLICY_BINDING, readSemanticEvidenceSnapshot } from "./local-semantic-verifier.mjs";
 import { canonicalJsonHash } from "./provenance.mjs";
-import { hashFile } from "./run-ledger.mjs";
 
 export const SEMANTIC_REVALIDATION_MODE = "sealed-gemini-local-semantic-revalidation/v1";
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{5,160}$/;
@@ -27,32 +25,39 @@ export async function loadSemanticRevalidationSource(jobDir, manifest) {
   const jobRoot = resolve(jobDir);
   const sourceManifestPath = resolve(jobRoot, "runs", sourceRunId, "manifest.json");
   if (!sourceManifestPath.startsWith(`${jobRoot}${sep}`)) throw new Error("semantic child source manifest 경로가 안전하지 않습니다.");
-  const sourceManifestHash = await hashFile(sourceManifestPath).catch(() => null);
+  const sourceManifestSnapshot = await readSemanticEvidenceSnapshot(sourceManifestPath).catch(() => null);
+  const sourceManifestHash = sourceManifestSnapshot?.sha256 || null;
   if (sourceManifestHash !== declaration.parentManifestHash) throw new Error("semantic child parent manifest 해시가 현재 봉인 원본과 다릅니다.");
-  const sourceManifest = JSON.parse(await readFile(sourceManifestPath, "utf8"));
+  const sourceManifest = sourceManifestSnapshot?.value || null;
   if (
-    sourceManifest.jobId !== manifest.jobId
+    !sourceManifest
+    || sourceManifest.jobId !== manifest.jobId
     || sourceManifest.runId !== sourceRunId
     || sourceManifest.status !== "needs-improvement"
     || sourceManifest.runStatus !== "needs-improvement"
     || sourceManifest.request?.provider !== "gemini-browser"
     || canonicalJsonHash(sourceManifest.immutableArtifacts) !== declaration.sourceImmutableArtifactsHash
   ) throw new Error("semantic child parent manifest의 봉인 상태·provider·artifact closure가 유효하지 않습니다.");
-  const generationDeclaration = (sourceManifest.immutableArtifacts || []).find((artifact) => artifact?.name === "gemini-generation.json");
+  const generationDeclarations = (sourceManifest.immutableArtifacts || []).filter((artifact) => artifact?.name === "gemini-generation.json");
+  const generationDeclaration = generationDeclarations.length === 1 ? generationDeclarations[0] : null;
   if (
     !generationDeclaration
+    || generationDeclaration.path !== `runs/${sourceRunId}/artifacts/gemini-generation.json`
+    || !/^sha256:[a-f0-9]{64}$/u.test(String(generationDeclaration.sha256 || ""))
+    || !Number.isSafeInteger(Number(generationDeclaration.bytes))
+    || Number(generationDeclaration.bytes) < 0
     || declaration.sourceProviderProvenance?.path !== generationDeclaration.path
     || declaration.sourceProviderProvenance?.sha256 !== generationDeclaration.sha256
   ) throw new Error("semantic child의 source provider provenance가 parent immutable generation과 다릅니다.");
   const sourceGenerationPath = resolve(jobRoot, generationDeclaration.path);
   if (!sourceGenerationPath.startsWith(`${jobRoot}${sep}`)) throw new Error("semantic child source generation 경로가 안전하지 않습니다.");
-  const sourceGenerationStat = await stat(sourceGenerationPath).catch(() => null);
+  const sourceGenerationSnapshot = await readSemanticEvidenceSnapshot(sourceGenerationPath).catch(() => null);
   if (
-    !sourceGenerationStat?.isFile()
-    || Number(generationDeclaration.bytes) !== sourceGenerationStat.size
-    || await hashFile(sourceGenerationPath).catch(() => null) !== generationDeclaration.sha256
+    !sourceGenerationSnapshot
+    || Number(generationDeclaration.bytes) !== sourceGenerationSnapshot.bytes
+    || sourceGenerationSnapshot.sha256 !== generationDeclaration.sha256
   ) throw new Error("semantic child source generation immutable 바이트가 선언과 다릅니다.");
-  const sourceGeneration = JSON.parse(await readFile(sourceGenerationPath, "utf8"));
+  const sourceGeneration = sourceGenerationSnapshot.value;
   return {
     sourceRunId,
     sourceManifest,

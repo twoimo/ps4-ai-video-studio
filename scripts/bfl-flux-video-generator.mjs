@@ -1,10 +1,33 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
-import { isIP } from "node:net";
-import { dirname, join, resolve, sep } from "node:path";
+import { constants as fsConstants, readSync } from "node:fs";
+import { lstat, open } from "node:fs/promises";
+import { createServer, isIP } from "node:net";
+import { basename, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertBflValueDoesNotContainApiKey,
+  claimBflProviderExecution,
+  validateHistoricalBflRequestAuthorization,
+  validateBflRequestAuthorization,
+  verifyBflConsumedApprovalForRequest
+} from "../src/bfl-paid-approval.mjs";
+import {
+  closeFd,
+  createFileAt,
+  openDirectoryAt,
+  openFileAt,
+  openOrCreateDirectoryAt,
+  readFdBuffer,
+  renameAtNoReplace,
+  replaceFileAt,
+  sameFdIdentity,
+  statFd,
+  syncFd,
+  unlinkAt,
+  writeFdBuffer
+} from "../src/dirfd.mjs";
 
 const API_URL = "https://api.bfl.ai/v1/flux-3-video";
 const API_BASE_URL = "https://api.bfl.ai";
@@ -14,11 +37,29 @@ const MIN_DURATION_SEC = 5;
 const MAX_DURATION_SEC = 20;
 const DEFAULT_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_MAX_JSON_RESPONSE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_MEDIA_BYTES = 512 * 1024 * 1024;
 const MAX_MAX_MEDIA_BYTES = 512 * 1024 * 1024;
 const CREDIT_USD = 0.01;
+const OFFICIAL_PRICING_URL = "https://docs.bfl.ai/quick_start/pricing";
+// FLUX 3 Video full-render t2v pricing published by BFL. The adapter never
+// enables draft mode, so an operator estimate below this floor is unsafe.
+const OFFICIAL_FULL_RENDER_CREDITS_PER_SECOND = Object.freeze({ hd: 17, fhd: 29 });
 const CHECKPOINT_SCHEMA_VERSION = 1;
 const RECEIPT_SCHEMA_VERSION = 1;
+const INVOCATION_LEASE_SCHEMA_VERSION = 2;
+const INVOCATION_LEASE_PREFIX = ".bfl-flux-video-invocation-";
+const CHECKPOINT_ROOT_NAME = ".bfl-flux-video";
+const MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024;
+const MAX_INVOCATION_LEASE_BYTES = 256 * 1024;
+// One kernel-owned loopback listener serializes every paid BFL executor on the
+// machine. The operating system releases it on SIGKILL, unlike a file lease.
+const GLOBAL_BFL_GUARD_HOST = "127.0.0.1";
+const GLOBAL_BFL_GUARD_PORT = 41493;
+const BFL_TASK_BODY_KEYS = Object.freeze([
+  "aspect_ratio", "draft", "duration", "generate_audio", "mode", "prompt",
+  "resolution", "safety_tolerance", "version"
+]);
 const TERMINAL_SUCCESS_STATUSES = new Set(["ready", "completed", "complete", "succeeded", "success"]);
 const ACTIVE_STATUSES = new Set(["pending", "processing", "queued", "submitted", "in_progress", "in-progress", "running", "reasoning", "generating"]);
 const FAILURE_STATUSES = new Set(["error", "failed"]);
@@ -29,6 +70,10 @@ const APPROVED_API_ORIGINS = new Set([
   "https://api.us.bfl.ai"
 ]);
 const SENSITIVE_KEY = /(?:api[-_]?key|authorization|cookie|credential|password|private[-_]?key|secret|signature|token|webhook[-_]?secret|^sig$)/iu;
+const SAFE_ATTESTATION_KEY = new Set([
+  "paidAuthorization", "authorizationHash", "paidAuthorizationHash", "apiKeyFingerprint",
+  "approvalHash", "capabilityHash", "contextHash", "requestPolicyHash", "jobBindingHash", "adapterSha256"
+]);
 const SENSITIVE_QUERY_KEY = /(?:api[-_]?key|auth|credential|key|password|secret|signature|token|^sig$|^x-amz-|^x-goog-)/iu;
 
 function requiredString(value, label) {
@@ -50,6 +95,33 @@ function stableValue(value) {
 
 function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
+}
+
+function canonicalJsonSnapshot(value, label) {
+  let text;
+  try {
+    text = JSON.stringify(stableValue(value));
+  } catch {
+    throw new Error(`${label} could not be canonicalized`);
+  }
+  if (typeof text !== "string") throw new Error(`${label} is not JSON serializable`);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${label} canonical bytes are not valid JSON`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${label} must be a plain JSON object`);
+  if (Object.keys(parsed).sort().join(",") !== [...BFL_TASK_BODY_KEYS].sort().join(",")) {
+    throw new Error(`${label} does not have the exact approved BFL body shape`);
+  }
+  const canonicalText = JSON.stringify(stableValue(parsed));
+  if (canonicalText !== text) throw new Error(`${label} canonical bytes are unstable`);
+  return {
+    value: parsed,
+    text,
+    sha256: `sha256:${createHash("sha256").update(text).digest("hex")}`
+  };
 }
 
 function timestamp(value) {
@@ -134,8 +206,15 @@ function redactUrl(value, secret) {
   return parsed.href;
 }
 
-function redactValue(value, secret, seen = new WeakSet()) {
-  if (typeof value === "string") return redactUrl(value, secret);
+function redactValue(value, secret, seen = new WeakSet(), parentKey = "") {
+  if (typeof value === "string") {
+    const withoutConfiguredSecret = replaceAllSecretForms(value, secret);
+    if (/^(?:prompt|visualPrompt|providerVisualPrompt|caption|narration)$/u.test(parentKey)) {
+      return withoutConfiguredSecret;
+    }
+    if (/(?:url|uri|href)$/iu.test(parentKey)) return redactUrl(withoutConfiguredSecret, null);
+    return redactFreeText(withoutConfiguredSecret, null);
+  }
   if (typeof value === "number" || typeof value === "boolean" || value === null || value === undefined) return value;
   if (Array.isArray(value)) return value.map((item) => redactValue(item, secret, seen));
   if (typeof value !== "object") return String(value);
@@ -143,7 +222,7 @@ function redactValue(value, secret, seen = new WeakSet()) {
   seen.add(value);
   const output = {};
   for (const [key, item] of Object.entries(value)) {
-    output[key] = SENSITIVE_KEY.test(key) ? "[redacted]" : redactValue(item, secret, seen);
+    output[key] = SENSITIVE_KEY.test(key) && !SAFE_ATTESTATION_KEY.has(key) ? "[redacted]" : redactValue(item, secret, seen, key);
   }
   seen.delete(value);
   return output;
@@ -187,9 +266,13 @@ function assertSafeWorkingDirectory(value) {
 
 function workingDirectoryFor(request) {
   const explicit = request.jobWorkingDirectory ?? request.workingDirectory ?? request.jobDir ?? request.workDir;
+  if (request.paidAuthorization && explicit !== undefined) {
+    throw new Error("paid BFL requests cannot select a mutable working directory");
+  }
   if (explicit !== undefined) return assertSafeWorkingDirectory(explicit);
   assertSafeJobId(request.jobId);
-  return resolve(import.meta.dirname, "..", "workspace", "jobs", request.jobId);
+  const projectRoot = resolve(import.meta.dirname, "..");
+  return resolve(projectRoot, "workspace", "jobs", request.jobId);
 }
 
 function relativeClipPath(index) {
@@ -359,18 +442,26 @@ function validateRequest(request) {
 }
 
 function requestBodiesFor(request, env = process.env) {
-  const configuredResolution = request?.bfl?.resolution ?? env.BFL_VIDEO_RESOLUTION ?? "hd";
+  const authorization = request?.paidAuthorization;
+  const authorizedPolicy = authorization?.context?.requestPolicy || null;
+  if (authorization) {
+    validateBflRequestAuthorization(authorization, request, { now: new Date(authorization.approvedAt) });
+    if (!authorizedPolicy || authorizedPolicy.durationsSec?.length !== request.segments.length) {
+      throw new Error("BFL paid authorization task policy does not match the requested segments");
+    }
+  }
+  const configuredResolution = authorizedPolicy?.resolution ?? request?.bfl?.resolution ?? env.BFL_VIDEO_RESOLUTION ?? "hd";
   if (!new Set(["hd", "fhd"]).has(configuredResolution)) throw new Error("BFL video resolution must be hd or fhd");
-  const generateAudio = strictBoolean(request?.bfl?.generateAudio ?? env.BFL_GENERATE_AUDIO, false, "BFL_GENERATE_AUDIO");
-  const safetyTolerance = boundedIntegerSetting(request?.bfl?.safetyTolerance ?? env.BFL_SAFETY_TOLERANCE, 2, 0, 4, "BFL_SAFETY_TOLERANCE");
-  const aspectRatio = request.format === "vertical" ? "9:16" : "16:9";
+  const generateAudio = authorizedPolicy?.generateAudio ?? strictBoolean(request?.bfl?.generateAudio ?? env.BFL_GENERATE_AUDIO, false, "BFL_GENERATE_AUDIO");
+  const safetyTolerance = authorizedPolicy?.safetyTolerance ?? boundedIntegerSetting(request?.bfl?.safetyTolerance ?? env.BFL_SAFETY_TOLERANCE, 2, 0, 4, "BFL_SAFETY_TOLERANCE");
+  const aspectRatio = authorizedPolicy?.aspectRatio ?? (request.format === "vertical" ? "9:16" : "16:9");
   return request.segments.map((segment, index) => ({
     index: index + 1,
     body: {
       mode: "t2v",
       prompt: requiredString(segment.prompt ?? segment.visualPrompt, `segments[${index + 1}].prompt`),
       aspect_ratio: aspectRatio,
-      duration: durationFor(segment, request),
+      duration: authorizedPolicy?.durationsSec?.[index] ?? durationFor(segment, request),
       resolution: configuredResolution,
       version: MODEL_VERSION,
       generate_audio: generateAudio,
@@ -394,9 +485,23 @@ function minimumConfiguredNumber(values, label, options = {}) {
   return parsed.length ? Math.min(...parsed) : null;
 }
 
+function officialTaskCreditFloor(task) {
+  const body = task?.body;
+  if (body?.mode !== "t2v" || body?.draft !== false) {
+    throw new Error(`official BFL pricing floor is unavailable for ${String(body?.mode || "unknown")} ${body?.draft ? "draft" : "full"} generation`);
+  }
+  const creditsPerSecond = OFFICIAL_FULL_RENDER_CREDITS_PER_SECOND[body.resolution];
+  if (!Number.isFinite(creditsPerSecond)) {
+    throw new Error(`official BFL pricing floor is unavailable for resolution ${String(body?.resolution || "unknown")}`);
+  }
+  const duration = strictPositiveNumber(body.duration, "BFL task duration");
+  return { credits: duration * creditsPerSecond, creditsPerSecond };
+}
+
 function budgetFor(request, tasks, env = process.env) {
   const requestBudget = request.budget && typeof request.budget === "object" && !Array.isArray(request.budget) ? request.budget : {};
-  const maxCredits = minimumConfiguredNumber([
+  const authorizedMaxCredits = request?.paidAuthorization?.context?.maxCredits;
+  const maxCredits = authorizedMaxCredits ?? minimumConfiguredNumber([
     requestBudget.maxCredits,
     request.maxCredits,
     env.BFL_MAX_CREDITS
@@ -409,42 +514,67 @@ function budgetFor(request, tasks, env = process.env) {
     requestBudget.estimatedCreditsPerRequest,
     env.BFL_ESTIMATED_CREDITS_PER_REQUEST
   ], "BFL estimated credits per request", { allowZero: true }) ?? 0;
-  const directTotal = maximumConfiguredNumber([
+  const authorizedEstimate = request?.paidAuthorization?.context?.operatorEstimateCredits;
+  const directTotal = authorizedEstimate ?? maximumConfiguredNumber([
     requestBudget.estimatedTotalCredits,
     request.estimatedCostCredits,
     env.BFL_ESTIMATED_TOTAL_CREDITS
   ], "BFL estimated total credits", { allowZero: true });
   const rateEstimates = tasks.map((task) => task.body.duration * perSecond + perRequest);
   const rateTotal = rateEstimates.reduce((sum, value) => sum + value, 0);
-  const estimatedTotalCredits = Math.max(rateTotal, directTotal ?? 0);
-  const totalDuration = tasks.reduce((sum, task) => sum + task.body.duration, 0);
-  const taskEstimates = tasks.map((task, index) => {
-    if (estimatedTotalCredits === rateTotal) return rateEstimates[index];
-    const weight = totalDuration > 0 ? task.body.duration / totalDuration : 1 / tasks.length;
-    return estimatedTotalCredits * weight;
+  const operatorEstimatedTotalCredits = Math.max(rateTotal, directTotal ?? 0);
+  const officialFloors = tasks.map(officialTaskCreditFloor);
+  const officialMinimumCredits = officialFloors.reduce((sum, floor) => sum + floor.credits, 0);
+  const guardedTaskBases = tasks.map((_, index) => Math.max(rateEstimates[index], officialFloors[index].credits));
+  const guardedBaseTotal = guardedTaskBases.reduce((sum, value) => sum + value, 0);
+  const estimatedTotalCredits = Math.max(guardedBaseTotal, directTotal ?? 0);
+  const unallocatedCredits = estimatedTotalCredits - guardedBaseTotal;
+  const taskEstimates = guardedTaskBases.map((base, index) => {
+    if (!(unallocatedCredits > 0)) return base;
+    const weight = officialMinimumCredits > 0
+      ? officialFloors[index].credits / officialMinimumCredits
+      : 1 / tasks.length;
+    return base + unallocatedCredits * weight;
   });
   return {
     maxCredits,
+    operatorEstimatedTotalCredits,
+    officialMinimumCredits,
     estimatedTotalCredits,
     estimatedTotalUsd: estimatedTotalCredits * CREDIT_USD,
     creditUsd: CREDIT_USD,
     estimateBasis: {
       estimatedCreditsPerSecond: perSecond || null,
       estimatedCreditsPerRequest: perRequest || null,
-      estimatedTotalCredits: directTotal
+      estimatedTotalCredits: directTotal,
+      officialPriceFloor: {
+        provider: "bfl",
+        model: MODEL,
+        mode: "t2v",
+        render: "full",
+        creditUsd: CREDIT_USD,
+        creditsPerSecond: { ...OFFICIAL_FULL_RENDER_CREDITS_PER_SECOND },
+        source: OFFICIAL_PRICING_URL
+      }
     },
     taskEstimates
   };
 }
 
 function assertLiveBudget(budget) {
-  if (budget.maxCredits === null) {
+  if (!Number.isFinite(budget.maxCredits) || budget.maxCredits <= 0) {
     throw new Error("live BFL generation requires BFL_MAX_CREDITS or request.budget.maxCredits");
   }
-  if (!(budget.estimatedTotalCredits > 0)) {
+  if (!Number.isFinite(budget.operatorEstimatedTotalCredits) || budget.operatorEstimatedTotalCredits <= 0) {
     throw new Error("live BFL generation requires BFL_ESTIMATED_TOTAL_CREDITS, BFL_ESTIMATED_CREDITS_PER_SECOND, BFL_ESTIMATED_CREDITS_PER_REQUEST, or the request budget equivalent");
   }
-  if (budget.estimatedTotalCredits > budget.maxCredits) {
+  if (!Number.isFinite(budget.officialMinimumCredits) || budget.officialMinimumCredits <= 0) {
+    throw new Error(`official ${MODEL} pricing floor is unavailable; live BFL generation is disabled`);
+  }
+  if (budget.operatorEstimatedTotalCredits < budget.officialMinimumCredits) {
+    throw new Error(`operator-supplied BFL estimate ${budget.operatorEstimatedTotalCredits} credits is below the official ${MODEL} full-render floor of ${budget.officialMinimumCredits} credits`);
+  }
+  if (!Number.isFinite(budget.estimatedTotalCredits) || budget.estimatedTotalCredits > budget.maxCredits) {
     throw new Error(`estimated BFL cost ${budget.estimatedTotalCredits} credits exceeds the ${budget.maxCredits}-credit ceiling`);
   }
 }
@@ -460,10 +590,13 @@ function generationPlan(request, env = process.env) {
   configuredMediaHosts(env);
   const tasks = requestBodiesFor(request, env).map((task) => {
     const relativePath = relativeClipPath(task.index);
+    const bodySnapshot = canonicalJsonSnapshot(task.body, `BFL task ${task.index} request body`);
     return {
       ...task,
+      body: bodySnapshot.value,
+      requestBodyText: bodySnapshot.text,
       relativePath,
-      requestBodyHash: hashJson(task.body),
+      requestBodyHash: bodySnapshot.sha256,
       estimatedCredits: 0
     };
   });
@@ -472,7 +605,8 @@ function generationPlan(request, env = process.env) {
     task.estimatedCredits = budget.taskEstimates[index];
   });
   const jobDirectory = workingDirectoryFor(request);
-  const checkpointDirectory = join(jobDirectory, ".bfl-flux-video", checkpointRunKey(request));
+  const checkpointRunName = checkpointRunKey(request);
+  const checkpointDirectory = join(jobDirectory, CHECKPOINT_ROOT_NAME, checkpointRunName);
   return {
     endpoint: API_URL,
     method: "POST",
@@ -482,9 +616,12 @@ function generationPlan(request, env = process.env) {
     jobDirectory,
     clipsDirectory: join(jobDirectory, "clips"),
     checkpointDirectory,
+    checkpointRunName,
     budget: { ...budget, taskEstimates: undefined },
     tasks: tasks.map((task) => ({
       ...task,
+      outputName: basename(task.relativePath),
+      checkpointName: `task-${String(task.index).padStart(3, "0")}.json`,
       checkpointPath: join(checkpointDirectory, `task-${String(task.index).padStart(3, "0")}.json`)
     }))
   };
@@ -513,7 +650,7 @@ function dryRunReceipt(request, env = process.env) {
     budget: {
       ...plan.budget,
       liveReady: plan.budget.maxCredits !== null
-        && plan.budget.estimatedTotalCredits > 0
+        && plan.budget.operatorEstimatedTotalCredits >= plan.budget.officialMinimumCredits
         && plan.budget.estimatedTotalCredits <= plan.budget.maxCredits
     },
     tasks: plan.tasks.map((task) => ({
@@ -533,48 +670,392 @@ function dryRunRequested(request, env = process.env) {
   return environmentForcesDryRun || requestForcesDryRun;
 }
 
-async function syncDirectory(path) {
-  let handle;
+async function openAbsoluteDirectoryStrict(path, label) {
+  const pathnameIdentity = await lstat(path, { bigint: true });
+  if (!pathnameIdentity.isDirectory() || pathnameIdentity.isSymbolicLink?.()) throw new Error(`${label} is not an exact non-symlink directory`);
+  const handle = await open(
+    path,
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (fsConstants.O_DIRECTORY || 0)
+  );
   try {
-    handle = await open(path, "r");
-    await handle.sync();
+    const identity = await handle.stat({ bigint: true });
+    if (!identity.isDirectory() || !sameFdIdentity(pathnameIdentity, identity)) throw new Error(`${label} changed while it was opened`);
+    return { path, handle, identity };
   } catch (error) {
-    if (!new Set(["EINVAL", "ENOTSUP", "EISDIR", "EPERM"]).has(error?.code)) throw error;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
-}
-
-async function writeJsonAtomic(path, value) {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
-  let handle;
-  try {
-    handle = await open(temporaryPath, "wx", 0o600);
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temporaryPath, path);
-    await syncDirectory(dirname(path));
-  } catch (error) {
-    await handle?.close().catch(() => {});
-    await rm(temporaryPath, { force: true }).catch(() => {});
+    await handle.close().catch(() => {});
     throw error;
   }
 }
 
-async function loadCheckpoint(task, request) {
-  let raw;
+function optionalDirectoryAt(parentFd, name, label) {
   try {
-    raw = await readFile(task.checkpointPath, "utf8");
+    const fd = openDirectoryAt(parentFd, name);
+    const identity = statFd(fd);
+    if (!identity.isDirectory()) {
+      closeFd(fd);
+      throw new Error(`${label} is not a directory`);
+    }
+    return { fd, identity };
   } catch (error) {
     if (error?.code === "ENOENT") return null;
-    throw new Error(`BFL checkpoint ${task.index} could not be read`);
+    throw new Error(`${label} is not an exact non-symlink directory`);
   }
+}
+
+function optionalOwnedFileAt(parentFd, name, maximumBytes, label) {
+  let fd;
+  try {
+    fd = openFileAt(parentFd, name, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error(`${label} is not an exact non-symlink regular file`);
+  }
+  try {
+    const identity = statFd(fd);
+    if (!identity.isFile() || identity.nlink !== 1n || identity.size > BigInt(maximumBytes)) {
+      throw new Error(`${label} is not a bounded single-link regular file`);
+    }
+    return { fd, identity };
+  } catch (error) {
+    closeFd(fd);
+    throw error;
+  }
+}
+
+function closeOptionalOwnedFile(snapshot) {
+  if (snapshot?.fd !== null && snapshot?.fd !== undefined) closeFd(snapshot.fd);
+}
+
+function exactFileIdentityAt(parentFd, name, expected, maximumBytes, label) {
+  const current = optionalOwnedFileAt(parentFd, name, maximumBytes, label);
+  try {
+    return Boolean(current && sameFdIdentity(expected, current.identity));
+  } finally {
+    closeOptionalOwnedFile(current);
+  }
+}
+
+function closeBflStorage(storage) {
+  if (!storage || storage.closed) return;
+  storage.closed = true;
+  if (storage.checkpointRun) closeFd(storage.checkpointRun.fd);
+  if (storage.checkpointRoot) closeFd(storage.checkpointRoot.fd);
+  if (storage.clips) closeFd(storage.clips.fd);
+  if (storage.job) closeFd(storage.job.fd);
+  if (storage.jobs) closeFd(storage.jobs.fd);
+  if (storage.workspace) closeFd(storage.workspace.fd);
+  storage.project?.handle?.close?.().catch(() => {});
+}
+
+async function pinBflStorage(plan, request) {
+  assertSafeJobId(request.jobId);
+  const projectPath = resolve(import.meta.dirname, "..");
+  const expectedJobDirectory = join(projectPath, "workspace", "jobs", request.jobId);
+  if (resolve(plan.jobDirectory) !== expectedJobDirectory) throw new Error("BFL job directory is not the canonical project workspace job child");
+  const project = await openAbsoluteDirectoryStrict(projectPath, "BFL project root");
+  const storage = { project, workspace: null, jobs: null, job: null, clips: null, checkpointRoot: null, checkpointRun: null, plan, request, closed: false };
+  try {
+    const workspaceFd = openDirectoryAt(project.handle.fd, "workspace");
+    storage.workspace = { fd: workspaceFd, identity: statFd(workspaceFd) };
+    const jobsFd = openDirectoryAt(workspaceFd, "jobs");
+    storage.jobs = { fd: jobsFd, identity: statFd(jobsFd) };
+    const jobFd = openDirectoryAt(jobsFd, request.jobId);
+    storage.job = { fd: jobFd, identity: statFd(jobFd) };
+    const clipsFd = openDirectoryAt(jobFd, "clips");
+    storage.clips = { fd: clipsFd, identity: statFd(clipsFd) };
+    storage.checkpointRoot = optionalDirectoryAt(jobFd, CHECKPOINT_ROOT_NAME, "BFL checkpoint root");
+    if (storage.checkpointRoot) {
+      storage.checkpointRun = optionalDirectoryAt(storage.checkpointRoot.fd, plan.checkpointRunName, "BFL checkpoint run directory");
+    }
+    const lease = optionalOwnedFileAt(storage.job.fd, basename(invocationLeasePath(plan, request)), MAX_INVOCATION_LEASE_BYTES, "BFL invocation lease");
+    closeOptionalOwnedFile(lease);
+    for (const task of plan.tasks) {
+      const output = optionalOwnedFileAt(storage.clips.fd, task.outputName, DEFAULT_MAX_MEDIA_BYTES, `BFL output ${task.index}`);
+      closeOptionalOwnedFile(output);
+      if (storage.checkpointRun) {
+        const checkpoint = optionalOwnedFileAt(storage.checkpointRun.fd, task.checkpointName, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
+        closeOptionalOwnedFile(checkpoint);
+      }
+    }
+    await assertBflStorageCurrent(storage, "preflight");
+    return storage;
+  } catch (error) {
+    closeBflStorage(storage);
+    const wrapped = new Error(`BFL canonical workspace storage를 검증할 수 없습니다: ${error.message}`);
+    wrapped.code = "BFL_STORAGE_UNSAFE";
+    throw wrapped;
+  }
+}
+
+async function assertBflStorageCurrent(storage, phase) {
+  const currentProject = await openAbsoluteDirectoryStrict(storage.project.path, `BFL project root (${phase})`);
+  const opened = [];
+  try {
+    if (!sameFdIdentity(storage.project.identity, currentProject.identity)) throw new Error(`BFL project root changed during ${phase}`);
+    const workspaceFd = openDirectoryAt(currentProject.handle.fd, "workspace"); opened.push(workspaceFd);
+    if (!sameFdIdentity(storage.workspace.identity, statFd(workspaceFd))) throw new Error(`BFL workspace changed during ${phase}`);
+    const jobsFd = openDirectoryAt(workspaceFd, "jobs"); opened.push(jobsFd);
+    if (!sameFdIdentity(storage.jobs.identity, statFd(jobsFd))) throw new Error(`BFL jobs root changed during ${phase}`);
+    const jobFd = openDirectoryAt(jobsFd, storage.request.jobId); opened.push(jobFd);
+    if (!sameFdIdentity(storage.job.identity, statFd(jobFd))) throw new Error(`BFL job directory changed during ${phase}`);
+    const clipsFd = openDirectoryAt(jobFd, "clips"); opened.push(clipsFd);
+    if (!sameFdIdentity(storage.clips.identity, statFd(clipsFd))) throw new Error(`BFL clips directory changed during ${phase}`);
+    if (storage.checkpointRoot) {
+      const checkpointRootFd = openDirectoryAt(jobFd, CHECKPOINT_ROOT_NAME); opened.push(checkpointRootFd);
+      if (!sameFdIdentity(storage.checkpointRoot.identity, statFd(checkpointRootFd))) throw new Error(`BFL checkpoint root changed during ${phase}`);
+      if (storage.checkpointRun) {
+        const checkpointRunFd = openDirectoryAt(checkpointRootFd, storage.plan.checkpointRunName); opened.push(checkpointRunFd);
+        if (!sameFdIdentity(storage.checkpointRun.identity, statFd(checkpointRunFd))) throw new Error(`BFL checkpoint run directory changed during ${phase}`);
+      }
+    }
+  } finally {
+    for (const fd of opened.reverse()) closeFd(fd);
+    await currentProject.handle.close();
+  }
+}
+
+async function ensureBflCheckpointStorage(storage) {
+  if (!storage.checkpointRoot) {
+    const fd = openOrCreateDirectoryAt(storage.job.fd, CHECKPOINT_ROOT_NAME, 0o700);
+    storage.checkpointRoot = { fd, identity: statFd(fd) };
+  }
+  if (!storage.checkpointRun) {
+    const fd = openOrCreateDirectoryAt(storage.checkpointRoot.fd, storage.plan.checkpointRunName, 0o700);
+    storage.checkpointRun = { fd, identity: statFd(fd) };
+  }
+  await assertBflStorageCurrent(storage, "checkpoint publication");
+}
+
+function readOwnedBytesAt(parentFd, name, maximumBytes, label) {
+  const snapshot = optionalOwnedFileAt(parentFd, name, maximumBytes, label);
+  if (!snapshot) return null;
+  try {
+    const bytes = readFdBuffer(snapshot.fd, { maxBytes: maximumBytes });
+    const after = statFd(snapshot.fd);
+    if (after.nlink !== 1n || !sameFdIdentity(snapshot.identity, after)) throw new Error(`${label} changed while it was read`);
+    return { bytes, identity: snapshot.identity };
+  } finally {
+    closeOptionalOwnedFile(snapshot);
+  }
+}
+
+function writeJsonAtomicAt(parentFd, name, value, maximumBytes, label) {
+  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  if (bytes.byteLength > maximumBytes) throw new Error(`${label} exceeds its maximum byte size`);
+  const current = optionalOwnedFileAt(parentFd, name, maximumBytes, label);
+  try {
+    if (current) {
+      replaceFileAt(parentFd, name, bytes, { expectedIdentity: current.identity, mode: 0o600 });
+    } else {
+      const fd = createFileAt(parentFd, name, fsConstants.O_RDWR, 0o600, { initialBytes: bytes });
+      closeFd(fd);
+    }
+    syncFd(parentFd);
+  } finally {
+    closeOptionalOwnedFile(current);
+  }
+}
+
+async function preflightBflStorage(request, env = process.env) {
+  const plan = generationPlan(request, env);
+  const storage = await pinBflStorage(plan, request);
+  try {
+    return {
+      jobDirectory: plan.jobDirectory,
+      clipsDirectory: plan.clipsDirectory,
+      checkpointDirectory: plan.checkpointDirectory,
+      checkpointExists: Boolean(storage.checkpointRun)
+    };
+  } finally {
+    closeBflStorage(storage);
+  }
+}
+
+function invocationLeasePath(plan, request) {
+  return join(plan.jobDirectory, `${INVOCATION_LEASE_PREFIX}${checkpointRunKey(request)}.json`);
+}
+
+function invocationLeaseUnsigned(request, { ownerNonce, acquiredAt, mode, takeoverOfLeaseHash = null }) {
+  return {
+    schemaVersion: INVOCATION_LEASE_SCHEMA_VERSION,
+    type: "bfl-flux-video-invocation-lease",
+    status: "exclusive-owner",
+    mode,
+    jobId: request.jobId,
+    runId: request.runId,
+    requestHash: request.requestHash,
+    scriptHash: request.scriptHash,
+    pid: process.pid,
+    ownerNonce,
+    acquiredAt,
+    takeoverOfLeaseHash
+  };
+}
+
+function validateInvocationLease(lease, request) {
+  const expectedKeys = [
+    "acquiredAt", "jobId", "leaseHash", "mode", "ownerNonce", "pid", "requestHash", "runId",
+    "schemaVersion", "scriptHash", "status", "takeoverOfLeaseHash", "type"
+  ];
+  const { leaseHash, ...unsigned } = lease || {};
+  if (
+    !lease
+    || typeof lease !== "object"
+    || Array.isArray(lease)
+    || Object.keys(lease).sort().join(",") !== expectedKeys.sort().join(",")
+    || lease.schemaVersion !== INVOCATION_LEASE_SCHEMA_VERSION
+    || lease.type !== "bfl-flux-video-invocation-lease"
+    || lease.status !== "exclusive-owner"
+    || !["pending", "paid-owner", "provider-zero-recovery"].includes(lease.mode)
+    || lease.jobId !== request.jobId
+    || lease.runId !== request.runId
+    || lease.requestHash !== request.requestHash
+    || lease.scriptHash !== request.scriptHash
+    || !Number.isInteger(lease.pid)
+    || lease.pid <= 0
+    || typeof lease.ownerNonce !== "string"
+    || !/^[0-9a-f-]{36}$/u.test(lease.ownerNonce)
+    || (lease.takeoverOfLeaseHash !== null && !/^sha256:[a-f0-9]{64}$/u.test(lease.takeoverOfLeaseHash || ""))
+    || !Number.isFinite(Date.parse(lease.acquiredAt || ""))
+    || leaseHash !== hashJson(unsigned)
+  ) throw new Error("BFL invocation lease is malformed or bound to another request");
+  return lease;
+}
+
+async function readInvocationLease(storage, request) {
+  const name = basename(invocationLeasePath(storage.plan, request));
+  const snapshot = readOwnedBytesAt(storage.job.fd, name, MAX_INVOCATION_LEASE_BYTES, "BFL invocation lease");
+  if (!snapshot) return null;
+  let lease;
+  try {
+    lease = JSON.parse(snapshot.bytes.toString("utf8"));
+  } catch {
+    throw new Error("BFL invocation lease is not valid JSON");
+  }
+  return { lease: validateInvocationLease(lease, request), identity: snapshot.identity };
+}
+
+async function closeGlobalBflGuard(server) {
+  if (!server) return;
+  await new Promise((resolveClose, rejectClose) => {
+    server.close((error) => error ? rejectClose(error) : resolveClose());
+  });
+}
+
+async function acquireGlobalBflGuard() {
+  const server = createServer((socket) => socket.destroy());
+  try {
+    await new Promise((resolveListen, rejectListen) => {
+      const onError = (error) => {
+        server.off("listening", onListening);
+        rejectListen(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolveListen();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen({
+        host: GLOBAL_BFL_GUARD_HOST,
+        port: GLOBAL_BFL_GUARD_PORT,
+        exclusive: true
+      });
+    });
+  } catch (error) {
+    await closeGlobalBflGuard(server).catch(() => {});
+    if (error?.code === "EADDRINUSE") {
+      throw new Error("another BFL invocation already owns this exact request or an unknown process holds the global paid-executor guard");
+    }
+    throw new Error("the global BFL paid-executor guard could not be acquired");
+  }
+  const address = server.address();
+  if (
+    !address
+    || typeof address === "string"
+    || address.address !== GLOBAL_BFL_GUARD_HOST
+    || address.port !== GLOBAL_BFL_GUARD_PORT
+  ) {
+    await closeGlobalBflGuard(server).catch(() => {});
+    throw new Error("the global BFL paid-executor guard bound an unexpected address");
+  }
+  return server;
+}
+
+async function acquireInvocationLease(plan, request, storage) {
+  const guard = await acquireGlobalBflGuard();
+  const path = invocationLeasePath(plan, request);
+  const name = basename(path);
+  const ownerNonce = randomUUID();
+  const acquiredAt = new Date().toISOString();
+  let priorLease = null;
+  try {
+    priorLease = await readInvocationLease(storage, request);
+  } catch (error) {
+    await closeGlobalBflGuard(guard).catch(() => {});
+    throw error;
+  }
+  const unsigned = invocationLeaseUnsigned(request, {
+    ownerNonce,
+    acquiredAt,
+    mode: "pending",
+    takeoverOfLeaseHash: priorLease?.lease?.leaseHash || null
+  });
+  const lease = { ...unsigned, leaseHash: hashJson(unsigned) };
+  try {
+    await assertBflStorageCurrent(storage, "invocation lease publication");
+    writeJsonAtomicAt(storage.job.fd, name, lease, MAX_INVOCATION_LEASE_BYTES, "BFL invocation lease");
+    return { path, name, lease, guard, storage };
+  } catch (error) {
+    await closeGlobalBflGuard(guard).catch(() => {});
+    if (error?.code === "EEXIST") throw new Error("BFL invocation lease appeared while the global guard was held");
+    throw error;
+  }
+}
+
+async function setInvocationLeaseMode(owner, request, mode) {
+  const currentSnapshot = await readInvocationLease(owner.storage, request);
+  const current = currentSnapshot?.lease;
+  if (!current || current.ownerNonce !== owner.lease.ownerNonce || current.pid !== process.pid) {
+    throw new Error("BFL invocation lease ownership changed unexpectedly");
+  }
+  const unsigned = invocationLeaseUnsigned(request, {
+    ownerNonce: current.ownerNonce,
+    acquiredAt: current.acquiredAt,
+    mode,
+    takeoverOfLeaseHash: current.takeoverOfLeaseHash
+  });
+  const lease = { ...unsigned, leaseHash: hashJson(unsigned) };
+  writeJsonAtomicAt(owner.storage.job.fd, owner.name, lease, MAX_INVOCATION_LEASE_BYTES, "BFL invocation lease");
+  owner.lease = lease;
+  return owner;
+}
+
+async function releaseInvocationLease(owner, request) {
+  let releaseError = null;
+  try {
+    const current = (await readInvocationLease(owner.storage, request))?.lease;
+    if (!current || current.ownerNonce !== owner.lease.ownerNonce || current.pid !== process.pid) {
+      throw new Error("BFL invocation lease cannot be released by a non-owner");
+    }
+    unlinkAt(owner.storage.job.fd, owner.name);
+    syncFd(owner.storage.job.fd);
+  } catch (error) {
+    releaseError = error;
+  } finally {
+    await closeGlobalBflGuard(owner.guard).catch((error) => {
+      releaseError ||= error;
+    });
+  }
+  if (releaseError) throw releaseError;
+}
+
+async function loadCheckpoint(task, request, storage) {
+  const snapshot = readOwnedBytesAt(storage.checkpointRun.fd, task.checkpointName, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
+  if (!snapshot) return null;
   let checkpoint;
   try {
-    checkpoint = JSON.parse(raw);
+    checkpoint = JSON.parse(snapshot.bytes.toString("utf8"));
   } catch {
     throw new Error(`BFL checkpoint ${task.index} is not valid JSON`);
   }
@@ -589,6 +1070,14 @@ async function loadCheckpoint(task, request) {
     && checkpoint?.requestBodyHash === task.requestBodyHash
     && checkpoint?.output === task.relativePath;
   if (!identityMatches) throw new Error(`BFL checkpoint ${task.index} does not match this immutable request`);
+  if (
+    !checkpoint.request
+    || typeof checkpoint.request !== "object"
+    || Array.isArray(checkpoint.request)
+    || hashJson(checkpoint.request) !== task.requestBodyHash
+  ) {
+    throw new Error(`BFL task ${task.index} checkpoint request body hash is invalid`);
+  }
   return checkpoint;
 }
 
@@ -604,7 +1093,7 @@ function baseCheckpoint(task, request) {
     scriptHash: request.scriptHash,
     index: task.index,
     requestBodyHash: task.requestBodyHash,
-    request: task.body,
+    request: JSON.parse(task.requestBodyText),
     estimatedCredits: task.estimatedCredits,
     output: task.relativePath,
     phase: "prepared",
@@ -612,33 +1101,210 @@ function baseCheckpoint(task, request) {
   };
 }
 
-async function fetchBounded(url, options, timeoutMs, fetchImpl = globalThis.fetch) {
-  if (typeof fetchImpl !== "function") throw new Error("fetch implementation is unavailable");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+function cancelResponseBody(response, reason) {
   try {
-    return await fetchImpl(url, { ...options, redirect: "error", signal: controller.signal });
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error(`BFL request timed out after ${timeoutMs}ms`);
-    const detail = [error?.message, error?.cause?.message].filter(Boolean).join(" ");
-    if (/redirect/iu.test(detail)) throw new Error("BFL request rejected redirect");
-    throw new Error("BFL request failed");
-  } finally {
-    clearTimeout(timer);
+    const cancellation = response?.body?.cancel?.(reason);
+    if (cancellation && typeof cancellation.catch === "function") void cancellation.catch(() => {});
+  } catch {
+    // Cancellation is best-effort after the request has already failed closed.
   }
 }
 
-async function readJsonResponse(response, label) {
-  if (response?.redirected || (response?.status >= 300 && response?.status < 400)) throw new Error(`BFL ${label} rejected redirect`);
+function responseHeader(response, name) {
+  const value = response?.headers?.get?.(name);
+  return value === null || value === undefined ? null : String(value).trim();
+}
+
+function declaredResponseLength(response, maximumBytes, label) {
+  const value = responseHeader(response, "content-length");
+  if (value === null) return null;
+  if (!/^\d+$/u.test(value)) throw new Error(`${label} returned an invalid Content-Length`);
+  const length = Number(value);
+  if (!Number.isSafeInteger(length)) throw new Error(`${label} returned an invalid Content-Length`);
+  if (length > maximumBytes) throw new Error(`${label} exceeds maximum size of ${maximumBytes} bytes`);
+  return length;
+}
+
+function assertIdentityResponseEncoding(response, label) {
+  const encoding = responseHeader(response, "content-encoding");
+  if (encoding !== null && encoding.toLowerCase() !== "identity") {
+    throw new Error(`${label} returned an unsupported Content-Encoding`);
+  }
+}
+
+function assertJsonResponseType(response, label) {
+  const contentType = responseHeader(response, "content-type");
+  if (!contentType || !/^application\/json(?:\s*;\s*charset\s*=\s*(?:utf-8|"utf-8"))?$/iu.test(contentType)) {
+    throw new Error(`${label} returned an invalid Content-Type`);
+  }
+}
+
+function fixedTimeoutError(label) {
+  const error = new Error(`${label} timed out`);
+  error.code = "BFL_RESPONSE_TIMEOUT";
+  return error;
+}
+
+async function readResponseChunk(reader, signal, label) {
+  if (!signal) return reader.read();
+  if (signal.aborted) throw fixedTimeoutError(label);
+  return new Promise((resolveRead, rejectRead) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback(value);
+    };
+    const onAbort = () => finish(rejectRead, fixedTimeoutError(label));
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (value) => finish(resolveRead, value),
+      () => finish(rejectRead, new Error(`${label} response could not be read`))
+    );
+  });
+}
+
+async function readBoundedResponseBody(response, {
+  signal,
+  maximumBytes,
+  declaredLength,
+  label,
+  onChunk
+}) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) throw new TypeError("BFL response byte limit is invalid");
+  const reader = response?.body?.getReader?.();
+  if (!reader) throw new Error(`${label} response body was unavailable`);
+  let total = 0;
+  let finished = false;
+  try {
+    while (true) {
+      const { done, value } = await readResponseChunk(reader, signal, label);
+      if (done) {
+        finished = true;
+        break;
+      }
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value || []);
+      if (!Number.isSafeInteger(chunk.byteLength) || !Number.isSafeInteger(total + chunk.byteLength) || total + chunk.byteLength > maximumBytes) {
+        throw new Error(`${label} exceeds maximum size of ${maximumBytes} bytes`);
+      }
+      if (onChunk) await onChunk(chunk, total);
+      total += chunk.byteLength;
+    }
+    if (declaredLength !== null && declaredLength !== total) {
+      throw new Error(`${label} did not match its declared Content-Length`);
+    }
+    return total;
+  } catch (error) {
+    try {
+      const cancellation = reader.cancel(signal?.aborted ? "deadline exceeded" : "response rejected");
+      if (cancellation && typeof cancellation.catch === "function") void cancellation.catch(() => {});
+    } catch {}
+    if (signal?.aborted && error?.code !== "BFL_RESPONSE_TIMEOUT") throw fixedTimeoutError(label);
+    throw error;
+  } finally {
+    if (finished) {
+      try { reader.releaseLock(); } catch {}
+    }
+  }
+}
+
+function raceRequestDeadline(promise, signal, label) {
+  if (signal.aborted) return Promise.reject(fixedTimeoutError(label));
+  return new Promise((resolveRace, rejectRace) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback(value);
+    };
+    const onAbort = () => finish(rejectRace, fixedTimeoutError(label));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => finish(resolveRace, value),
+      (error) => finish(rejectRace, error)
+    );
+  });
+}
+
+async function fetchBounded(url, options, timeoutMs, fetchImpl = globalThis.fetch, consumeResponse) {
+  if (typeof fetchImpl !== "function") throw new Error("fetch implementation is unavailable");
+  if (typeof consumeResponse !== "function") throw new TypeError("BFL response consumer is unavailable");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60 * 60 * 1000) {
+    throw new TypeError("BFL request timeout is invalid");
+  }
+  const controller = new AbortController();
+  const label = "BFL request";
+  const timer = setTimeout(() => controller.abort(fixedTimeoutError(label)), timeoutMs);
+  let response = null;
+  let consumed = false;
+  try {
+    const fetchPromise = Promise.resolve().then(() => fetchImpl(url, { ...options, redirect: "error", signal: controller.signal }));
+    void fetchPromise.then((lateResponse) => {
+      if (controller.signal.aborted && lateResponse !== response) cancelResponseBody(lateResponse, "request deadline exceeded");
+    }, () => {});
+    try {
+      response = await raceRequestDeadline(fetchPromise, controller.signal, label);
+    } catch (error) {
+      if (controller.signal.aborted || error?.code === "BFL_RESPONSE_TIMEOUT") {
+        throw new Error(`BFL request timed out after ${timeoutMs}ms`);
+      }
+      const detail = [error?.message, error?.cause?.message].filter(Boolean).join(" ");
+      if (/redirect/iu.test(detail)) throw new Error("BFL request rejected redirect");
+      throw new Error("BFL request failed");
+    }
+    const result = await raceRequestDeadline(
+      Promise.resolve().then(() => consumeResponse(response, { signal: controller.signal })),
+      controller.signal,
+      label
+    );
+    consumed = true;
+    return result;
+  } catch (error) {
+    if (controller.signal.aborted || error?.code === "BFL_RESPONSE_TIMEOUT") {
+      throw new Error(`BFL request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (!consumed) cancelResponseBody(response, "response rejected");
+  }
+}
+
+async function readJsonResponse(response, label, { signal, maximumBytes = DEFAULT_MAX_JSON_RESPONSE_BYTES } = {}) {
+  if (response?.redirected || (response?.status >= 300 && response?.status < 400)) {
+    cancelResponseBody(response, "redirect rejected");
+    throw new Error(`BFL ${label} rejected redirect`);
+  }
   if (!response || !response.ok) {
     const status = response?.status ?? "unknown";
+    cancelResponseBody(response, "HTTP status rejected");
     throw new Error(`BFL ${label} returned HTTP ${status}`);
   }
+  const responseLabel = `BFL ${label}`;
+  let declaredLength;
+  try {
+    assertJsonResponseType(response, responseLabel);
+    assertIdentityResponseEncoding(response, responseLabel);
+    declaredLength = declaredResponseLength(response, maximumBytes, responseLabel);
+  } catch (error) {
+    cancelResponseBody(response, "response headers rejected");
+    throw error;
+  }
+  const chunks = [];
+  const total = await readBoundedResponseBody(response, {
+    signal,
+    maximumBytes,
+    declaredLength,
+    label: responseLabel,
+    onChunk(chunk) { chunks.push(Buffer.from(chunk)); }
+  });
   let text;
   try {
-    text = await response.text();
+    text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, total));
   } catch {
-    throw new Error(`BFL ${label} response could not be read`);
+    throw new Error(`${responseLabel} response was not valid UTF-8`);
   }
   if (!text.trim()) throw new Error(`BFL ${label} response was empty`);
   try {
@@ -654,23 +1320,78 @@ function providerCostFrom(value) {
 }
 
 async function submitTask(task, checkpoint, request, apiKey, deadline, options) {
+  const approvedBodyText = task.requestBodyText;
+  if (typeof approvedBodyText !== "string" || !approvedBodyText) {
+    throw new Error(`BFL task ${task.index} exact approved POST bytes are missing`);
+  }
+  let approvedBodyValue;
+  try {
+    approvedBodyValue = JSON.parse(approvedBodyText);
+  } catch {
+    throw new Error(`BFL task ${task.index} exact approved POST bytes are invalid`);
+  }
+  const approvedBody = canonicalJsonSnapshot(approvedBodyValue, `BFL task ${task.index} approved POST bytes`);
+  if (
+    approvedBody.text !== approvedBodyText
+    || approvedBody.sha256 !== task.requestBodyHash
+    || canonicalJsonSnapshot(task.body, `BFL task ${task.index} request body`).text !== approvedBodyText
+    || hashJson(checkpoint.request) !== task.requestBodyHash
+  ) throw new Error(`BFL task ${task.index} body does not match the exact approved POST bytes`);
   const attemptId = randomUUID();
+  const submissionStartedAt = options.now().toISOString();
+  validateBflRequestAuthorization(request.paidAuthorization, request, { now: new Date(submissionStartedAt) });
   const submitting = {
     ...checkpoint,
     phase: "submitting",
     submissionAttemptId: attemptId,
-    submissionStartedAt: new Date().toISOString(),
+    submissionStartedAt,
     lastError: undefined
   };
-  await writeJsonAtomic(task.checkpointPath, submitting);
+  writeJsonAtomicAt(options.storage.checkpointRun.fd, task.checkpointName, submitting, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
+  // Re-attest after the durable pre-POST checkpoint. A scheduler pause or slow
+  // fsync must never turn an expired approval into a paid provider call.
+  const prePostAt = options.now();
+  validateBflRequestAuthorization(request.paidAuthorization, request, { now: prePostAt });
+  if (typeof options.beforePaidPost === "function") {
+    await options.beforePaidPost({ task, submitting: structuredClone(submitting), prePostAt });
+  }
+  await assertBflStorageCurrent(options.storage, `paid POST ${task.index}`);
+  const afterHookBody = canonicalJsonSnapshot(task.body, `BFL task ${task.index} request body`);
+  if (
+    task.requestBodyText !== approvedBodyText
+    || task.requestBodyHash !== approvedBody.sha256
+    || afterHookBody.text !== approvedBodyText
+    || afterHookBody.sha256 !== approvedBody.sha256
+  ) {
+    throw new Error(`BFL task ${task.index} body changed after the durable pre-POST authorization check`);
+  }
+  await verifyBflConsumedApprovalForRequest(
+    options.jobDirectory,
+    request.paidAuthorization,
+    request,
+    {
+      now: options.now(),
+      apiKey,
+      executorSnapshotPath: options.executorSnapshotPath,
+      requireClaim: true
+    }
+  );
+  const finalBody = canonicalJsonSnapshot(task.body, `BFL task ${task.index} request body`);
+  if (
+    task.requestBodyText !== approvedBodyText
+    || task.requestBodyHash !== approvedBody.sha256
+    || finalBody.text !== approvedBodyText
+    || finalBody.sha256 !== approvedBody.sha256
+  ) throw new Error(`BFL task ${task.index} body changed before the paid POST`);
   let submission;
   try {
-    const response = await fetchBounded(API_URL, {
+    submission = await fetchBounded(API_URL, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", "x-key": apiKey },
-      body: JSON.stringify(task.body)
-    }, Math.max(1, deadline - Date.now()), options.fetchImpl);
-    submission = await readJsonResponse(response, "submit");
+      headers: { "content-type": "application/json", accept: "application/json", "accept-encoding": "identity", "x-key": apiKey },
+      body: approvedBodyText
+    }, Math.max(1, deadline - Date.now()), options.fetchImpl, (response, context) => (
+      readJsonResponse(response, "submit", context)
+    ));
     const submissionStatus = statusFrom(submission);
     if (FAILURE_STATUSES.has(submissionStatus) || MODERATION_STATUSES.has(submissionStatus)) {
       throw new Error(`BFL task submission failed with status ${submissionStatus}`);
@@ -688,7 +1409,7 @@ async function submitTask(task, checkpoint, request, apiKey, deadline, options) 
       submissionTimestamp: timestamp(submission),
       submittedAt: new Date().toISOString()
     };
-    await writeJsonAtomic(task.checkpointPath, submitted);
+    writeJsonAtomicAt(options.storage.checkpointRun.fd, task.checkpointName, submitted, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
     return submitted;
   } catch (error) {
     const unknown = {
@@ -697,7 +1418,9 @@ async function submitTask(task, checkpoint, request, apiKey, deadline, options) 
       submissionOutcomeUnknownAt: new Date().toISOString(),
       lastError: redactValue(error?.message || "BFL submission outcome is unknown", apiKey)
     };
-    await writeJsonAtomic(task.checkpointPath, unknown).catch(() => {});
+    try {
+      writeJsonAtomicAt(options.storage.checkpointRun.fd, task.checkpointName, unknown, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
+    } catch {}
     throw new Error(`BFL task ${task.index} submission outcome is unknown; refusing automatic resubmission (checkpoint: ${task.checkpointPath})`);
   }
 }
@@ -742,97 +1465,144 @@ async function pollTask(checkpoint, apiKey, deadline, pollIntervalMs, options) {
     if (remaining <= 0) throw new Error(`BFL task ${checkpoint.taskId} polling timed out`);
     if (!firstPoll) await options.sleep(Math.min(pollIntervalMs, remaining));
     firstPoll = false;
-    const response = await fetchBounded(checkpoint.pollingUrl, {
+    await assertBflStorageCurrent(options.storage, `provider poll ${checkpoint.taskId}`);
+    latest = await fetchBounded(checkpoint.pollingUrl, {
       method: "GET",
-      headers: { accept: "application/json", "x-key": apiKey }
-    }, Math.max(1, deadline - Date.now()), options.fetchImpl);
-    latest = await readJsonResponse(response, "poll");
+      headers: { accept: "application/json", "accept-encoding": "identity", "x-key": apiKey }
+    }, Math.max(1, deadline - Date.now()), options.fetchImpl, (response, context) => (
+      readJsonResponse(response, "poll", context)
+    ));
     pollCount += 1;
   }
 }
 
 function contentTypeIsVideo(response) {
-  const contentType = response?.headers?.get?.("content-type")?.split(";")[0]?.trim().toLowerCase();
-  return Boolean(contentType && (contentType.startsWith("video/") || contentType === "application/octet-stream"));
+  const contentType = responseHeader(response, "content-type")?.toLowerCase();
+  return Boolean(contentType && (/^video\/[a-z0-9!#$&^_.+-]+$/u.test(contentType) || contentType === "application/octet-stream"));
+}
+
+async function readVideoResponse(response, {
+  signal,
+  maximumBytes,
+  onChunk
+} = {}) {
+  if (response?.redirected || (response?.status >= 300 && response?.status < 400)) {
+    cancelResponseBody(response, "redirect rejected");
+    throw new Error("video download rejected redirect");
+  }
+  if (!response?.ok) {
+    cancelResponseBody(response, "HTTP status rejected");
+    throw new Error(`video download returned HTTP ${response?.status ?? "unknown"}`);
+  }
+  if (!contentTypeIsVideo(response)) {
+    cancelResponseBody(response, "content type rejected");
+    throw new Error("video download returned an invalid content type");
+  }
+  try {
+    assertIdentityResponseEncoding(response, "video download");
+  } catch (error) {
+    cancelResponseBody(response, "content encoding rejected");
+    throw error;
+  }
+  let declaredLength;
+  try {
+    declaredLength = declaredResponseLength(response, maximumBytes, "video download");
+  } catch (error) {
+    cancelResponseBody(response, "content length rejected");
+    throw error;
+  }
+  return readBoundedResponseBody(response, {
+    signal,
+    maximumBytes,
+    declaredLength,
+    label: "video download",
+    onChunk
+  });
 }
 
 function maxMediaBytes(env = process.env) {
   return boundedIntegerSetting(env.BFL_MAX_MEDIA_BYTES, DEFAULT_MAX_MEDIA_BYTES, 1, MAX_MAX_MEDIA_BYTES, "BFL_MAX_MEDIA_BYTES");
 }
 
-async function writeChunk(fileHandle, chunk) {
-  let offset = 0;
-  while (offset < chunk.length) {
-    const result = await fileHandle.write(chunk, offset, chunk.length - offset);
-    if (!result.bytesWritten) throw new Error("video output write made no progress");
-    offset += result.bytesWritten;
-  }
-}
-
-async function downloadVideo(url, outputPath, timeoutMs, maxBytes, fetchImpl) {
-  const response = await fetchBounded(url, { headers: { accept: "video/*" } }, timeoutMs, fetchImpl);
-  if (response?.redirected || (response?.status >= 300 && response?.status < 400)) throw new Error("video download rejected redirect");
-  if (!response.ok) throw new Error(`video download returned HTTP ${response.status}`);
-  if (!contentTypeIsVideo(response)) throw new Error("video download returned an invalid content type");
-  const contentLength = response.headers?.get?.("content-length");
-  if (contentLength !== null && contentLength !== undefined) {
-    const declaredLength = Number(contentLength);
-    if (!Number.isSafeInteger(declaredLength) || declaredLength < 0) throw new Error("video download returned an invalid Content-Length");
-    if (declaredLength > maxBytes) throw new Error(`video download exceeds maximum size of ${maxBytes} bytes`);
-  }
-  const temporaryPath = `${outputPath}.tmp-${process.pid}-${randomUUID()}`;
-  let fileHandle;
+async function downloadVideo(url, outputName, timeoutMs, maxBytes, fetchImpl, storage) {
+  await assertBflStorageCurrent(storage, `video download ${outputName}`);
+  const temporaryName = `.${outputName}.tmp-${process.pid}-${randomUUID()}`;
+  let temporaryFd = null;
   let bytes = 0;
   const hash = createHash("sha256");
   try {
-    fileHandle = await open(temporaryPath, "wx", 0o600);
-    const reader = response.body?.getReader?.();
-    if (!reader) throw new Error("video download response body was unavailable");
-    while (true) {
-      const chunkResult = await reader.read();
-      if (chunkResult.done) break;
-      const chunkSize = Number(chunkResult.value?.byteLength);
-      if (!Number.isSafeInteger(chunkSize) || chunkSize < 0 || bytes + chunkSize > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new Error(`video download exceeds maximum size of ${maxBytes} bytes`);
-      }
-      const chunk = Buffer.from(chunkResult.value);
-      bytes += chunk.length;
-      hash.update(chunk);
-      await writeChunk(fileHandle, chunk);
-    }
+    temporaryFd = createFileAt(storage.clips.fd, temporaryName, fsConstants.O_RDWR, 0o600);
+    bytes = await fetchBounded(url, {
+      headers: { accept: "video/*", "accept-encoding": "identity" }
+    }, timeoutMs, fetchImpl, (response, { signal }) => (
+      readVideoResponse(response, {
+        signal,
+        maximumBytes: maxBytes,
+        onChunk(chunk, offset) {
+          const bytesChunk = Buffer.from(chunk);
+          writeFdBuffer(temporaryFd, bytesChunk, offset);
+          hash.update(bytesChunk);
+        }
+      })
+    ));
     if (bytes === 0) throw new Error("video download was empty");
-    await fileHandle.sync();
-    await fileHandle.close();
-    fileHandle = null;
-    await rename(temporaryPath, outputPath);
-    await syncDirectory(dirname(outputPath));
+    syncFd(temporaryFd);
+    closeFd(temporaryFd);
+    temporaryFd = null;
+    const existing = optionalOwnedFileAt(storage.clips.fd, outputName, maxBytes, `BFL output ${outputName}`);
+    try {
+      if (existing) {
+        if (!exactFileIdentityAt(storage.clips.fd, outputName, existing.identity, maxBytes, `BFL output ${outputName}`)) {
+          throw new Error("video output changed before publication");
+        }
+        unlinkAt(storage.clips.fd, outputName);
+      }
+    } finally {
+      closeOptionalOwnedFile(existing);
+    }
+    renameAtNoReplace(storage.clips.fd, temporaryName, storage.clips.fd, outputName);
+    syncFd(storage.clips.fd);
+    await assertBflStorageCurrent(storage, `video publication ${outputName}`);
   } catch (error) {
-    await fileHandle?.close().catch(() => {});
-    await rm(temporaryPath, { force: true }).catch(() => {});
+    if (temporaryFd !== null) try { closeFd(temporaryFd); } catch {}
+    try { unlinkAt(storage.clips.fd, temporaryName); } catch {}
     if (error?.message?.startsWith("video download")) throw error;
     throw new Error("video output could not be written");
   }
   return { bytes, sha256: `sha256:${hash.digest("hex")}` };
 }
 
-async function hashExistingFile(path) {
-  const fileStat = await stat(path).catch(() => null);
-  if (!fileStat?.isFile() || fileStat.size <= 0) return null;
-  const handle = await open(path, "r");
+function hashExistingFileAt(parentFd, name, maximumBytes) {
+  const snapshot = optionalOwnedFileAt(parentFd, name, maximumBytes, `BFL output ${name}`);
+  if (!snapshot || snapshot.identity.size <= 0n) {
+    closeOptionalOwnedFile(snapshot);
+    return null;
+  }
   const hash = createHash("sha256");
   try {
-    for await (const chunk of handle.createReadStream()) hash.update(chunk);
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    const size = Number(snapshot.identity.size);
+    while (offset < size) {
+      const bytesRead = readSync(snapshot.fd, buffer, 0, Math.min(buffer.byteLength, size - offset), offset);
+      if (bytesRead <= 0) throw new Error("BFL output ended before its declared size");
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    const after = statFd(snapshot.fd);
+    if (after.nlink !== 1n || after.size !== snapshot.identity.size || !sameFdIdentity(after, snapshot.identity)) {
+      throw new Error("BFL output changed while it was hashed");
+    }
+    return { bytes: size, sha256: `sha256:${hash.digest("hex")}` };
   } finally {
-    await handle.close().catch(() => {});
+    closeOptionalOwnedFile(snapshot);
   }
-  return { bytes: fileStat.size, sha256: `sha256:${hash.digest("hex")}` };
 }
 
-async function completedCheckpointFile(checkpoint, task, clipsDirectory) {
+async function completedCheckpointFile(checkpoint, task, storage, maximumBytes) {
   if (checkpoint.phase !== "downloaded") return null;
-  const outputPath = assertClipPath(task.relativePath, clipsDirectory);
-  const actual = await hashExistingFile(outputPath);
+  assertClipPath(task.relativePath, storage.plan.clipsDirectory);
+  const actual = hashExistingFileAt(storage.clips.fd, task.outputName, maximumBytes);
   if (!actual || actual.bytes !== checkpoint.bytes || actual.sha256 !== checkpoint.sha256) return null;
   return actual;
 }
@@ -857,8 +1627,15 @@ function remainingEstimatedCost(plan, checkpoints, fromIndex) {
   }, 0);
 }
 
+function priorReportedOrEstimatedCost(plan, checkpoints, toIndex) {
+  return plan.tasks.slice(0, toIndex).reduce((sum, task) => {
+    const checkpoint = checkpoints[task.index - 1];
+    return sum + (checkpointProviderCost(checkpoint) ?? task.estimatedCredits);
+  }, 0);
+}
+
 function assertBudgetBeforeSubmission(plan, checkpoints, taskOffset) {
-  const observed = knownProviderCost(checkpoints.slice(0, taskOffset));
+  const observed = priorReportedOrEstimatedCost(plan, checkpoints, taskOffset);
   const remaining = remainingEstimatedCost(plan, checkpoints, taskOffset);
   if (observed + remaining > plan.budget.maxCredits) {
     throw new Error(`BFL budget guard stopped before task ${taskOffset + 1}: ${observed + remaining} projected credits exceeds the ${plan.budget.maxCredits}-credit ceiling`);
@@ -889,6 +1666,7 @@ function segmentFromCheckpoint(checkpoint, task, request) {
     responseId: checkpoint.responseId || checkpoint.taskId,
     pollingUrl: redactUrl(checkpoint.pollingUrl, null),
     submittedAt: checkpoint.submittedAt,
+    submissionStartedAt: checkpoint.submissionStartedAt,
     submissionResponseId: checkpoint.taskId,
     submissionTimestamp: checkpoint.submissionTimestamp,
     submissionStatus: checkpoint.submissionStatus,
@@ -898,6 +1676,7 @@ function segmentFromCheckpoint(checkpoint, task, request) {
     modelVersion: MODEL_VERSION,
     providerCostCredits: checkpoint.providerCostCredits,
     estimatedCredits: task.estimatedCredits,
+    submittedRequestBody: structuredClone(checkpoint.request),
     submittedRequestBodyHash: checkpoint.requestBodyHash,
     submittedPromptHash: hashJson({ prompt: checkpoint.request.prompt }),
     resumed: Boolean(checkpoint.resumed),
@@ -912,54 +1691,197 @@ function segmentFromCheckpoint(checkpoint, task, request) {
 
 async function generate(request, apiKey, runtime = {}) {
   validateRequest(request);
+  if (!validateHistoricalBflRequestAuthorization(request?.paidAuthorization, request)) {
+    throw new Error("live BFL generation requires an exact consumed paid request authorization");
+  }
   const key = requiredString(apiKey, "BFL_API_KEY");
+  assertBflValueDoesNotContainApiKey(request, key);
   const env = runtime.env || process.env;
   const plan = generationPlan(request, env);
-  assertLiveBudget(plan.budget);
+  const storage = await pinBflStorage(plan, request);
+  try {
+    await verifyBflConsumedApprovalForRequest(
+      plan.jobDirectory,
+      request.paidAuthorization,
+      request,
+      {
+        historical: true,
+        apiKey: key,
+        executorSnapshotPath: join(plan.jobDirectory, request.paidAuthorization.context.executorSnapshotName),
+        requireClaim: true
+      }
+    );
+    const invocationOwner = await acquireInvocationLease(plan, request, storage);
+    try {
+      if (typeof runtime.afterInvocationLeaseAcquired === "function") {
+        await runtime.afterInvocationLeaseAcquired({ path: invocationOwner.path });
+      }
+      return await generateWithInvocationOwner(request, key, runtime, env, plan, invocationOwner, storage);
+    } finally {
+      await releaseInvocationLease(invocationOwner, request);
+    }
+  } finally {
+    closeBflStorage(storage);
+  }
+}
+
+async function generateWithInvocationOwner(request, key, runtime, env, plan, invocationOwner, storage) {
   const timeoutMs = boundedIntegerSetting(env.BFL_POLL_TIMEOUT_MS, DEFAULT_POLL_TIMEOUT_MS, 10, 60 * 60 * 1000, "BFL_POLL_TIMEOUT_MS");
   const pollIntervalMs = boundedIntegerSetting(env.BFL_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS, 10, 60_000, "BFL_POLL_INTERVAL_MS");
   const mediaBytes = maxMediaBytes(env);
+  const executorSnapshotPath = join(plan.jobDirectory, request.paidAuthorization.context.executorSnapshotName);
   const options = {
     fetchImpl: runtime.fetchImpl || globalThis.fetch,
-    sleep: runtime.sleep || ((duration) => new Promise((resolveSleep) => setTimeout(resolveSleep, duration)))
+    sleep: runtime.sleep || ((duration) => new Promise((resolveSleep) => setTimeout(resolveSleep, duration))),
+    now: () => new Date(),
+    beforePaidPost: runtime.beforePaidPost,
+    beforeProviderExecutionClaim: runtime.beforeProviderExecutionClaim,
+    afterProviderExecutionClaim: runtime.afterProviderExecutionClaim,
+    jobDirectory: plan.jobDirectory,
+    executorSnapshotPath,
+    storage
   };
-  await mkdir(plan.clipsDirectory, { recursive: true, mode: 0o700 });
-  await mkdir(plan.checkpointDirectory, { recursive: true, mode: 0o700 });
+  await ensureBflCheckpointStorage(storage);
+  await assertBflStorageCurrent(storage, "before provider execution claim");
+  let providerExecution = await claimBflProviderExecution(
+    plan.jobDirectory,
+    request.paidAuthorization,
+    request,
+    { allowMissing: true }
+  );
+  const hadProviderExecution = Boolean(providerExecution);
+  let recoveryOnly = false;
+  if (hadProviderExecution) {
+    await verifyBflConsumedApprovalForRequest(
+      plan.jobDirectory,
+      request.paidAuthorization,
+      request,
+      { historical: true, apiKey: key, executorSnapshotPath, requireClaim: true }
+    );
+  }
   const startedAt = new Date().toISOString();
   const deadline = Date.now() + timeoutMs;
   const checkpoints = [];
 
   for (const task of plan.tasks) {
-    let checkpoint = await loadCheckpoint(task, request);
+    let checkpoint = await loadCheckpoint(task, request, storage);
     if (!checkpoint) {
+      if (hadProviderExecution) {
+        throw new Error(`BFL execution claim exists without checkpoint ${task.index}; paid recovery is ambiguous`);
+      }
       checkpoint = baseCheckpoint(task, request);
-      await writeJsonAtomic(task.checkpointPath, checkpoint);
+      writeJsonAtomicAt(storage.checkpointRun.fd, task.checkpointName, checkpoint, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
     } else {
       checkpoint = { ...checkpoint, resumed: true };
     }
     assertResumableCheckpoint(checkpoint, task);
     checkpoints[task.index - 1] = checkpoint;
   }
+  const hasProviderEvidence = checkpoints.some((checkpoint) => ["submitted", "downloaded"].includes(checkpoint.phase));
+  if (!hadProviderExecution && hasProviderEvidence) {
+    throw new Error("BFL submitted checkpoint evidence is missing its exact provider execution claim");
+  }
+  if (hadProviderExecution) {
+    if (hasProviderEvidence) {
+      recoveryOnly = true;
+      await setInvocationLeaseMode(invocationOwner, request, "provider-zero-recovery");
+    } else {
+      // A provider execution claim cannot precede the durable prepared set and
+      // the adapter cannot POST before it durably writes `submitting`. Thus an
+      // exact all-prepared set proves the prior owner died after claim but
+      // before any provider request, and the same unexpired approval may resume.
+      await verifyBflConsumedApprovalForRequest(
+        plan.jobDirectory,
+        request.paidAuthorization,
+        request,
+        { now: new Date(), apiKey: key, executorSnapshotPath, requireClaim: true }
+      );
+      await setInvocationLeaseMode(invocationOwner, request, "paid-owner");
+    }
+  } else if (typeof runtime.afterPreparedCheckpoints === "function") {
+    await runtime.afterPreparedCheckpoints({
+      checkpoints: structuredClone(checkpoints),
+      checkpointDirectory: plan.checkpointDirectory
+    });
+  }
 
   const segments = [];
   for (const [taskOffset, task] of plan.tasks.entries()) {
     if (Date.now() >= deadline) throw new Error("BFL generation timed out");
     let checkpoint = checkpoints[taskOffset];
-    const existing = await completedCheckpointFile(checkpoint, task, plan.clipsDirectory);
+    const existing = await completedCheckpointFile(checkpoint, task, storage, mediaBytes);
     if (existing) {
       segments.push(segmentFromCheckpoint(checkpoint, task, request));
       continue;
     }
     if (checkpoint.phase === "prepared") {
+      // Budget policy gates only a new paid POST. A known submitted task has
+      // already incurred its provider charge and must remain recoverable when
+      // estimates or ceilings are tightened after submission.
+      if (recoveryOnly) {
+        throw new Error(`BFL provider-zero recovery stopped at prepared task ${task.index}; a new paid POST requires a new explicit approval`);
+      }
+      assertLiveBudget(plan.budget);
       assertBudgetBeforeSubmission(plan, checkpoints, taskOffset);
+      if (!providerExecution) {
+        await verifyBflConsumedApprovalForRequest(
+          plan.jobDirectory,
+          request.paidAuthorization,
+          request,
+          {
+            now: new Date(),
+            apiKey: key,
+            executorSnapshotPath,
+            requireClaim: true
+          }
+        );
+        if (typeof options.beforeProviderExecutionClaim === "function") {
+          await options.beforeProviderExecutionClaim({
+            task: structuredClone(task),
+            checkpoint: structuredClone(checkpoint)
+          });
+        }
+        const claimAt = options.now();
+        await verifyBflConsumedApprovalForRequest(
+          plan.jobDirectory,
+          request.paidAuthorization,
+          request,
+          { now: claimAt, apiKey: key, executorSnapshotPath, requireClaim: true }
+        );
+        providerExecution = await claimBflProviderExecution(
+          plan.jobDirectory,
+          request.paidAuthorization,
+          request,
+          { now: claimAt, allowCreate: true, allowExisting: true }
+        );
+        if (!providerExecution.created) {
+          recoveryOnly = true;
+          await setInvocationLeaseMode(invocationOwner, request, "provider-zero-recovery");
+          await verifyBflConsumedApprovalForRequest(
+            plan.jobDirectory,
+            request.paidAuthorization,
+            request,
+            { historical: true, apiKey: key, executorSnapshotPath, requireClaim: true }
+          );
+          throw new Error(`BFL provider-zero recovery stopped at prepared task ${task.index}; a new paid POST requires a new explicit approval`);
+        }
+        if (typeof options.afterProviderExecutionClaim === "function") {
+          await options.afterProviderExecutionClaim({
+            task: structuredClone(task),
+            checkpoint: structuredClone(checkpoint),
+            executionClaim: structuredClone(providerExecution.claimReceipt)
+          });
+        }
+        await setInvocationLeaseMode(invocationOwner, request, "paid-owner");
+      }
       checkpoint = await submitTask(task, checkpoint, request, key, deadline, options);
       checkpoints[taskOffset] = checkpoint;
     }
     if (checkpoint.phase !== "submitted") throw new Error(`BFL task ${task.index} cannot resume from phase ${checkpoint.phase}`);
     const result = await pollTask(checkpoint, key, deadline, pollIntervalMs, options);
     const videoUrl = resultUrlFrom(result.response, key, env);
-    const outputPath = assertClipPath(task.relativePath, plan.clipsDirectory);
-    const file = await downloadVideo(videoUrl, outputPath, Math.max(1, deadline - Date.now()), mediaBytes, options.fetchImpl);
+    assertClipPath(task.relativePath, plan.clipsDirectory);
+    const file = await downloadVideo(videoUrl, task.outputName, Math.max(1, deadline - Date.now()), mediaBytes, options.fetchImpl, storage);
     const completed = {
       ...checkpoint,
       phase: "downloaded",
@@ -971,12 +1893,13 @@ async function generate(request, apiKey, runtime = {}) {
       pollCount: result.pollCount,
       completedAt: new Date().toISOString()
     };
-    await writeJsonAtomic(task.checkpointPath, completed);
+    writeJsonAtomicAt(storage.checkpointRun.fd, task.checkpointName, completed, MAX_CHECKPOINT_BYTES, `BFL checkpoint ${task.index}`);
     checkpoints[taskOffset] = completed;
     segments.push(segmentFromCheckpoint(completed, task, request));
   }
 
   if (segments.length !== request.segments.length) throw new Error("BFL output count does not match request");
+  if (!providerExecution?.claimReceipt) throw new Error("BFL completed output is missing its exact provider execution claim");
   const orderedSegments = segments.sort((left, right) => left.index - right.index);
   const taskIds = orderedSegments.map((segment) => segment.taskId);
   const providerReportedCredits = knownProviderCost(checkpoints);
@@ -993,7 +1916,9 @@ async function generate(request, apiKey, runtime = {}) {
     taskIds,
     requestHash: request.requestHash,
     scriptHash: request.scriptHash,
-    request: redactValue(request, key),
+    request: structuredClone(request),
+    paidAuthorization: structuredClone(request.paidAuthorization),
+    providerExecutionClaim: structuredClone(providerExecution.claimReceipt),
     createdAt: startedAt,
     completedAt,
     cost: {
@@ -1012,6 +1937,7 @@ async function generate(request, apiKey, runtime = {}) {
       responseId: segment.responseId,
       pollingUrl: segment.pollingUrl,
       submittedAt: segment.submittedAt,
+      submissionStartedAt: segment.submissionStartedAt,
       submissionResponseId: segment.submissionResponseId,
       submissionTimestamp: segment.submissionTimestamp,
       submissionStatus: segment.submissionStatus,
@@ -1020,10 +1946,7 @@ async function generate(request, apiKey, runtime = {}) {
       completedAt: segment.completedAt,
       providerCostCredits: segment.providerCostCredits,
       estimatedCredits: segment.estimatedCredits,
-      request: {
-        prompt: segment.providerVisualPrompt || request.segments[segment.index - 1]?.prompt,
-        requestBodyHash: segment.submittedRequestBodyHash
-      },
+      request: structuredClone(segment.submittedRequestBody),
       requestBodyHash: segment.submittedRequestBodyHash,
       submittedPromptHash: segment.submittedPromptHash,
       resumed: segment.resumed
@@ -1045,6 +1968,16 @@ async function readStdinRequest() {
   }
 }
 
+function redactCompletedReceiptForOutput(receipt, apiKey) {
+  const { request: exactRequest, paidAuthorization, providerExecutionClaim, ...providerDerived } = receipt;
+  return {
+    ...redactValue(providerDerived, apiKey),
+    request: exactRequest,
+    paidAuthorization,
+    providerExecutionClaim
+  };
+}
+
 async function main() {
   const request = validateRequest(await readStdinRequest());
   if (dryRunRequested(request)) {
@@ -1053,29 +1986,40 @@ async function main() {
   }
   const apiKey = requiredString(process.env.BFL_API_KEY, "BFL_API_KEY");
   const receipt = await generate(request, apiKey);
-  process.stdout.write(`${JSON.stringify(redactValue(receipt, apiKey))}\n`);
+  // request and paid attestations were validated against their canonical hashes
+  // before the first POST. Preserve them byte-for-byte; only provider-derived
+  // material is redacted recursively. This prevents harmless prompt/topic text
+  // such as `token: stone` from breaking the parent's exact signed echo check.
+  process.stdout.write(`${JSON.stringify(redactCompletedReceiptForOutput(receipt, apiKey))}\n`);
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   main().catch((error) => {
     const apiKey = process.env.BFL_API_KEY?.trim();
-    process.stderr.write(`bfl-flux-video-generator: ${redactValue(error?.message || "unknown error", apiKey)}\n`);
+    process.stderr.write(`bfl-flux-video-generator: ${redactFreeText(error?.message || "unknown error", apiKey)}\n`);
     process.exitCode = 1;
   });
 }
 
 export {
   API_URL,
+  GLOBAL_BFL_GUARD_HOST,
+  GLOBAL_BFL_GUARD_PORT,
   MODEL,
   assertLiveBudget,
   budgetFor,
   dryRunReceipt,
   dryRunRequested,
+  fetchBounded,
   generate,
   generationPlan,
   isOfficialDeliveryHostname,
   pollingUrlFrom,
+  preflightBflStorage,
+  readJsonResponse,
+  readVideoResponse,
+  redactCompletedReceiptForOutput,
   redactUrl,
   redactValue,
   resultUrlFrom,

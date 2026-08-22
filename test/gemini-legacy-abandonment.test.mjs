@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -47,16 +47,77 @@ function mockCdp(targets = [{ id: "root", type: "page", url: "https://gemini.goo
   Browser: "Chrome/151.0.7922.109",
   "User-Agent": "Mozilla/5.0 HeadlessChrome/151.0.0.0 Safari/537.36"
 }) {
-  return async (url, options) => {
+  const fetchFn = async (url, options) => {
     expect(options.redirect).toBe("error");
     if (url.endsWith("/json/version")) return new Response(JSON.stringify(version), { status: 200 });
     if (url.endsWith("/json/list")) return new Response(JSON.stringify(targets), { status: 200 });
     return new Response("not found", { status: 404 });
   };
+  fetchFn.readBrowserRuntimeFn = async () => ({
+    commandLine: {
+      arguments: [
+        "chrome",
+        `--user-data-dir=${TEST_JOB.geminiProfileDir}`,
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=9444",
+        "--headless=new",
+        "--enable-automation"
+      ]
+    },
+    version: {
+      product: version.Browser,
+      userAgent: version["User-Agent"],
+      protocolVersion: "1.3",
+      revision: "test-revision"
+    }
+  });
+  return fetchFn;
 }
 
 function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+async function metadataSnapshot(path) {
+  const value = await stat(path, { bigint: true });
+  return {
+    dev: value.dev,
+    ino: value.ino,
+    mode: value.mode,
+    nlink: value.nlink,
+    size: value.size,
+    mtimeNs: value.mtimeNs,
+    ctimeNs: value.ctimeNs
+  };
+}
+
+async function externalInvariant(path) {
+  return {
+    bytes: Buffer.from(await readFile(path)),
+    file: await metadataSnapshot(path),
+    parent: await metadataSnapshot(join(path, ".."))
+  };
+}
+
+async function directoryInvariant(path) {
+  return {
+    entries: (await readdir(path)).sort(),
+    directory: await metadataSnapshot(path),
+    parent: await metadataSnapshot(join(path, ".."))
+  };
+}
+
+function noProviderCounter() {
+  let calls = 0;
+  const fetchFn = async () => {
+    calls += 1;
+    throw new Error("provider access forbidden in storage preflight regression");
+  };
+  fetchFn.readBrowserRuntimeFn = async () => {
+    calls += 1;
+    throw new Error("provider access forbidden in storage preflight regression");
+  };
+  return { fetchFn, calls: () => calls };
 }
 
 async function fixture() {
@@ -101,7 +162,7 @@ describe("explicit legacy Gemini submission abandonment", () => {
       operatorAssertion: "no-live-recoverable-conversation-target",
       sourceGeneration: { sha256: value.generationSha256 },
       liveCdpObservation: {
-        method: "loopback-cdp-json-read-only",
+        method: "loopback-cdp-json-and-browser-protocol-read-only",
         headless: true,
         prohibitedTargetCount: 0,
         targetCount: 1
@@ -161,6 +222,188 @@ describe("explicit legacy Gemini submission abandonment", () => {
     })).toMatchObject({ required: true, allowed: false, reason: "operator-abandonment-integrity-failed" });
   });
 
+  test("rejects symlinked or hard-linked canonical generation leaves before any provider action", async () => {
+    for (const attack of ["symlink", "hardlink"]) {
+      const value = await fixture();
+      const originalBytes = await readFile(value.generationPath);
+      const externalPath = join(value.root, `external-generation-${attack}.json`);
+      await writeFile(externalPath, originalBytes, { mode: 0o600 });
+      await rm(value.generationPath);
+      if (attack === "symlink") await symlink(externalPath, value.generationPath);
+      else await link(externalPath, value.generationPath);
+      const beforeExternal = await externalInvariant(externalPath);
+      const beforeJobDirectory = await metadataSnapshot(value.jobDir);
+      const provider = noProviderCounter();
+
+      await expect(createLegacyGeminiAbandonment({
+        jobsDir: value.jobsDir,
+        jobId: value.jobId,
+        expectedGenerationSha256: sha256(originalBytes),
+        reason: "unsafe generation leaf는 공급자 관측 전에 거부합니다.",
+        assertNoLiveTarget: true,
+        fetchFn: provider.fetchFn
+      })).rejects.toThrow();
+      await expect(readLegacyGeminiAbandonmentDecision({
+        ...value,
+        generation: JSON.parse(originalBytes.toString("utf8"))
+      })).rejects.toThrow();
+      expect(provider.calls()).toBe(0);
+      expect(await externalInvariant(externalPath)).toEqual(beforeExternal);
+      expect(await metadataSnapshot(value.jobDir)).toEqual(beforeJobDirectory);
+      await expect(stat(join(value.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  test("rejects oversized or invalid-UTF8 generation bytes before any provider action", async () => {
+    const cases = [
+      { name: "oversized", bytes: Buffer.alloc(16 * 1024 * 1024 + 1, 0x20) },
+      { name: "invalid-utf8", bytes: Buffer.from([0xff, 0xfe, 0xfd]) }
+    ];
+    for (const attack of cases) {
+      const value = await fixture();
+      await writeFile(value.generationPath, attack.bytes);
+      const beforeJobDirectory = await metadataSnapshot(value.jobDir);
+      const provider = noProviderCounter();
+      await expect(createLegacyGeminiAbandonment({
+        jobsDir: value.jobsDir,
+        jobId: value.jobId,
+        expectedGenerationSha256: sha256(attack.bytes),
+        reason: `${attack.name} generation bytes를 fail closed 처리합니다.`,
+        assertNoLiveTarget: true,
+        fetchFn: provider.fetchFn
+      })).rejects.toThrow();
+      await expect(readLegacyGeminiAbandonmentDecision(value)).rejects.toThrow();
+      expect(provider.calls()).toBe(0);
+      expect(await metadataSnapshot(value.jobDir)).toEqual(beforeJobDirectory);
+      await expect(stat(join(value.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  test("rejects unsafe abandonment receipt leaves without touching external inode or parent metadata", async () => {
+    for (const attack of ["symlink", "hardlink"]) {
+      const value = await fixture();
+      const externalPath = join(value.root, `external-receipt-${attack}.json`);
+      await writeFile(externalPath, Buffer.from("external receipt bytes stay immutable"), { mode: 0o600 });
+      const receiptPath = join(value.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME);
+      if (attack === "symlink") await symlink(externalPath, receiptPath);
+      else await link(externalPath, receiptPath);
+      const beforeExternal = await externalInvariant(externalPath);
+      const beforeJobDirectory = await metadataSnapshot(value.jobDir);
+      const provider = noProviderCounter();
+
+      await expect(readLegacyGeminiAbandonmentDecision(value)).rejects.toThrow();
+      await expect(createLegacyGeminiAbandonment({
+        jobsDir: value.jobsDir,
+        jobId: value.jobId,
+        expectedGenerationSha256: value.generationSha256,
+        reason: "unsafe receipt leaf는 공급자 관측 전에 거부합니다.",
+        assertNoLiveTarget: true,
+        fetchFn: provider.fetchFn
+      })).rejects.toThrow();
+      expect(provider.calls()).toBe(0);
+      expect(await externalInvariant(externalPath)).toEqual(beforeExternal);
+      expect(await metadataSnapshot(value.jobDir)).toEqual(beforeJobDirectory);
+    }
+  });
+
+  test("treats oversized and invalid-UTF8 abandonment receipts as unsafe canonical state", async () => {
+    for (const bytes of [Buffer.alloc(1024 * 1024 + 1, 0x20), Buffer.from([0xff, 0xfe, 0xfd])]) {
+      const value = await fixture();
+      await writeFile(join(value.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME), bytes, { mode: 0o600 });
+      const beforeJobDirectory = await metadataSnapshot(value.jobDir);
+      const provider = noProviderCounter();
+      await expect(readLegacyGeminiAbandonmentDecision(value)).rejects.toThrow();
+      await expect(createLegacyGeminiAbandonment({
+        jobsDir: value.jobsDir,
+        jobId: value.jobId,
+        expectedGenerationSha256: value.generationSha256,
+        reason: "unsafe receipt bytes는 공급자 관측 전에 거부합니다.",
+        assertNoLiveTarget: true,
+        fetchFn: provider.fetchFn
+      })).rejects.toThrow();
+      expect(provider.calls()).toBe(0);
+      expect(await metadataSnapshot(value.jobDir)).toEqual(beforeJobDirectory);
+    }
+  });
+
+  test("rejects user-controlled jobs ancestry aliases before any provider action", async () => {
+    const value = await fixture();
+    const aliasJobsDir = join(value.root, "jobs-alias");
+    await symlink(value.jobsDir, aliasJobsDir);
+    const beforeGeneration = await externalInvariant(value.generationPath);
+    const beforeJobsDirectory = await metadataSnapshot(value.jobsDir);
+    const provider = noProviderCounter();
+    await expect(createLegacyGeminiAbandonment({
+      jobsDir: aliasJobsDir,
+      jobId: value.jobId,
+      expectedGenerationSha256: value.generationSha256,
+      reason: "user ancestry alias는 canonical storage로 허용하지 않습니다.",
+      assertNoLiveTarget: true,
+      fetchFn: provider.fetchFn
+    })).rejects.toThrow();
+    await expect(readLegacyGeminiAbandonmentDecision({
+      ...value,
+      jobDir: join(aliasJobsDir, value.jobId),
+      generationPath: join(aliasJobsDir, value.jobId, "gemini-generation.json")
+    })).rejects.toThrow();
+    expect(provider.calls()).toBe(0);
+    expect(await externalInvariant(value.generationPath)).toEqual(beforeGeneration);
+    expect(await metadataSnapshot(value.jobsDir)).toEqual(beforeJobsDirectory);
+  });
+
+  test("detects an equal-byte canonical generation inode replacement before provider observation", async () => {
+    const value = await fixture();
+    const originalBytes = await readFile(value.generationPath);
+    const provider = noProviderCounter();
+    await expect(createLegacyGeminiAbandonment({
+      jobsDir: value.jobsDir,
+      jobId: value.jobId,
+      expectedGenerationSha256: value.generationSha256,
+      reason: "same-byte inode replacement도 공급자 관측 전에 거부합니다.",
+      assertNoLiveTarget: true,
+      fetchFn: provider.fetchFn
+    }, {
+      afterPinnedReadForTest: async () => {
+        await rm(value.generationPath);
+        await writeFile(value.generationPath, originalBytes, { mode: 0o600 });
+      }
+    })).rejects.toThrow("변경");
+    expect(provider.calls()).toBe(0);
+    await expect(stat(join(value.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("publishes a private single-link authorization receipt and never overwrites a raced destination", async () => {
+    const value = await fixture();
+    const created = await createLegacyGeminiAbandonment({
+      jobsDir: value.jobsDir,
+      jobId: value.jobId,
+      expectedGenerationSha256: value.generationSha256,
+      reason: "linked 영수증과 부모 directory까지 durable하게 보존합니다.",
+      assertNoLiveTarget: true,
+      fetchFn: mockCdp()
+    });
+    const createdState = await stat(created.receiptPath, { bigint: true });
+    expect(createdState.isFile()).toBe(true);
+    expect(createdState.nlink).toBe(1n);
+    expect(createdState.mode & 0o777n).toBe(0o600n);
+
+    const raced = await fixture();
+    const rivalBytes = Buffer.from("raced operator receipt must remain intact");
+    await expect(createLegacyGeminiAbandonment({
+      jobsDir: raced.jobsDir,
+      jobId: raced.jobId,
+      expectedGenerationSha256: raced.generationSha256,
+      reason: "concurrent link race를 성공으로 오해하지 않습니다.",
+      assertNoLiveTarget: true,
+      fetchFn: mockCdp()
+    }, {
+      beforeReceiptPublishForTest: async () => {
+        await writeFile(join(raced.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME), rivalBytes, { flag: "wx", mode: 0o600 });
+      }
+    })).rejects.toThrow("변경");
+    expect(await readFile(join(raced.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME))).toEqual(rivalBytes);
+  });
+
   test("rejects unavailable, malformed, headed, or live generation CDP observations", async () => {
     const value = await fixture();
     const common = {
@@ -177,7 +420,7 @@ describe("explicit legacy Gemini submission abandonment", () => {
     await expect(createLegacyGeminiAbandonment({
       ...common,
       fetchFn: mockCdp([], { Browser: "Chrome/151", "User-Agent": "Chrome/151" })
-    })).rejects.toThrow("headless Chrome");
+    })).rejects.toThrow("headless runtime");
     await expect(createLegacyGeminiAbandonment({
       ...common,
       fetchFn: mockCdp([{ id: "live-conversation", type: "page", url: "https://gemini.google.com/app/live-conversation" }])
@@ -407,6 +650,74 @@ describe("explicit legacy Gemini submission abandonment", () => {
     });
     expect(sha256(await readFile(join(value.jobDir, evidence.generationPath)))).toBe(value.generationSha256);
     expect(sha256(await readFile(join(value.jobDir, evidence.receiptPath)))).toBe(evidence.receiptSha256);
+    const evidenceDirectoryState = await stat(join(value.jobDir, "legacy-gemini-evidence"), { bigint: true });
+    const generationState = await stat(join(value.jobDir, evidence.generationPath), { bigint: true });
+    const receiptState = await stat(join(value.jobDir, evidence.receiptPath), { bigint: true });
+    expect(evidenceDirectoryState.mode & 0o077n).toBe(0n);
+    expect(generationState.nlink).toBe(1n);
+    expect(receiptState.nlink).toBe(1n);
+    expect(generationState.mode & 0o777n).toBe(0o400n);
+    expect(receiptState.mode & 0o777n).toBe(0o400n);
+
+    // Idempotent preservation validates and re-syncs the exact immutable bytes.
+    await expect(preserveLegacyGeminiAbandonmentEvidence(value)).resolves.toEqual(evidence);
+  });
+
+  test("rejects a symlinked evidence ancestry without mutating its external directory", async () => {
+    const value = await fixture();
+    await createLegacyGeminiAbandonment({
+      jobsDir: value.jobsDir,
+      jobId: value.jobId,
+      expectedGenerationSha256: value.generationSha256,
+      reason: "evidence ancestry 공격 회귀를 위한 명시적 폐기입니다.",
+      assertNoLiveTarget: true,
+      fetchFn: mockCdp()
+    });
+    const externalDirectory = join(value.root, "external-evidence-directory");
+    await mkdir(externalDirectory, { mode: 0o700 });
+    await symlink(externalDirectory, join(value.jobDir, "legacy-gemini-evidence"));
+    const beforeExternal = await directoryInvariant(externalDirectory);
+    const beforeJobDirectory = await metadataSnapshot(value.jobDir);
+
+    await expect(preserveLegacyGeminiAbandonmentEvidence(value)).rejects.toThrow();
+    expect(await directoryInvariant(externalDirectory)).toEqual(beforeExternal);
+    expect(await metadataSnapshot(value.jobDir)).toEqual(beforeJobDirectory);
+  });
+
+  test("rejects symlinked and hard-linked evidence leaves without mutating external files", async () => {
+    const attacks = [
+      { kind: "symlink", leaf: "abandoned-gemini-generation.json", source: "generation" },
+      { kind: "hardlink", leaf: "abandoned-gemini-generation.json", source: "generation" },
+      { kind: "symlink", leaf: "abandonment-receipt.json", source: "receipt" },
+      { kind: "hardlink", leaf: "abandonment-receipt.json", source: "receipt" }
+    ];
+    for (const attack of attacks) {
+      const value = await fixture();
+      await createLegacyGeminiAbandonment({
+        jobsDir: value.jobsDir,
+        jobId: value.jobId,
+        expectedGenerationSha256: value.generationSha256,
+        reason: "evidence leaf 공격 회귀를 위한 명시적 폐기입니다.",
+        assertNoLiveTarget: true,
+        fetchFn: mockCdp()
+      });
+      const evidenceDirectory = join(value.jobDir, "legacy-gemini-evidence");
+      await mkdir(evidenceDirectory, { mode: 0o700 });
+      const sourcePath = attack.source === "generation"
+        ? value.generationPath
+        : join(value.jobDir, GEMINI_LEGACY_ABANDONMENT_NAME);
+      const externalPath = join(value.root, `external-${attack.source}-${attack.kind}.json`);
+      await writeFile(externalPath, await readFile(sourcePath), { mode: 0o400 });
+      const attackedPath = join(evidenceDirectory, attack.leaf);
+      if (attack.kind === "symlink") await symlink(externalPath, attackedPath);
+      else await link(externalPath, attackedPath);
+      const beforeExternal = await externalInvariant(externalPath);
+      const beforeEvidenceDirectory = await metadataSnapshot(evidenceDirectory);
+
+      await expect(preserveLegacyGeminiAbandonmentEvidence(value)).rejects.toThrow();
+      expect(await externalInvariant(externalPath)).toEqual(beforeExternal);
+      expect(await metadataSnapshot(evidenceDirectory)).toEqual(beforeEvidenceDirectory);
+    }
   });
 
   test("does not require abandonment for a current recoverable checkpoint", () => {

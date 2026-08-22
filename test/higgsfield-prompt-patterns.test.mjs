@@ -257,7 +257,7 @@ describe("Higgsfield-informed prompt-pattern catalog", () => {
         scriptHash,
         request.requestHash,
         directory
-      )).rejects.toThrow("실제 provider 제출 표시");
+      )).rejects.toThrow("실제 provider 요청 body 결속");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -319,6 +319,63 @@ describe("Higgsfield-informed prompt-pattern catalog", () => {
     downgraded.schemaVersion = 1;
     downgraded.receiptHash = hashShotPatternValue(Object.fromEntries(Object.entries(downgraded).filter(([key]) => key !== "receiptHash")));
     expect(verifyShotPatternReceipt(downgraded)).toBeFalse();
+  });
+
+  test("records mixed inherited and current-run submissions per segment without flattening history", async () => {
+    const job = { ...jobFixture("gemini-browser"), id: "mixed-job" };
+    const base = scriptFixture();
+    const script = applyShotPatternsToScript(base, job, await loadCatalog());
+    const sourceHash = `sha256:${"d".repeat(64)}`;
+    const receipt = createShotPatternReceipt(script, job, "child-run", {
+      schemaVersion: 2,
+      submittedToProvider: true,
+      providerRequestSentThisRun: true,
+      inheritedProviderSubmission: true,
+      sourceSubmissionRunId: "source-run",
+      sourceGenerationHash: sourceHash,
+      segmentLineage: [
+        {
+          index: 1,
+          providerRequestSentThisRun: false,
+          inheritedProviderSubmission: true,
+          submissionRunId: "original-submit-run",
+          sourceRunId: "source-run",
+          sourceGenerationHash: sourceHash
+        },
+        {
+          index: 2,
+          providerRequestSentThisRun: true,
+          inheritedProviderSubmission: false,
+          submissionRunId: "child-run",
+          sourceRunId: null,
+          sourceGenerationHash: null
+        }
+      ],
+      providerRequestHash: `sha256:${"e".repeat(64)}`,
+      providerGenerationHash: `sha256:${"f".repeat(64)}`
+    });
+    expect(receipt).toMatchObject({ providerRequestSentThisRun: true, inheritedProviderSubmission: true });
+    expect(receipt.segments[0]).toMatchObject({
+      providerRequestSentThisRun: false,
+      inheritedProviderSubmission: true,
+      submissionRunId: "original-submit-run",
+      sourceRunId: "source-run",
+      sourceSubmissionRunId: "original-submit-run",
+      sourceGenerationHash: sourceHash
+    });
+    expect(receipt.segments[1]).toMatchObject({
+      providerRequestSentThisRun: true,
+      inheritedProviderSubmission: false,
+      submissionRunId: "child-run",
+      sourceRunId: null,
+      sourceGenerationHash: null
+    });
+    expect(verifyShotPatternReceipt(receipt)).toBeTrue();
+
+    const flattened = structuredClone(receipt);
+    flattened.segments[0].providerRequestSentThisRun = true;
+    flattened.receiptHash = hashShotPatternValue(Object.fromEntries(Object.entries(flattened).filter(([key]) => key !== "receiptHash")));
+    expect(verifyShotPatternReceipt(flattened)).toBeFalse();
   });
 
   test("rejects non-official source hosts and rights labels before public projection", async () => {

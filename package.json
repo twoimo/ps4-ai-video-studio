@@ -13,10 +13,12 @@
     "benchmark:media": "bun scripts/benchmark-media.mjs",
     "monitor:gemini": "bun scripts/monitor-gemini-production.mjs",
     "gemini:abandon-legacy": "bun scripts/abandon-legacy-gemini-submission.mjs",
+    "bfl:approval": "bun scripts/bfl-paid-approval.mjs",
     "dev": "bun --watch src/server.mjs",
     "start": "bun src/server.mjs",
+    "check:release": "bun scripts/check-release-integrity.mjs",
     "check:syntax": "for file in src/*.mjs scripts/*.mjs public/*.js test/*.mjs tests/*.mjs; do node --check \"$file\"; done",
     "test": "bun test",
-    "check": "bun run check:syntax && bun test && git diff --check"
+    "check": "bun run check:release && bun run check:syntax && bun test && git diff --check"
   }
 }

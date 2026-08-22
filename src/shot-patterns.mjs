@@ -388,10 +388,47 @@ export function createShotPatternReceipt(script, job, runId, providerEvidence = 
   }
   if (!Array.isArray(script.segments) || script.segments.length !== plan.segmentCount) throw new Error("shot pattern 장면 수가 대본과 다릅니다.");
   const submittedToProvider = providerEvidence.submittedToProvider === true;
-  const inheritedProviderSubmission = providerEvidence.inheritedProviderSubmission === true;
-  const providerRequestSentThisRun = providerEvidence.providerRequestSentThisRun === undefined
-    ? submittedToProvider && !inheritedProviderSubmission
-    : providerEvidence.providerRequestSentThisRun === true;
+  const suppliedSegmentLineage = providerEvidence.segmentLineage;
+  if (suppliedSegmentLineage !== undefined && (!Array.isArray(suppliedSegmentLineage) || suppliedSegmentLineage.length !== script.segments.length)) {
+    throw new Error("shot pattern 세그먼트 제출 계보가 대본과 일치하지 않습니다.");
+  }
+  if (schemaVersion === 1 && suppliedSegmentLineage !== undefined) {
+    throw new Error("schema-1 shot pattern 영수증에는 세그먼트 provider 계보를 기록할 수 없습니다.");
+  }
+  const normalizedSegmentLineage = schemaVersion >= 2
+    ? script.segments.map((_, index) => {
+        if (suppliedSegmentLineage) {
+          const lineage = suppliedSegmentLineage[index];
+          const expectedKeys = ["index", "inheritedProviderSubmission", "providerRequestSentThisRun", "sourceGenerationHash", "sourceRunId", "submissionRunId"];
+          if (
+            !lineage
+            || Object.keys(lineage).sort().join(",") !== expectedKeys.sort().join(",")
+            || lineage.index !== index + 1
+            || typeof lineage.providerRequestSentThisRun !== "boolean"
+            || typeof lineage.inheritedProviderSubmission !== "boolean"
+          ) throw new Error(`${index + 1}번 shot pattern 세그먼트 제출 계보가 유효하지 않습니다.`);
+          return { ...lineage };
+        }
+        const inherited = providerEvidence.inheritedProviderSubmission === true;
+        const requestSent = providerEvidence.providerRequestSentThisRun === undefined
+          ? submittedToProvider && !inherited
+          : providerEvidence.providerRequestSentThisRun === true;
+        return {
+          index: index + 1,
+          providerRequestSentThisRun: requestSent,
+          inheritedProviderSubmission: inherited,
+          submissionRunId: submittedToProvider ? (inherited ? providerEvidence.sourceSubmissionRunId || null : runId) : null,
+          sourceRunId: inherited ? providerEvidence.sourceSubmissionRunId || null : null,
+          sourceGenerationHash: inherited ? providerEvidence.sourceGenerationHash || null : null
+        };
+      })
+    : null;
+  const inheritedProviderSubmission = schemaVersion >= 2
+    ? normalizedSegmentLineage.some((lineage) => lineage.inheritedProviderSubmission)
+    : false;
+  const providerRequestSentThisRun = schemaVersion >= 2
+    ? normalizedSegmentLineage.some((lineage) => lineage.providerRequestSentThisRun)
+    : submittedToProvider;
   const sourceSubmissionRunId = providerEvidence.sourceSubmissionRunId || null;
   const sourceGenerationHash = providerEvidence.sourceGenerationHash || null;
   if (schemaVersion === 1 && (
@@ -399,7 +436,12 @@ export function createShotPatternReceipt(script, job, runId, providerEvidence = 
     || providerEvidence.providerRequestSentThisRun !== undefined
     || providerEvidence.sourceSubmissionRunId !== undefined
     || providerEvidence.sourceGenerationHash !== undefined
+    || providerEvidence.segmentLineage !== undefined
   )) throw new Error("schema-1 shot pattern 영수증에는 provider 상속 lineage를 기록할 수 없습니다.");
+  if (schemaVersion >= 2 && (
+    (providerEvidence.providerRequestSentThisRun !== undefined && providerEvidence.providerRequestSentThisRun !== providerRequestSentThisRun)
+    || (providerEvidence.inheritedProviderSubmission !== undefined && providerEvidence.inheritedProviderSubmission !== inheritedProviderSubmission)
+  )) throw new Error("shot pattern top-level provider 제출 요약이 세그먼트 계보와 일치하지 않습니다.");
   if (submittedToProvider && (!plan.providerEligible || !plan.providerSubmissionPlanned)) throw new Error("provider 제출은 생성 가능한 shot pattern 계획에서만 봉인할 수 있습니다.");
   const providerRequestHash = providerEvidence.providerRequestHash || null;
   const providerGenerationHash = providerEvidence.providerGenerationHash || null;
@@ -408,11 +450,35 @@ export function createShotPatternReceipt(script, job, runId, providerEvidence = 
   }
   if (!submittedToProvider && (providerRequestHash || providerGenerationHash)) throw new Error("미제출 shot pattern 영수증에는 provider 완료 증거를 넣을 수 없습니다.");
   if (inheritedProviderSubmission) {
-    if (!submittedToProvider || providerRequestSentThisRun || !requiredString(sourceSubmissionRunId, "sourceSubmissionRunId") || !/^sha256:[a-f0-9]{64}$/u.test(String(sourceGenerationHash || ""))) {
-      throw new Error("상속 provider 제출 영수증은 source run·generation 해시와 이번 run 요청 0회에 결속되어야 합니다.");
+    if (!submittedToProvider || !requiredString(sourceSubmissionRunId, "sourceSubmissionRunId") || !/^sha256:[a-f0-9]{64}$/u.test(String(sourceGenerationHash || ""))) {
+      throw new Error("상속 provider 제출 영수증은 immutable source run·generation 해시에 결속되어야 합니다.");
     }
   } else if (sourceSubmissionRunId || sourceGenerationHash || providerRequestSentThisRun !== submittedToProvider) {
     throw new Error("직접 provider 제출 영수증의 이번 run 요청·source lineage가 일치하지 않습니다.");
+  }
+  if (schemaVersion >= 2) {
+    for (const lineage of normalizedSegmentLineage) {
+      if (!submittedToProvider) {
+        if (
+          lineage.providerRequestSentThisRun
+          || lineage.inheritedProviderSubmission
+          || lineage.submissionRunId != null
+          || lineage.sourceRunId != null
+          || lineage.sourceGenerationHash != null
+        ) throw new Error(`${lineage.index}번 미제출 shot pattern 세그먼트에 provider 계보가 있습니다.`);
+      } else if (lineage.providerRequestSentThisRun) {
+        if (lineage.inheritedProviderSubmission || lineage.submissionRunId !== runId || lineage.sourceRunId != null || lineage.sourceGenerationHash != null) {
+          throw new Error(`${lineage.index}번 직접 provider 제출 계보가 현재 run과 일치하지 않습니다.`);
+        }
+      } else if (
+        lineage.inheritedProviderSubmission !== true
+        || !requiredString(lineage.submissionRunId, "submissionRunId")
+        || lineage.sourceRunId !== sourceSubmissionRunId
+        || lineage.sourceGenerationHash !== sourceGenerationHash
+      ) {
+        throw new Error(`${lineage.index}번 상속 provider 제출 계보가 source generation과 일치하지 않습니다.`);
+      }
+    }
   }
   const segments = script.segments.map((segment, index) => {
     const planned = plan.segments[index];
@@ -441,10 +507,14 @@ export function createShotPatternReceipt(script, job, runId, providerEvidence = 
       providerSubmissionPlanned: plan.providerSubmissionPlanned,
       submittedToProvider,
       ...(schemaVersion >= 2 ? {
-        providerRequestSentThisRun,
-        inheritedProviderSubmission,
-        sourceSubmissionRunId,
-        sourceGenerationHash
+        providerRequestSentThisRun: normalizedSegmentLineage[index].providerRequestSentThisRun,
+        inheritedProviderSubmission: normalizedSegmentLineage[index].inheritedProviderSubmission,
+        submissionRunId: normalizedSegmentLineage[index].submissionRunId,
+        sourceRunId: normalizedSegmentLineage[index].sourceRunId,
+        sourceSubmissionRunId: normalizedSegmentLineage[index].inheritedProviderSubmission
+          ? normalizedSegmentLineage[index].submissionRunId
+          : null,
+        sourceGenerationHash: normalizedSegmentLineage[index].sourceGenerationHash
       } : {}),
       providerRequestHash,
       factualTextAdded: false
@@ -501,53 +571,86 @@ export function verifyShotPatternReceipt(receipt) {
   const providerRequestSentThisRun = receipt.providerRequestSentThisRun === undefined
     ? receipt.submittedToProvider === true
     : receipt.providerRequestSentThisRun === true;
-  const lineageValid = inheritedProviderSubmission
-    ? receipt.submittedToProvider === true
-      && providerRequestSentThisRun === false
-      && typeof receipt.sourceSubmissionRunId === "string"
-      && Boolean(receipt.sourceSubmissionRunId)
-      && /^sha256:[a-f0-9]{64}$/u.test(String(receipt.sourceGenerationHash || ""))
-    : providerRequestSentThisRun === (receipt.submittedToProvider === true)
-      && (receipt.sourceSubmissionRunId == null)
-      && (receipt.sourceGenerationHash == null);
   const submissionEvidenceValid = receipt.submittedToProvider
     ? expectedEligible
       && /^sha256:[a-f0-9]{64}$/u.test(String(receipt.providerRequestHash || ""))
       && /^sha256:[a-f0-9]{64}$/u.test(String(receipt.providerGenerationHash || ""))
     : receipt.providerRequestHash === null && receipt.providerGenerationHash === null;
-  return receipt.providerEligible === expectedEligible
-    && receipt.providerSubmissionPlanned === expectedEligible
-    && submissionEvidenceValid
-    && lineageValid
-    && receipt.applicationMode === expectedMode
-    && Array.isArray(receipt.segments)
+  const segmentSchema2Fields = [
+    "providerRequestSentThisRun",
+    "inheritedProviderSubmission",
+    "submissionRunId",
+    "sourceRunId",
+    "sourceSubmissionRunId",
+    "sourceGenerationHash"
+  ];
+  const segmentsValid = Array.isArray(receipt.segments)
     && Number.isInteger(receipt.segmentCount)
     && receipt.segmentCount > 0
     && receipt.segments.length === receipt.segmentCount
-    && receipt.segments.every((segment, index) => (
-      (receipt.schemaVersion === 2
-        ? schema2Fields.every((field) => Object.hasOwn(segment, field))
+    && receipt.segments.every((segment, index) => {
+      const segmentSchemaValid = receipt.schemaVersion === 2
+        ? segmentSchema2Fields.every((field) => Object.hasOwn(segment, field))
           && typeof segment.providerRequestSentThisRun === "boolean"
           && typeof segment.inheritedProviderSubmission === "boolean"
-        : schema2Fields.every((field) => !Object.hasOwn(segment, field)))
-      &&
-      segment.index === index + 1
-      && segment.renderedPromptHash === hashShotPatternValue(segment.renderedPrompt)
-      && segment.visualPromptHash === hashShotPatternValue(segment.visualPrompt)
-      && segment.providerVisualPrompt === composeProviderVisualPrompt(segment.visualPrompt, segment.renderedPrompt, segment.continuityPrompt)
-      && segment.providerVisualPromptHash === hashShotPatternValue(segment.providerVisualPrompt)
-      && segment.continuityContractHash === receipt.continuityContractHash
-      && segment.applicationMode === expectedMode
-      && segment.providerEligible === expectedEligible
-      && segment.providerSubmissionPlanned === expectedEligible
-      && segment.submittedToProvider === receipt.submittedToProvider
-      && (segment.providerRequestSentThisRun === undefined ? segment.submittedToProvider === true : segment.providerRequestSentThisRun === true) === providerRequestSentThisRun
-      && (segment.inheritedProviderSubmission === true) === inheritedProviderSubmission
-      && (segment.sourceSubmissionRunId ?? null) === (receipt.sourceSubmissionRunId ?? null)
-      && (segment.sourceGenerationHash ?? null) === (receipt.sourceGenerationHash ?? null)
-      && segment.providerRequestHash === receipt.providerRequestHash
-      && segment.factualTextAdded === false
-    ));
+        : segmentSchema2Fields.every((field) => !Object.hasOwn(segment, field));
+      if (!segmentSchemaValid) return false;
+      if (receipt.schemaVersion === 2) {
+        const unsubmitted = segment.submittedToProvider === false
+          && segment.providerRequestSentThisRun === false
+          && segment.inheritedProviderSubmission === false
+          && segment.submissionRunId === null
+          && segment.sourceRunId === null
+          && segment.sourceSubmissionRunId === null
+          && segment.sourceGenerationHash === null;
+        const direct = segment.submittedToProvider === true
+          && segment.providerRequestSentThisRun === true
+          && segment.inheritedProviderSubmission === false
+          && segment.submissionRunId === receipt.runId
+          && segment.sourceRunId === null
+          && segment.sourceSubmissionRunId === null
+          && segment.sourceGenerationHash === null;
+        const inherited = segment.submittedToProvider === true
+          && segment.providerRequestSentThisRun === false
+          && segment.inheritedProviderSubmission === true
+          && typeof segment.submissionRunId === "string"
+          && Boolean(segment.submissionRunId)
+          && segment.sourceRunId === receipt.sourceSubmissionRunId
+          && segment.sourceSubmissionRunId === segment.submissionRunId
+          && segment.sourceGenerationHash === receipt.sourceGenerationHash;
+        if (!(unsubmitted || direct || inherited)) return false;
+      }
+      return segment.index === index + 1
+        && segment.renderedPromptHash === hashShotPatternValue(segment.renderedPrompt)
+        && segment.visualPromptHash === hashShotPatternValue(segment.visualPrompt)
+        && segment.providerVisualPrompt === composeProviderVisualPrompt(segment.visualPrompt, segment.renderedPrompt, segment.continuityPrompt)
+        && segment.providerVisualPromptHash === hashShotPatternValue(segment.providerVisualPrompt)
+        && segment.continuityContractHash === receipt.continuityContractHash
+        && segment.applicationMode === expectedMode
+        && segment.providerEligible === expectedEligible
+        && segment.providerSubmissionPlanned === expectedEligible
+        && segment.submittedToProvider === receipt.submittedToProvider
+        && segment.providerRequestHash === receipt.providerRequestHash
+        && segment.factualTextAdded === false;
+    });
+  const aggregateLineageValid = receipt.schemaVersion === 1
+    ? providerRequestSentThisRun === (receipt.submittedToProvider === true)
+      && inheritedProviderSubmission === false
+    : providerRequestSentThisRun === receipt.segments.some((segment) => segment.providerRequestSentThisRun)
+      && inheritedProviderSubmission === receipt.segments.some((segment) => segment.inheritedProviderSubmission);
+  const sourceLineageValid = inheritedProviderSubmission
+    ? receipt.submittedToProvider === true
+      && typeof receipt.sourceSubmissionRunId === "string"
+      && Boolean(receipt.sourceSubmissionRunId)
+      && /^sha256:[a-f0-9]{64}$/u.test(String(receipt.sourceGenerationHash || ""))
+    : receipt.sourceSubmissionRunId == null && receipt.sourceGenerationHash == null;
+  return receipt.providerEligible === expectedEligible
+    && receipt.providerSubmissionPlanned === expectedEligible
+    && submissionEvidenceValid
+    && aggregateLineageValid
+    && sourceLineageValid
+    && receipt.applicationMode === expectedMode
+    && segmentsValid;
 }
 
 export function shotPatternRequiredForScript(script) {

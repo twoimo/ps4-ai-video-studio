@@ -8,8 +8,19 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <section class="studio-unlock" id="studio-unlock" aria-labelledby="studio-unlock-title" aria-hidden="false">
+      <form class="studio-unlock-card panel" id="studio-unlock-form" autocomplete="off">
+        <span class="panel-kicker">LOCAL BEARER REQUIRED</span>
+        <h1 id="studio-unlock-title">Studio 잠금 해제</h1>
+        <p>서버가 터미널에 출력한 <code>#token=…</code> 링크로 접속하거나, <code>workspace/.runtime/studio-token</code>의 token을 붙여 넣으세요. Token은 이 탭의 exact origin 세션에만 보관되며 쿠키·URL query에는 저장되지 않습니다.</p>
+        <label class="field-label" for="studio-token">Studio Bearer token</label>
+        <input id="studio-token" name="studioToken" type="password" minlength="32" maxlength="4096" required autocomplete="off" autocapitalize="none" spellcheck="false" />
+        <button class="primary-button" type="submit"><span>잠금 해제</span><span class="arrow" aria-hidden="true">→</span></button>
+        <p class="studio-unlock-error" id="studio-unlock-error" role="alert" aria-live="assertive"></p>
+      </form>
+    </section>
     <a class="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
-    <div class="app-shell">
+    <div class="app-shell" inert aria-hidden="true">
       <aside class="sidebar" aria-label="스튜디오 탐색">
         <div class="brand"><div class="brand-mark" aria-hidden="true">P4</div><div><strong>PS4 STUDIO</strong><span>AI VIDEO SYSTEM</span></div></div>
         <nav class="nav-list" aria-label="제작 단계" data-scroll-owner="narrow-navigation">
@@ -23,7 +34,7 @@
       <main class="main-content" id="workspace-main" tabindex="-1" data-scroll-owner="workspace">
         <div class="workspace-frame">
         <header class="topbar"><div class="breadcrumb">WORKSPACE <span>/</span> AI SHORTS FACTORY</div><div class="top-actions"><button class="ghost-button" id="browser-start"><span class="button-dot" aria-hidden="true"></span> Gemini Chrome 연결</button><button class="icon-button" id="refresh-all" aria-label="전체 데이터 새로고침"><span aria-hidden="true">↻</span></button></div></header>
-        <div class="prototype-banner" role="note"><b>ENGINEERING PROTOTYPE</b><span>한 개의 봉인 run에서 Gemini Headless 다중 클립→편집→자막과 run-bound 기술·의미 gate를 검증했습니다. 다른 주제의 반복 검증과 FLUX live E2E는 아직 별도 대상입니다.</span></div>
+        <div class="prototype-banner" role="note"><b>ENGINEERING PROTOTYPE</b><span>역사적 schema v4 run에서 Gemini Headless 다중 클립→편집→자막을 완주했지만, 현재 schema v5의 실행·target lineage 증거는 없습니다. 새 schema v5 반복 검증과 FLUX live E2E가 필요합니다.</span></div>
         <section class="hero"><div><p class="eyebrow">BENCHMARK-DRIVEN PRODUCTION</p><h1>벤치마크 기반<br />AI Shorts <em>파이프라인</em>을 검증합니다.</h1><p class="hero-copy">공개 채널의 제목·메타데이터 패턴을 분석하되, 새 주제와 출처로 독창적인 영상을 만들고,<br />주제 입력부터 영상 생성·편집·자막까지 하나의 로컬 파이프라인으로 연결합니다.</p></div><div class="hero-orbit" aria-hidden="true"><div class="orbit-ring ring-one"></div><div class="orbit-ring ring-two"></div><div class="orbit-core">AI<br /><span>FACT</span></div></div></section>
         <section class="stats-grid" id="stats" aria-label="채널 요약 지표"></section>
         <div id="health-capabilities" class="health-strip panel" role="status" aria-live="polite" aria-label="서버 기능 상태"></div>
@@ -33,7 +44,7 @@
             <label class="field-label" for="topic">영상 주제</label><div class="topic-input-wrap"><input id="topic" name="topic" placeholder="예: 오래된 도시 시설의 숨은 원리를 설명하는 이야기" required minlength="4" /><span class="input-hint">HOOK</span></div>
             <div class="suggestions" aria-label="독창적인 주제 예시"><button type="button" data-topic="비 오는 날 도시의 물은 어디로 사라질까">도시 물순환</button><button type="button" data-topic="엘리베이터가 멈출 때 안전장치는 어떻게 작동할까">생활 안전장치</button><button type="button" data-topic="낡은 다리가 수십 년을 버티는 구조적 이유">교량 구조</button></div>
             <div class="form-row"><div><label class="field-label" for="format">영상 비율</label><select id="format"><option value="vertical">9:16 · Shorts</option><option value="landscape">16:9 · Long form</option></select></div><div><label class="field-label" for="clip-count">AI 클립 수</label><select id="clip-count"><option selected>2</option><option>4</option><option>6</option><option>8</option><option>10</option><option>12</option></select></div></div>
-            <div class="form-row"><div><label class="field-label" for="provider">생성 소스</label><select id="provider" aria-describedby="provider-help"><option value="gemini-browser">Gemini 동영상 만들기 · Chrome UI</option><option value="local-video">FLUX 3 등 · 영수증 어댑터</option><option value="local">로컬 클립 업로드 후 편집</option></select></div><div><label class="field-label" for="target-duration">목표 길이 <span class="muted">(초)</span></label><input id="target-duration" name="targetDurationSec" type="number" min="20" max="180" step="1" value="20" inputmode="numeric" /></div></div><p id="provider-help" class="form-footnote">Gemini 기본값은 관측된 계정 쿼터 안에서 완주 가능한 2개 클립·약 20초입니다. FLUX 3는 6개 클립·최근 채널 기준 약 110초를 사용하며, 실호출에는 API 키·크레딧·비용 상한이 필요합니다.</p>
+            <div class="form-row"><div><label class="field-label" for="provider">생성 소스</label><select id="provider" aria-describedby="provider-help"><option value="gemini-browser">Gemini 동영상 만들기 · Chrome UI</option><option value="local-video">FLUX 3 등 · 영수증 어댑터</option><option value="local">외부/Playground 클립 세트 업로드 후 편집</option></select></div><div><label class="field-label" for="target-duration">목표 길이 <span class="muted">(초)</span></label><input id="target-duration" name="targetDurationSec" type="number" min="20" max="180" step="1" value="20" inputmode="numeric" /></div></div><p id="provider-help" class="form-footnote">Gemini 기본값은 관측된 계정 쿼터 안에서 완주 가능한 2개 클립·약 20초입니다. FLUX 3 API 경로는 6개 클립·약 110초이며 키·크레딧·비용 상한·현재 작업의 1회 유료 승인이 필요합니다. BFL Playground 무료 프로모션은 API에 자동 적용되지 않으며, 수동 생성한 클립은 로컬 업로드 모드로 편집할 수 있습니다.</p>
             <label class="field-label" for="sources">검증 출처 URL <span class="muted">(대본의 출처 텍스트 결속에 사용 · 줄바꿈 구분)</span></label><textarea id="sources" rows="2" placeholder="주제에 맞는 공식 출처 URL을 입력하세요.&#10;예: https://www.gov.kr/"></textarea>
             <div class="toggle-row"><label class="toggle-label"><input id="captions" type="checkbox" checked /><span class="toggle" aria-hidden="true"></span><span>한국어 자막 번인 <b class="toggle-state" data-toggle-state="captions">ON</b></span></label><label class="toggle-label"><input id="voiceover" type="checkbox" checked /><span class="toggle" aria-hidden="true"></span><span>macOS 음성 내레이션 <b class="toggle-state" data-toggle-state="voiceover">ON</b></span></label></div>
             <button class="primary-button" type="submit"><span>제작 작업 생성</span><span class="arrow" aria-hidden="true">↗</span></button><p class="form-footnote">Gemini 모드는 전용 Chrome 프로필의 쿠키·세션을 재사용합니다. CAPTCHA·로그인 입력은 우회하지 않습니다.</p>

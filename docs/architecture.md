@@ -4,7 +4,7 @@
 
 PS4 AI Video Studio는 “AI가 영상을 만들었다”는 주장보다 **어떤 요청이 어떤 provider·입력·출처·산출물로 이어졌는지 재검증할 수 있는가**를 우선합니다. 로컬 웹 UI는 제어면(control plane)이고, 파일시스템의 run 디렉터리와 해시 영수증이 증거면(evidence plane)입니다.
 
-2026-08-12 로컬 실행에서 Gemini Headless Chrome은 서로 다른 2개 세로 클립을 생성했고, 파이프라인은 20.033초 최종 MP4·한국어 번인 자막·내레이션·불변 영수증까지 무인으로 완주했습니다. source run `2026-08-12T15-03-35-456Z-4d0599`의 클립을 새 provider 요청 없이 복원한 schema v2 `purpose-aware-semantic-verdict` child run `2026-08-12T16-47-14-022Z-c73889`는 append-only revision `revision-2026-08-12T16-51-28-075Z-09cf7d27`에서 100/100, `technicalEvidenceGate:true`, `semanticGate:true`, `blockers:[]`로 통과했습니다. child 재검수의 `providerRequests`는 0입니다. 5개 reviewer는 모두 결정론적 software method이며 `human:false`, `independentPrincipal:false`입니다. 같은 날짜 BFL은 로컬 API 키가 없어 실제 생성 호출을 하지 않았고, 잔액 0 표시는 불변 run에 봉인되지 않은 운영 UI 관측입니다.
+2026-08-12 로컬 실행은 당시 schema v4 Gemini 계약으로 서로 다른 2개 세로 클립과 20.033초 최종 MP4·한국어 번인 자막·내레이션을 만들었습니다. provider 요청 0회의 child 재검수와 append-only revision도 당시 자동 품질 계약을 통과했습니다. 현재 schema v5는 실제 Chrome 실행 인자와 대화 target/source lineage를 추가로 요구하지만 이 역사적 run에는 그 증거가 없으므로, 현재 terminal-valid chain이나 제출 증거로 표현하지 않습니다. 새 schema v5 E2E가 필요합니다. 같은 날짜 BFL은 로컬 API 키가 없어 실제 생성 호출을 하지 않았고, 잔액 0 표시는 불변 run에 봉인되지 않은 운영 UI 관측입니다.
 
 ## 2. System context
 
@@ -84,6 +84,7 @@ sequenceDiagram
 ## 5. Production lifecycle
 
 한 작업은 여러 실행을 가질 수 있지만, 각 실행은 새로운 `runId`를 받습니다.
+작업 생성과 provider 실행은 반드시 분리됩니다. `POST /api/jobs`는 inert `queued` 레코드와 정확한 ID를 반환할 뿐 provider를 시작하지 않으며, 호출자는 그 ID를 내구성 있게 저장한 뒤 `POST /api/jobs/:id/run`을 호출합니다. 생성 응답이나 실행 응답이 유실돼도 새 작업을 만들어 blind retry하지 않습니다.
 
 ```mermaid
 stateDiagram-v2
@@ -114,7 +115,7 @@ stateDiagram-v2
 
 봉인된 Gemini `needs-improvement` 실행의 의미 정책만 업그레이드할 때는 일반 `/run`을 사용하지 않습니다. `POST /api/jobs/:id/semantic/revalidate`가 부모 manifest와 모든 immutable artifact를 재검증하고 새 child run을 만든 뒤, 완료 provider 영수증과 동일 clip SHA-256을 복원해 Gemini 요청 0회로 결정론적 재편집·schema v2 검수를 수행합니다. 부모 run은 바꾸지 않으며 reviewer payload 없이 완료 상태를 만들지 않습니다.
 
-현재 검증된 chain은 job `2026-08-12T12-30-22-674Z-f0418e` 아래의 source run `2026-08-12T15-03-35-456Z-4d0599` → child run `2026-08-12T16-47-14-022Z-c73889` → revision `revision-2026-08-12T16-51-28-075Z-09cf7d27`입니다. source의 720×1280·10.005초 클립 2개는 SHA-256이 서로 다르고 temporal aHash 거리는 32.375입니다. child base manifest는 당시 `needs-improvement` snapshot으로 불변 유지되고, sequence 1 revision이 5-method payload를 append해 최신 판정을 `passed`로 만들었습니다. 따라서 “완료”는 base 파일을 덮어썼다는 뜻이 아니라, 해시 결속된 최신 revision을 포함한 job projection이 `completed`/`verified`라는 뜻입니다.
+역사적 schema v4 chain은 job `2026-08-12T12-30-22-674Z-f0418e` 아래의 source run `2026-08-12T15-03-35-456Z-4d0599` → child run `2026-08-12T16-47-14-022Z-c73889` → revision `revision-2026-08-12T16-51-28-075Z-09cf7d27`입니다. source의 720×1280·10.005초 클립 2개는 SHA-256이 서로 다르고 temporal aHash 거리는 32.375입니다. child base manifest는 당시 `needs-improvement` snapshot으로 불변 유지됐고, sequence 1 revision이 5-method payload를 append해 당시 판정을 `passed`로 만들었습니다. 당시의 “완료”는 base 파일을 덮어썼다는 뜻이 아니라 revision을 포함한 job projection이 `completed`/`verified`였다는 뜻입니다. 이 chain은 현재 schema v5의 실행 인자·target/source lineage가 없으므로 현재 terminal-valid chain이나 제출 증거로 사용하지 않습니다.
 
 실행 도중 mutable 파일은 다시 만들어질 수 있지만, 기술 증거 판정은 현재 run ID와 일치하는 해시 검증된 snapshot만 신뢰합니다.
 
@@ -167,14 +168,14 @@ BFL adapter는 generic 계약을 구현하는 독립 실행 파일입니다.
 - 장면 길이: 5–20초 범위
 - aspect ratio: 작업 format에서 9:16 또는 16:9
 - 동시성: 의도적으로 1
-- live precondition: `BFL_API_KEY`, 양수 비용 추정, `BFL_MAX_CREDITS`
+- live precondition: `BFL_API_KEY`, 공식 단가 이상인 비용 추정, `BFL_MAX_CREDITS`, 현재 작업에 결속된 명시적 1회 유료 승인
 - checkpoint identity: job/run/request/script/request-body hash
 - ambiguous submission: 자동 재제출 금지
 - polling: 승인된 BFL API origin과 정확한 task ID만 허용
 - delivery: HTTPS, 무자격증명, 기본 포트, 승인된 `delivery-<region>.bfl.ai`/`delivery.<region>.bfl.ai` 또는 명시 allowlist
 - download: redirect 거부, video content type, 기본 최대 512 MiB, atomic rename, SHA-256
 
-비용 guard는 예상 총 credits가 상한보다 큰 경우 첫 유료 제출 전에 중단하고, 각 다음 장면 전에도 관측 비용과 잔여 추정을 다시 계산합니다. README 예시는 HD 110초 × 17 credits/초 = 1,870 credits이고 `BFL_MAX_CREDITS=2000`으로 작은 여유를 둡니다. 1 credit = USD 0.01 가정에서는 USD 18.70이며, 가격 자체는 provider가 바꿀 수 있으므로 사용자가 실행 직전 현재 단가를 environment에 넣어야 합니다. 2026-08-12의 잔액 0 표시는 불변 BFL 영수증이 아니라 운영 UI에서 본 시점성 관측이므로 아키텍처 검증 사실로 사용하지 않습니다.
+비용 guard는 예상 총 credits가 상한보다 큰 경우 첫 유료 제출 전에 중단하고, 각 다음 장면 전에도 관측 비용과 잔여 추정을 다시 계산합니다. README의 현재 2×10초 예시는 HD 340 credits(USD 3.40), FHD 580 credits(USD 5.80)입니다. 각 클립은 최소 5초로 계산되므로 같은 20초 목표라도 12개 클립은 HD 1,020 credits부터 시작합니다. 1 credit = USD 0.01 가정이며, 가격 자체는 provider가 바꿀 수 있으므로 사용자가 실행 직전 현재 단가와 실제 잔액을 다시 확인해야 합니다. 2026-08-12의 잔액 0 표시는 불변 BFL 영수증이 아니라 운영 UI에서 본 시점성 관측이므로 아키텍처 검증 사실로 사용하지 않습니다.
 
 ### 6.4 Local upload
 
@@ -231,7 +232,7 @@ AHP 가중치는 다음과 같습니다.
 | 출처 텍스트 결속·벤치마크 적합성 | 10 |
 | 자동화 재현성·실패 복구 | 10 |
 
-총점 98점만으로 기술 증거 검사를 통과하지 않습니다. 승인 provider provenance, current run 결속, 입력 manifest, benchmark 영수증, 불변 evidence, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 서로 다른 id/role/method를 가진 5개 software-method payload와 현재 evidence·decision에 대한 canonical attestation hash가 모두 필요합니다. 현재 통과 revision의 5개 항목은 각각 `human:false`, `independentPrincipal:false`입니다. extractive binding은 사실 함의 판정이 아니며, 이 해시는 payload 무결성을 검증할 뿐 실제 전문가 참여, 신원, 전문성 또는 독립성을 인증하지 않습니다.
+총점 98점만으로 기술 증거 검사를 통과하지 않습니다. 승인 provider provenance, current run 결속, 입력 manifest, benchmark 영수증, 불변 evidence, 출처의 완전한 단일 문장을 그대로 사용하는 재계산 가능한 extractive binding, 서로 다른 id/role/method를 가진 5개 software-method payload와 현재 evidence·decision에 대한 canonical attestation hash가 모두 필요합니다. 역사적 schema v4 revision의 5개 항목은 각각 `human:false`, `independentPrincipal:false`였습니다. extractive binding은 사실 함의 판정이 아니며, 이 해시는 payload 무결성을 검증할 뿐 실제 전문가 참여, 신원, 전문성 또는 독립성을 인증하지 않습니다.
 
 새 실행은 최종 렌더 뒤 첫 quality snapshot 전에 `runs/<runId>/semantic/` schema v2 `purpose-aware-semantic-verdict` 영수증을 만듭니다. Qwen3.6-27B-8bit를 loopback OMLX의 strict JSON schema·`temperature:0`·`chat_template_kwargs.enable_thinking:false`로 호출합니다. 모든 프레임에 transport/schema/exact-model/finish/confidence/unexpected-text와 FFmpeg black-frame 조건을 적용하고, `scene` 목적에는 장면 관련성만, `caption-cue` 목적에는 blind exact OCR만 적용합니다. 목적별 segment/cue coverage는 정확한 일대일 집합이어야 합니다. 별도로 최종 영상 재추출 raw-pixel hash, 대본의 extractive 출처 binding, macOS `say`에 전달한 정확한 텍스트·실제 PCM WAV·생성 오디오 파일 해시를 `narrationGenerationBinding`으로 결속합니다. 이것은 ASR이 아니며 영수증에도 `asrPerformed:false`로 기록합니다. 검증·정제된 응답, 입력 프레임, 입력 manifest, policy hash, 영수증 및 WAV가 모두 run-bound canonical hash와 불변 복사본에 일치할 때만 `contentSemanticsVerified`가 열립니다. OMLX 원응답 본문은 저장하지 않고 SHA-256만 기록합니다. schema v1 봉인 영수증은 당시의 모든-frame scene 정책으로 재검증되어 소급 재해석되지 않습니다.
 
@@ -241,7 +242,7 @@ AHP 가중치는 다음과 같습니다.
 
 - Gemini 로그인 쿠키와 전용 Chrome profile
 - BFL/Gemini API key와 유료 credits
-- 로컬 studio session token
+- 로컬 Studio Bearer token
 - 사용자가 업로드한 영상과 생성 산출물
 - 출처·provider·reviewer payload provenance의 무결성
 
@@ -249,7 +250,7 @@ AHP 가중치는 다음과 같습니다.
 
 | 경계 | 주요 위협 | 구현 방어 |
 | --- | --- | --- |
-| Browser → local server | DNS rebinding, 작업·미디어 읽기, cross-site mutation, LAN 노출 | 기본 `127.0.0.1`, 모든 API의 trusted Host+세션/Bearer, 변경 요청의 same-origin/`Sec-Fetch-Site`, HttpOnly SameSite=Strict cookie |
+| Browser → local server | DNS rebinding, 작업·미디어 읽기, cross-site mutation, LAN 노출 | 기본 `127.0.0.1`; workspace singleton flock과 inert `503` socket으로 owner·port를 먼저 예약한 뒤 mode `0600` out-of-band token 게시 및 recovery 후 handler 활성화; 시작 URL의 `#token` fragment를 즉시 제거하고 exact-origin 탭 `sessionStorage`에 보관; 모든 API의 trusted Host+Bearer; 변경 요청의 exact `Origin`/`Sec-Fetch-Site`; 산출물만 exact path·최대 1시간·GET/HEAD 전용 capability |
 | Monitor → local server | 토큰·계정 식별자·Gemini 대화 본문 노출 | 무작위 토큰, `workspace/.runtime/studio-token` mode `0600`, monitor 상태·JSONL mode `0600`, email/account/profile/page excerpt 저장 전 제거, 이전 monitor 산출물 시작 시 일방향 scrub, API 응답 재-redaction |
 | Upload → filesystem | 메모리 고갈, path traversal | 최대 12개, 파일당 250 MiB, 합계 500 MiB, body 상한, 확장자·안전 경로 검증 |
 | Source URL → network | SSRF, DNS rebinding, redirect escape | public address 검증·pinned lookup, private/reserved 차단, redirect 거부, 포트·시간·크기 제한 |

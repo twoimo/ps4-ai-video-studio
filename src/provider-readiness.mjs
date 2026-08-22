@@ -1,5 +1,14 @@
-import { lstat, readFile, stat } from "node:fs/promises";
+import { constants as fsConstants, openSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  closeFd,
+  openDirectoryAt,
+  openFileAt,
+  readFdBuffer,
+  sameFdIdentity,
+  statFd
+} from "./dirfd.mjs";
 import { redactGeminiMonitor } from "./gemini-monitor-privacy.mjs";
 
 export const PROVIDER_READINESS_SCHEMA_VERSION = 1;
@@ -79,13 +88,135 @@ function timing(observedAt, nowMs, ttlMs) {
   };
 }
 
-async function readBoundedJson(path) {
-  const metadata = await lstat(path).catch(() => null);
-  if (!metadata?.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_RECEIPT_BYTES) return null;
+function canonicalReadinessPath(value) {
+  let path = resolve(String(value || ""));
+  if (process.platform === "darwin") {
+    if (path === "/var" || path.startsWith("/var/")) path = `/private${path}`;
+    else if (path === "/tmp" || path.startsWith("/tmp/")) path = `/private${path}`;
+  }
+  return path;
+}
+
+function closePinnedDirectory(pinned) {
+  for (const directory of [...(pinned?.directories || [])].reverse()) {
+    try { closeFd(directory.fd); } catch {}
+  }
+}
+
+function pinDirectoryPath(path) {
+  const target = canonicalReadinessPath(path);
+  const segments = target.split("/").filter(Boolean);
+  const directories = [];
+  let currentFd = openSync(
+    "/",
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (fsConstants.O_DIRECTORY || 0)
+  );
   try {
-    return JSON.parse(await readFile(path, "utf8"));
+    directories.push({ fd: currentFd, identity: statFd(currentFd) });
+    for (const segment of segments) {
+      const nextFd = openDirectoryAt(currentFd, segment);
+      const identity = statFd(nextFd);
+      if (!identity.isDirectory()) {
+        closeFd(nextFd);
+        throw new Error("provider readiness ancestry가 directory가 아닙니다.");
+      }
+      directories.push({ fd: nextFd, identity });
+      currentFd = nextFd;
+    }
+    return { target, segments, directories, fd: currentFd, identity: directories.at(-1).identity };
+  } catch (error) {
+    closePinnedDirectory({ directories });
+    throw error;
+  }
+}
+
+function assertPinnedDirectory(pinned) {
+  let currentFd = openSync(
+    "/",
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (fsConstants.O_DIRECTORY || 0)
+  );
+  try {
+    if (!sameFdIdentity(pinned.directories[0].identity, statFd(currentFd))) {
+      throw new Error("provider readiness filesystem root가 교체되었습니다.");
+    }
+    for (let index = 0; index < pinned.segments.length; index += 1) {
+      const nextFd = openDirectoryAt(currentFd, pinned.segments[index]);
+      closeFd(currentFd);
+      currentFd = nextFd;
+      if (!sameFdIdentity(pinned.directories[index + 1].identity, statFd(currentFd))) {
+        throw new Error("provider readiness ancestry가 읽는 중 교체되었습니다.");
+      }
+    }
+  } finally {
+    closeFd(currentFd);
+  }
+}
+
+function pinReadinessBoundary(workspaceDir) {
+  const workspace = pinDirectoryPath(workspaceDir);
+  let probeFd = null;
+  try {
+    probeFd = openDirectoryAt(workspace.fd, "provider-probes");
+    const probeIdentity = statFd(probeFd);
+    if (!probeIdentity.isDirectory()) throw new Error("provider probe root가 directory가 아닙니다.");
+    return { workspace, probeFd, probeIdentity };
+  } catch (error) {
+    if (probeFd !== null) closeFd(probeFd);
+    if (error?.code === "ENOENT") return { workspace, probeFd: null, probeIdentity: null };
+    closePinnedDirectory(workspace);
+    throw error;
+  }
+}
+
+function closeReadinessBoundary(boundary) {
+  if (boundary?.probeFd !== null && boundary?.probeFd !== undefined) {
+    try { closeFd(boundary.probeFd); } catch {}
+  }
+  closePinnedDirectory(boundary?.workspace);
+}
+
+function assertReadinessBoundary(boundary, { probe = false } = {}) {
+  assertPinnedDirectory(boundary.workspace);
+  if (!probe) return;
+  if (boundary.probeFd === null) throw new Error("provider probe root가 없습니다.");
+  const currentProbeFd = openDirectoryAt(boundary.workspace.fd, "provider-probes");
+  try {
+    if (!sameFdIdentity(boundary.probeIdentity, statFd(currentProbeFd))) {
+      throw new Error("provider probe root가 읽는 중 교체되었습니다.");
+    }
+  } finally {
+    closeFd(currentProbeFd);
+  }
+}
+
+function sameReceiptSnapshot(left, right) {
+  return Boolean(left && right
+    && sameFdIdentity(left, right)
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs);
+}
+
+function readBoundedJsonAt(boundary, directoryFd, name, { probe = false } = {}) {
+  let fileFd = null;
+  let currentFd = null;
+  try {
+    assertReadinessBoundary(boundary, { probe });
+    fileFd = openFileAt(directoryFd, name, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    const before = statFd(fileFd);
+    if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(MAX_RECEIPT_BYTES)) return null;
+    const bytes = readFdBuffer(fileFd, { maxBytes: MAX_RECEIPT_BYTES });
+    const after = statFd(fileFd);
+    currentFd = openFileAt(directoryFd, name, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    const current = statFd(currentFd);
+    if (!sameReceiptSnapshot(before, after) || !sameReceiptSnapshot(after, current)) return null;
+    assertReadinessBoundary(boundary, { probe });
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     return null;
+  } finally {
+    if (currentFd !== null) closeFd(currentFd);
+    if (fileFd !== null) closeFd(fileFd);
   }
 }
 
@@ -280,16 +411,27 @@ export async function bflConfigurationReadiness(root, env = process.env) {
   };
 }
 
-export async function buildProviderReadiness({ root, env = process.env, now = new Date(), ttlMs = PROVIDER_PROBE_TTL_MS } = {}) {
+export async function buildProviderReadiness({ root, workspaceDir = null, env = process.env, now = new Date(), ttlMs = PROVIDER_PROBE_TTL_MS } = {}) {
   if (!root) throw new Error("provider readiness root is required");
-  const monitorPath = join(root, "workspace", "gemini-monitor.json");
-  const probeRoot = join(root, "workspace", "provider-probes");
-  const [monitor, higgsfieldReceipt, veedReceipt, bfl] = await Promise.all([
-    readBoundedJson(monitorPath),
-    readBoundedJson(join(probeRoot, "higgsfield.json")),
-    readBoundedJson(join(probeRoot, "veed.json")),
-    bflConfigurationReadiness(root, env)
-  ]);
+  const effectiveWorkspaceDir = canonicalReadinessPath(workspaceDir || join(root, "workspace"));
+  let boundary = null;
+  let monitor = null;
+  let higgsfieldReceipt = null;
+  let veedReceipt = null;
+  try {
+    boundary = pinReadinessBoundary(effectiveWorkspaceDir);
+    monitor = readBoundedJsonAt(boundary, boundary.workspace.fd, "gemini-monitor.json");
+    if (boundary.probeFd !== null) {
+      higgsfieldReceipt = readBoundedJsonAt(boundary, boundary.probeFd, "higgsfield.json", { probe: true });
+      veedReceipt = readBoundedJsonAt(boundary, boundary.probeFd, "veed.json", { probe: true });
+    }
+  } catch {
+    // Missing, aliased, or replaced receipt ancestry is untrusted readiness
+    // evidence. Project it as disconnected instead of following the alias.
+  } finally {
+    closeReadinessBoundary(boundary);
+  }
+  const bfl = await bflConfigurationReadiness(root, env);
   return {
     schemaVersion: PROVIDER_READINESS_SCHEMA_VERSION,
     generatedAt: now.toISOString(),

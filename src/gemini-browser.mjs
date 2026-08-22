@@ -1,11 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, openSync } from "node:fs";
 import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { JOBS_DIR } from "./pipeline.mjs";
+import { JOBS_DIR, runBoundedRenderProcess } from "./pipeline.mjs";
+import { closeFd, openDirectoryAt, openFileAt, readFdBuffer, sameFdIdentity, statFd } from "./dirfd.mjs";
 import { hashFile } from "./run-ledger.mjs";
-import { canonicalGeminiSessionBinding, geminiSessionBindingHash } from "./provenance.mjs";
+import { createGeminiFailureEvidence, verifyGeminiFailureEvidence } from "./gemini-error-safety.mjs";
+import {
+  canonicalGeminiObservedRuntimeProof,
+  canonicalGeminiSessionBinding,
+  geminiObservedRuntimeProofHash,
+  geminiSessionBindingHash,
+  validateGeminiObservedRuntimeProof
+} from "./provenance.mjs";
 import { buildGeminiClipPrompt, providerPromptBindingForSegment, providerRequestFieldsForSegment } from "./shot-patterns.mjs";
 import {
   attestLegacyGeminiAbandonmentConsumption,
@@ -23,6 +31,251 @@ const MAX_VIDEO_TIMEOUT_MS = 3_600_000;
 const CONVERSATION_BINDING_TIMEOUT_MS = 30_000;
 const CONVERSATION_BINDING_POLL_MS = 500;
 const MIN_NEW_HEADLESS_CHROME_MAJOR = 109;
+const CDP_VERSION_TIMEOUT_MS = 2_500;
+const CDP_COMMAND_TIMEOUT_MS = 30_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const CHROME_LAUNCH_ATTEMPTS = 40;
+const CHROME_LAUNCH_POLL_MS = 500;
+const CHROME_TERMINATION_GRACE_MS = 1_000;
+const CHROME_TERMINATION_KILL_MS = 2_000;
+const GEMINI_FFPROBE_TIMEOUT_MS = 15_000;
+const GEMINI_FFPROBE_MAX_OUTPUT_BYTES = 64 * 1024;
+const GEMINI_FFPROBE_ADMISSION_TIMEOUT_MS = 30_000;
+export const GEMINI_MEDIA_MAX_BYTES = 70 * 1024 * 1024;
+export const GEMINI_MEDIA_TRANSFER_CHUNK_BYTES = 256 * 1024;
+const GEMINI_MEDIA_PULL_WAIT_MS = 5_000;
+const GEMINI_MEDIA_MAX_URL_BYTES = 16 * 1024;
+
+function geminiBrowserIso(value) {
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function geminiBrowserDeadlineError(deadlineMs) {
+  const error = new Error(`Gemini browser runtime deadline에 도달했습니다. (${geminiBrowserIso(deadlineMs)})`);
+  error.name = "GeminiBrowserDeadlineError";
+  error.code = "GEMINI_BROWSER_DEADLINE";
+  error.deadlineAt = geminiBrowserIso(deadlineMs);
+  return error;
+}
+
+function geminiBrowserAbortError() {
+  const error = new Error("Gemini browser 작업이 취소되었습니다.");
+  error.name = "GeminiBrowserAbortError";
+  error.code = "GEMINI_BROWSER_ABORTED";
+  return error;
+}
+
+function geminiBrowserTimeoutError() {
+  const error = new Error("Gemini browser 작업 시간이 초과되었습니다.");
+  error.name = "GeminiBrowserTimeoutError";
+  error.code = "GEMINI_BROWSER_TIMEOUT";
+  return error;
+}
+
+export function isGeminiBrowserDeadlineError(error) {
+  return error?.code === "GEMINI_BROWSER_DEADLINE";
+}
+
+export function isGeminiBrowserAbortError(error) {
+  return error?.code === "GEMINI_BROWSER_ABORTED";
+}
+
+function isGeminiBrowserBoundaryError(error) {
+  return isGeminiBrowserDeadlineError(error) || isGeminiBrowserAbortError(error);
+}
+
+function createGeminiBrowserRuntime(input = {}, overrides = {}) {
+  const options = { ...input, ...overrides };
+  const rawDeadline = options.deadlineMs ?? options.runtimeDeadlineMs ?? null;
+  const deadlineMs = rawDeadline === null || rawDeadline === undefined ? null : Number(rawDeadline);
+  if (deadlineMs !== null && (!Number.isFinite(deadlineMs) || !geminiBrowserIso(deadlineMs))) {
+    throw new TypeError("Gemini browser absolute deadline이 유효하지 않습니다.");
+  }
+  const signal = options.signal ?? null;
+  if (signal !== null && (
+    typeof signal.aborted !== "boolean"
+    || typeof signal.addEventListener !== "function"
+    || typeof signal.removeEventListener !== "function"
+  )) throw new TypeError("Gemini browser AbortSignal이 유효하지 않습니다.");
+  const now = options.now || Date.now;
+  const setTimeoutFn = options.setTimeoutFn || setTimeout;
+  const clearTimeoutFn = options.clearTimeoutFn || clearTimeout;
+  const fetchFn = options.fetchFn || fetch;
+  const WebSocketImpl = options.WebSocketImpl || WebSocket;
+  const spawnFn = options.spawnFn || spawn;
+  const chromeBinaryFn = options.chromeBinaryFn || chromeBinary;
+  const mkdirFn = options.mkdirFn || mkdir;
+  const processKillFn = options.processKillFn || process.kill.bind(process);
+  if (
+    typeof now !== "function"
+    || typeof setTimeoutFn !== "function"
+    || typeof clearTimeoutFn !== "function"
+    || typeof fetchFn !== "function"
+    || typeof WebSocketImpl !== "function"
+    || typeof spawnFn !== "function"
+    || typeof chromeBinaryFn !== "function"
+    || typeof mkdirFn !== "function"
+    || typeof processKillFn !== "function"
+  ) throw new TypeError("Gemini browser runtime dependency가 유효하지 않습니다.");
+  const launchAttempts = options.chromeLaunchAttempts ?? CHROME_LAUNCH_ATTEMPTS;
+  const launchPollMs = options.chromeLaunchPollMs ?? CHROME_LAUNCH_POLL_MS;
+  const terminationGraceMs = options.chromeTerminationGraceMs ?? CHROME_TERMINATION_GRACE_MS;
+  const terminationKillMs = options.chromeTerminationKillMs ?? CHROME_TERMINATION_KILL_MS;
+  if (
+    !Number.isSafeInteger(launchAttempts) || launchAttempts < 1 || launchAttempts > CHROME_LAUNCH_ATTEMPTS
+    || !Number.isSafeInteger(launchPollMs) || launchPollMs < 1 || launchPollMs > CHROME_LAUNCH_POLL_MS
+    || !Number.isSafeInteger(terminationGraceMs) || terminationGraceMs < 1 || terminationGraceMs > CHROME_TERMINATION_GRACE_MS
+    || !Number.isSafeInteger(terminationKillMs) || terminationKillMs < 1 || terminationKillMs > CHROME_TERMINATION_KILL_MS
+  ) throw new TypeError("Gemini Chrome lifecycle 경계가 유효하지 않습니다.");
+  return {
+    deadlineMs,
+    signal,
+    now,
+    setTimeoutFn,
+    clearTimeoutFn,
+    fetchFn,
+    WebSocketImpl,
+    spawnFn,
+    chromeBinaryFn,
+    mkdirFn,
+    processKillFn,
+    launchAttempts,
+    launchPollMs,
+    terminationGraceMs,
+    terminationKillMs
+  };
+}
+
+function runtimeNow(runtime) {
+  const value = Number(runtime.now());
+  if (!Number.isFinite(value) || !geminiBrowserIso(value)) throw new TypeError("Gemini browser clock이 유효하지 않습니다.");
+  return value;
+}
+
+function normalizedCallerAbort(runtime) {
+  if (
+    runtime.deadlineMs !== null
+    && (
+      runtimeNow(runtime) >= runtime.deadlineMs
+      || isGeminiBrowserDeadlineError(runtime.signal?.reason)
+      || runtime.signal?.reason?.code === "MONITOR_RUNTIME_DEADLINE"
+    )
+  ) return geminiBrowserDeadlineError(runtime.deadlineMs);
+  return geminiBrowserAbortError();
+}
+
+function currentGeminiBrowserBoundaryError(runtime) {
+  if (runtime.deadlineMs !== null && runtimeNow(runtime) >= runtime.deadlineMs) {
+    return geminiBrowserDeadlineError(runtime.deadlineMs);
+  }
+  if (runtime.signal?.aborted) return normalizedCallerAbort(runtime);
+  return null;
+}
+
+function assertGeminiBrowserRuntimeActive(runtime) {
+  const error = currentGeminiBrowserBoundaryError(runtime);
+  if (error) throw error;
+}
+
+async function runWithinGeminiBrowserRuntime(operation, runtime, { timeoutMs = null } = {}) {
+  if (typeof operation !== "function") throw new TypeError("Gemini browser bounded 작업 함수가 필요합니다.");
+  const startedAt = runtimeNow(runtime);
+  if (runtime.deadlineMs !== null && startedAt >= runtime.deadlineMs) {
+    throw geminiBrowserDeadlineError(runtime.deadlineMs);
+  }
+  if (runtime.signal?.aborted) throw normalizedCallerAbort(runtime);
+  const parsedTimeout = timeoutMs === null || timeoutMs === undefined ? null : Number(timeoutMs);
+  if (parsedTimeout !== null && (!Number.isFinite(parsedTimeout) || parsedTimeout <= 0)) {
+    throw new TypeError("Gemini browser local timeout이 유효하지 않습니다.");
+  }
+
+  const localDeadlineMs = parsedTimeout === null ? null : startedAt + parsedTimeout;
+  const boundaryAt = runtime.deadlineMs === null
+    ? localDeadlineMs
+    : localDeadlineMs === null
+      ? runtime.deadlineMs
+      : Math.min(runtime.deadlineMs, localDeadlineMs);
+  const deadlineWins = runtime.deadlineMs !== null && (localDeadlineMs === null || runtime.deadlineMs <= localDeadlineMs);
+  const controller = new AbortController();
+  let timerId = null;
+  let settled = false;
+  let rejectBoundary = null;
+  const boundary = new Promise((_, reject) => { rejectBoundary = reject; });
+  const rejectWith = (error) => {
+    if (settled) return;
+    controller.abort(error);
+    rejectBoundary(error);
+  };
+  const scheduleBoundary = () => {
+    if (boundaryAt === null || settled) return;
+    const remainingMs = boundaryAt - runtimeNow(runtime);
+    if (remainingMs > 0) {
+      timerId = runtime.setTimeoutFn(scheduleBoundary, Math.min(remainingMs, MAX_TIMER_DELAY_MS));
+      return;
+    }
+    rejectWith(deadlineWins ? geminiBrowserDeadlineError(runtime.deadlineMs) : geminiBrowserTimeoutError());
+  };
+  const forwardCallerAbort = () => rejectWith(normalizedCallerAbort(runtime));
+  if (runtime.signal) runtime.signal.addEventListener("abort", forwardCallerAbort, { once: true });
+  scheduleBoundary();
+
+  try {
+    const operationPromise = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw controller.signal.reason || geminiBrowserAbortError();
+      return operation(controller.signal);
+    });
+    const result = boundaryAt === null && !runtime.signal
+      ? await operationPromise
+      : await Promise.race([operationPromise, boundary]);
+    assertGeminiBrowserRuntimeActive(runtime);
+    return result;
+  } catch (error) {
+    const currentBoundaryError = currentGeminiBrowserBoundaryError(runtime);
+    if (currentBoundaryError) throw currentBoundaryError;
+    if (isGeminiBrowserDeadlineError(error)) {
+      if (runtime.deadlineMs === null) throw error;
+      throw geminiBrowserDeadlineError(runtime.deadlineMs);
+    }
+    if (isGeminiBrowserAbortError(error)) throw geminiBrowserAbortError();
+    if (controller.signal.aborted) {
+      if (isGeminiBrowserDeadlineError(controller.signal.reason)) throw geminiBrowserDeadlineError(runtime.deadlineMs);
+      if (isGeminiBrowserAbortError(controller.signal.reason)) throw geminiBrowserAbortError();
+      if (controller.signal.reason?.code === "GEMINI_BROWSER_TIMEOUT") throw geminiBrowserTimeoutError();
+    }
+    throw error;
+  } finally {
+    settled = true;
+    if (timerId !== null) runtime.clearTimeoutFn(timerId);
+    if (runtime.signal) runtime.signal.removeEventListener("abort", forwardCallerAbort);
+  }
+}
+
+async function sleepWithinGeminiBrowserRuntime(ms, runtime) {
+  const delayMs = Math.max(0, Number(ms) || 0);
+  if (delayMs === 0) {
+    if (runtime.deadlineMs !== null && runtimeNow(runtime) >= runtime.deadlineMs) {
+      throw geminiBrowserDeadlineError(runtime.deadlineMs);
+    }
+    if (runtime.signal?.aborted) throw normalizedCallerAbort(runtime);
+    return;
+  }
+  await runWithinGeminiBrowserRuntime((signal) => new Promise((resolveSleep, rejectSleep) => {
+    let timer = null;
+    const abortSleep = () => {
+      if (timer !== null) runtime.clearTimeoutFn(timer);
+      rejectSleep(signal.reason || geminiBrowserAbortError());
+    };
+    timer = runtime.setTimeoutFn(() => {
+      signal.removeEventListener("abort", abortSleep);
+      resolveSleep();
+    }, Math.min(delayMs, MAX_TIMER_DELAY_MS));
+    signal.addEventListener("abort", abortSleep, { once: true });
+  }), runtime);
+}
 
 export function resolveGeminiVideoTimeoutMs(environment = process.env) {
   const raw = environment.GEMINI_VIDEO_TIMEOUT_MS;
@@ -69,6 +322,25 @@ function browserConfig(input = {}) {
   };
 }
 
+export function validatedGeminiBrowserWebSocketUrl(value, cdpUrl) {
+  let parsed;
+  let expected;
+  try {
+    parsed = new URL(String(value || ""));
+    expected = new URL(String(cdpUrl || ""));
+  } catch {
+    throw new Error("Gemini CDP browser WebSocket 주소가 올바르지 않습니다.");
+  }
+  if (parsed.protocol !== "ws:"
+    || !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname)
+    || parsed.port !== expected.port
+    || parsed.username || parsed.password || parsed.search || parsed.hash
+    || !/^\/devtools\/browser\/[A-Za-z0-9._~-]{1,256}$/.test(parsed.pathname)) {
+    throw new Error("Gemini CDP browser WebSocket은 같은 loopback port의 browser endpoint여야 합니다.");
+  }
+  return parsed.href;
+}
+
 export function configuredGeminiJobProfile() {
   const config = browserConfig();
   return { geminiCdpUrl: config.cdpUrl, geminiProfileDir: config.profileDir };
@@ -90,6 +362,13 @@ export function resolveGeminiChromeLaunchPolicy(environment = process.env) {
     mode: headless ? "headless" : background ? "background" : "visible",
     headlessImplementation: headless ? "new" : null
   };
+}
+
+export function assertGeminiGenerationLaunchPolicy(policy = resolveGeminiChromeLaunchPolicy()) {
+  if (policy?.headless !== true || policy?.mode !== "headless" || policy?.headlessImplementation !== "new") {
+    throw new Error("Gemini 영상 생성은 GEMINI_CHROME_HEADLESS=1의 --headless=new 전용 runtime에서만 허용됩니다. headed Chrome은 상태·로그인 확인에만 사용할 수 있습니다.");
+  }
+  return policy;
 }
 
 export function geminiChromeMajorVersion(version) {
@@ -126,6 +405,7 @@ export function buildGeminiChromeLaunchArgs(input = {}, environment = process.en
     `--remote-debugging-address=127.0.0.1`,
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${config.profileDir}`,
+    "--enable-automation",
     "--no-first-run",
     "--no-default-browser-check"
   ];
@@ -144,6 +424,83 @@ function stableValue(value) {
 
 function hashJson(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex")}`;
+}
+
+function normalizedGeminiTargetId(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized && normalized.length <= 256 && !/[\u0000-\u001f\u007f]/u.test(normalized) ? normalized : null;
+}
+
+export function geminiTargetConversationLineage(targetId, conversationUrl) {
+  const normalizedTarget = normalizedGeminiTargetId(targetId);
+  const canonicalConversation = canonicalGeminiConversationUrl(conversationUrl);
+  if (!normalizedTarget || !canonicalConversation) {
+    throw new Error("완료 Gemini 클립의 target·conversation lineage를 정확히 결속할 수 없습니다.");
+  }
+  const lineage = {
+    schemaVersion: 1,
+    method: "privacy-safe-cdp-target-conversation-hashes",
+    targetIdHash: hashJson({ type: "gemini-cdp-target-id", value: normalizedTarget }),
+    conversationUrlHash: hashJson({ type: "gemini-canonical-conversation-url", value: canonicalConversation })
+  };
+  return { lineage, lineageHash: hashJson(lineage) };
+}
+
+function validGeminiTargetConversationLineage(segment) {
+  const lineage = segment?.targetConversationLineage;
+  return lineage?.schemaVersion === 1
+    && lineage.method === "privacy-safe-cdp-target-conversation-hashes"
+    && isSha256(lineage.targetIdHash)
+    && isSha256(lineage.conversationUrlHash)
+    && segment.targetConversationLineageHash === hashJson(lineage);
+}
+
+function validGenerationRuntimeAttestation(attestation, sessionJob) {
+  return attestation?.type === "gemini-chrome-session"
+    && attestation.provider === "gemini-browser"
+    && hashJson(attestation.sessionBinding) === attestation.sessionBindingHash
+    && attestation.persistentProfile === true
+    && attestation.headless === true
+    && attestation.headlessRequested === true
+    && attestation.headlessImplementation === "new"
+    && attestation.chromeMajor === attestation.runtimeProof?.chromeMajor
+    && attestation.fallbackUsed === false
+    && validateGeminiObservedRuntimeProof(attestation.runtimeProof, sessionJob)
+    && attestation.runtimeProofHash === geminiObservedRuntimeProofHash(attestation.runtimeProof);
+}
+
+export function geminiSegmentSubmissionLineage(previousGeneration, providerRequestSentThisRun) {
+  if (providerRequestSentThisRun === true) {
+    return {
+      providerRequestSentThisRun: true,
+      inheritedProviderSubmission: false,
+      sourceRunId: null,
+      sourceGenerationHash: null
+    };
+  }
+  if (providerRequestSentThisRun !== false
+    || !String(previousGeneration?.runId || "").trim()
+    || previousGeneration?.provider !== "gemini-browser") {
+    throw new Error("상속된 Gemini provider 제출의 직전 generation 결속을 확인할 수 없습니다.");
+  }
+  return {
+    providerRequestSentThisRun: false,
+    inheritedProviderSubmission: true,
+    sourceRunId: previousGeneration.runId,
+    sourceGenerationHash: hashJson(previousGeneration)
+  };
+}
+
+function refreshGeminiSubmissionSummary(generation) {
+  const segments = Array.isArray(generation?.segments) ? generation.segments : [];
+  generation.providerRequestSentThisRun = segments.some((segment) => segment.providerRequestSentThisRun === true);
+  generation.inheritedProviderSubmission = segments.some((segment) => (
+    segment.submittedToProvider === true
+    && segment.providerRequestSentThisRun === false
+    && segment.inheritedProviderSubmission === true
+  ));
+  generation.submissionRunIds = [...new Set(segments.map((segment) => String(segment.submissionRunId || "").trim()).filter(Boolean))].sort();
+  return generation;
 }
 
 function exactGeminiPromptText(value) {
@@ -223,6 +580,78 @@ export function canonicalGeminiConversationUrl(value) {
   return `https://gemini.google.com${path}`;
 }
 
+function strictGoogleusercontentMediaHost(hostname) {
+  const normalized = String(hostname || "").toLowerCase();
+  if (!normalized.endsWith(".googleusercontent.com") || normalized.length > 253) return false;
+  const labels = normalized.split(".");
+  if (labels.length < 3 || labels.at(-2) !== "googleusercontent" || labels.at(-1) !== "com") return false;
+  return labels.slice(0, -2).every((label) => (
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)
+  ));
+}
+
+/**
+ * Validate a media candidate before any page-context fetch. Gemini's own
+ * same-origin URLs and Google-owned googleusercontent delivery hosts are the
+ * only network destinations; broad *.google.com and arbitrary CDN hosts are
+ * intentionally excluded. Blob URLs must be UUID objects created by the exact
+ * Gemini origin, so an attacker-controlled blob/data/custom scheme is inert.
+ */
+export function validateGeminiMediaUrl(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || Buffer.byteLength(raw, "utf8") > GEMINI_MEDIA_MAX_URL_BYTES || /[\u0000-\u001f\u007f]/u.test(raw)) {
+    throw new Error("Gemini media URL이 허용 경계를 벗어났습니다.");
+  }
+  let parsed;
+  try { parsed = new URL(raw); } catch {
+    throw new Error("Gemini media URL이 올바르지 않습니다.");
+  }
+  if (parsed.protocol === "blob:") {
+    if (
+      parsed.origin !== "https://gemini.google.com"
+      || !/^blob:https:\/\/gemini\.google\.com\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(parsed.href)
+    ) throw new Error("Gemini blob media URL이 exact Gemini origin UUID가 아닙니다.");
+    return {
+      url: parsed.href,
+      kind: "blob",
+      origin: "https://gemini.google.com",
+      hostname: "gemini.google.com",
+      credentials: "same-origin"
+    };
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.port
+    || parsed.username
+    || parsed.password
+    || parsed.hash
+    || (parsed.hostname !== "gemini.google.com" && !strictGoogleusercontentMediaHost(parsed.hostname))
+  ) throw new Error("Gemini network media URL destination이 허용되지 않습니다.");
+  return {
+    url: parsed.href,
+    kind: "https",
+    origin: parsed.origin,
+    hostname: parsed.hostname,
+    credentials: parsed.origin === "https://gemini.google.com" ? "same-origin" : "omit"
+  };
+}
+
+export function trustedGeminiMediaUrl(value) {
+  try { return validateGeminiMediaUrl(value); } catch { return null; }
+}
+
+export function trustedGeminiMediaCandidateUrl(value, candidateKind) {
+  if (!["video-src", "download-link"].includes(candidateKind)) return null;
+  const policy = trustedGeminiMediaUrl(value);
+  if (!policy) return null;
+  // A provider-rendered anchor must not create a new credentialed same-origin
+  // GET. Blob objects are inert local handles; network download links must use
+  // the cookie-less Google media delivery origin. A <video> has already loaded
+  // its currentSrc, so re-reading that exact source does not add a new origin.
+  if (candidateKind === "download-link" && policy.kind === "https" && policy.origin === "https://gemini.google.com") return null;
+  return policy;
+}
+
 export function selectGeminiRecoveryTarget(checkpoint = {}, targets = []) {
   const conversationUrl = canonicalGeminiConversationUrl(checkpoint.conversationUrl);
   const checkpointTargetId = String(checkpoint.targetId || "").trim();
@@ -256,11 +685,13 @@ export function geminiPendingRecoveryDecision(previousGeneration, current = {}) 
   const pending = previousGeneration?.pendingSegment;
   if (!pending) return { applicable: false, eligible: false, reason: "no-pending-checkpoint" };
   const semanticMatch = previousGeneration?.jobId === current.jobId
+    && previousGeneration?.requestHash === current.requestHash
+    && previousGeneration?.scriptHash === current.scriptHash
     && previousGeneration?.resumeRequestHash === current.resumeRequestHash
     && previousGeneration?.resumeScriptHash === current.resumeScriptHash;
   if (!semanticMatch) return { applicable: false, eligible: false, reason: "semantic-resume-mismatch" };
   const reject = (reason) => ({ applicable: true, eligible: false, reason });
-  if (Number(previousGeneration.schemaVersion) < 4 || previousGeneration.provider !== "gemini-browser") return reject("generation-receipt-version-invalid");
+  if (previousGeneration.schemaVersion !== 5 || previousGeneration.provider !== "gemini-browser") return reject("generation-receipt-version-invalid");
   if (!["running", "failed"].includes(previousGeneration.status)) return reject("generation-status-not-recoverable");
   if (hashJson(previousGeneration.sessionBinding) !== current.sessionBindingHash) return reject("session-receipt-integrity-mismatch");
   if (hashJson(previousGeneration.providerDecision) !== current.providerDecisionHash) return reject("provider-decision-receipt-integrity-mismatch");
@@ -302,6 +733,11 @@ export function geminiPendingRecoveryDecision(previousGeneration, current = {}) 
   }
   const prompt = String(current.prompt || "");
   if (!prompt || pending.prompt !== prompt || pending.promptHash !== hashJson({ prompt })) return reject("prompt-binding-mismatch");
+  if (!isSha256(current.providerVisualPromptHash)
+    || pending.providerVisualPromptHash !== current.providerVisualPromptHash
+    || hashJson(pending.shotPattern ?? null) !== hashJson(current.shotPattern ?? null)) {
+    return reject("provider-visual-prompt-binding-mismatch");
+  }
   if (!intentOnly && (
     pending.submissionAcknowledgement?.verified !== true
     || (pending.schemaVersion === 2
@@ -436,35 +872,58 @@ export function buildGeminiGenerationRequest(job, script) {
   };
 }
 
-let browserProcess;
+let browserProcess = null;
+let browserLaunch = null;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function probeVideoDimensions(filePath) {
-  return new Promise((resolve) => {
-    const child = spawn("ffprobe", [
-      "-v", "error",
-      "-select_streams", "v:0",
-      "-show_entries", "stream=width,height",
-      "-of", "json",
-      filePath
-    ], { stdio: ["ignore", "pipe", "ignore"] });
-    let stdout = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.once("error", () => resolve(null));
-    child.once("close", (code) => {
-      if (code !== 0) return resolve(null);
-      try {
-        const stream = JSON.parse(stdout).streams?.[0];
-        const width = Number(stream?.width);
-        const height = Number(stream?.height);
-        resolve(Number.isFinite(width) && Number.isFinite(height) ? { width, height } : null);
-      } catch {
-        resolve(null);
-      }
+
+export async function probeVideoDimensions(filePath, dependencies = {}) {
+  if (
+    typeof filePath !== "string"
+    || !filePath
+    || filePath.length > 32_768
+    || filePath.includes("\0")
+  ) throw new TypeError("Gemini ffprobe 입력 경로가 올바르지 않습니다.");
+  const runProcessFn = dependencies.runProcessFn || runBoundedRenderProcess;
+  if (typeof runProcessFn !== "function") throw new TypeError("Gemini ffprobe bounded runner가 올바르지 않습니다.");
+  const timeoutMs = dependencies.timeoutMs ?? GEMINI_FFPROBE_TIMEOUT_MS;
+  const maximumOutputBytes = dependencies.maximumOutputBytes ?? GEMINI_FFPROBE_MAX_OUTPUT_BYTES;
+  const admissionTimeoutMs = dependencies.admissionTimeoutMs ?? GEMINI_FFPROBE_ADMISSION_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > GEMINI_FFPROBE_TIMEOUT_MS
+    || !Number.isSafeInteger(maximumOutputBytes) || maximumOutputBytes < 1 || maximumOutputBytes > GEMINI_FFPROBE_MAX_OUTPUT_BYTES
+    || !Number.isSafeInteger(admissionTimeoutMs) || admissionTimeoutMs < 1 || admissionTimeoutMs > GEMINI_FFPROBE_ADMISSION_TIMEOUT_MS
+  ) throw new TypeError("Gemini ffprobe 실행 경계가 올바르지 않습니다.");
+  const args = [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-of", "json",
+    filePath
+  ];
+  let result;
+  try {
+    result = await runProcessFn("ffprobe", args, {
+      timeoutMs,
+      maximumOutputBytes,
+      admissionTimeoutMs,
+      stdoutMode: "text"
     });
-  });
+  } catch {
+    return null;
+  }
+  try {
+    const stream = JSON.parse(result.stdout).streams?.[0];
+    const width = Number(stream?.width);
+    const height = Number(stream?.height);
+    return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+      ? { width, height }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 async function clipMatchesFormat(filePath, format) {
@@ -474,10 +933,12 @@ async function clipMatchesFormat(filePath, format) {
   return format === "vertical" ? isVertical : !isVertical;
 }
 
-async function getVersion(baseUrl = DEFAULT_CDP) {
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/json/version`, { signal: AbortSignal.timeout(2500) });
-  if (!response.ok) throw new Error(`Chrome DevTools 연결 실패 (${response.status})`);
-  return response.json();
+async function getVersion(baseUrl = DEFAULT_CDP, runtime = createGeminiBrowserRuntime()) {
+  return runWithinGeminiBrowserRuntime(async (signal) => {
+    const response = await runtime.fetchFn(`${baseUrl.replace(/\/$/, "")}/json/version`, { signal });
+    if (!response.ok) throw new Error(`Chrome DevTools 연결 실패 (${response.status})`);
+    return response.json();
+  }, runtime, { timeoutMs: CDP_VERSION_TIMEOUT_MS });
 }
 
 function chromeBinary() {
@@ -492,34 +953,154 @@ function chromeBinary() {
   return candidates.find((path) => Bun.file(path).size > 0) || null;
 }
 
-async function startChrome(input = {}) {
-  const config = browserConfig(input);
-  const binary = chromeBinary();
-  if (!binary) throw new Error("Google Chrome 또는 Chromium을 찾지 못했습니다.");
-  const cdpPort = new URL(config.cdpUrl).port || "9222";
-  await mkdir(config.profileDir, { recursive: true });
-  const chromeArgs = buildGeminiChromeLaunchArgs(config);
-  browserProcess = spawn(binary, chromeArgs, { detached: true, stdio: "ignore" });
-  browserProcess.unref();
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    let version;
-    try {
-      version = await getVersion(config.cdpUrl);
-    } catch {
-      await sleep(500);
-      continue;
-    }
-    assertGeminiChromeRuntime(version);
-    return version;
-  }
-  throw new Error(`Chrome 원격 디버깅 포트(${cdpPort})를 열지 못했습니다.`);
+function chromeProcessExited(child) {
+  return !child || child.exitCode !== null && child.exitCode !== undefined
+    || child?.signalCode !== null && child?.signalCode !== undefined;
 }
 
-class CdpBrowser {
-  constructor(version, baseUrl = DEFAULT_CDP) {
+function waitForChromeProcessExit(child, timeoutMs) {
+  if (chromeProcessExited(child)) return Promise.resolve(true);
+  return new Promise((resolveWait) => {
+    let settled = false;
+    let timer = null;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      child.off?.("exit", onExit);
+      child.off?.("close", onExit);
+      child.off?.("error", onExit);
+      resolveWait(exited);
+    };
+    const onExit = () => finish(true);
+    child.once?.("exit", onExit);
+    child.once?.("close", onExit);
+    child.once?.("error", onExit);
+    timer = setTimeout(() => finish(chromeProcessExited(child)), timeoutMs);
+    timer.unref?.();
+  });
+}
+
+function signalChromeProcessGroup(child, signal, runtime) {
+  if (chromeProcessExited(child)) return;
+  const pid = Number(child?.pid);
+  let groupSignaled = false;
+  if (
+    (process.platform === "darwin" || process.platform === "linux")
+    && Number.isSafeInteger(pid)
+    && pid > 1
+  ) {
+    try {
+      runtime.processKillFn(-pid, signal);
+      groupSignaled = true;
+    } catch {}
+  }
+  if (!groupSignaled) {
+    try { child?.kill?.(signal); } catch {}
+  }
+}
+
+async function terminateUnattestedChrome(child, runtime) {
+  if (!child || chromeProcessExited(child)) return;
+  signalChromeProcessGroup(child, "SIGTERM", runtime);
+  if (await waitForChromeProcessExit(child, runtime.terminationGraceMs)) return;
+  signalChromeProcessGroup(child, "SIGKILL", runtime);
+  if (await waitForChromeProcessExit(child, runtime.terminationKillMs)) return;
+  const error = new Error("실패한 Gemini Chrome process group 종료를 확인하지 못했습니다.");
+  error.code = "GEMINI_CHROME_CLEANUP_TIMEOUT";
+  throw error;
+}
+
+async function launchChromeSingleFlight(config, runtime, policy, binary, chromeArgs, launchKey) {
+  let child = null;
+  let spawnFailure = null;
+  const recordSpawnFailure = () => { spawnFailure = true; };
+  try {
+    await runtime.mkdirFn(config.profileDir, { recursive: true });
+    assertGeminiBrowserRuntimeActive(runtime);
+    child = runtime.spawnFn(binary, chromeArgs, { detached: true, stdio: "ignore" });
+    if (!child || !Number.isSafeInteger(Number(child.pid)) || Number(child.pid) <= 1) {
+      throw new Error("Gemini Chrome process를 안전한 detached owner로 시작하지 못했습니다.");
+    }
+    if (browserLaunch?.key === launchKey) browserLaunch.child = child;
+    child.once?.("error", recordSpawnFailure);
+    const cdpPort = new URL(config.cdpUrl).port || "9222";
+    for (let attempt = 0; attempt < runtime.launchAttempts; attempt += 1) {
+      if (spawnFailure || chromeProcessExited(child)) {
+        throw new Error("Gemini Chrome process가 CDP attestation 전에 종료됐습니다.");
+      }
+      let version;
+      try {
+        version = await getVersion(config.cdpUrl, runtime);
+      } catch (error) {
+        if (isGeminiBrowserBoundaryError(error)) throw error;
+        if (attempt + 1 < runtime.launchAttempts) {
+          await sleepWithinGeminiBrowserRuntime(runtime.launchPollMs, runtime);
+        }
+        continue;
+      }
+      assertGeminiChromeRuntime(version, policy);
+      browserProcess = child;
+      const publishedOwner = child;
+      child.once?.("exit", () => {
+        if (browserProcess === publishedOwner) browserProcess = null;
+      });
+      child.unref?.();
+      return version;
+    }
+    throw new Error(`Chrome 원격 디버깅 포트(${cdpPort})를 열지 못했습니다.`);
+  } catch (error) {
+    try {
+      await terminateUnattestedChrome(child, runtime);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Gemini Chrome 시작 실패 후 process group 정리를 완료하지 못했습니다.");
+    }
+    throw error;
+  } finally {
+    child?.off?.("error", recordSpawnFailure);
+    if (browserLaunch?.key === launchKey && browserLaunch.child === child) browserLaunch.child = null;
+  }
+}
+
+async function startChrome(input = {}, runtime = createGeminiBrowserRuntime(), policy = resolveGeminiChromeLaunchPolicy()) {
+  const config = browserConfig(input);
+  assertGeminiBrowserRuntimeActive(runtime);
+  const binary = runtime.chromeBinaryFn();
+  if (!binary) throw new Error("Google Chrome 또는 Chromium을 찾지 못했습니다.");
+  const chromeArgs = buildGeminiChromeLaunchArgs(config);
+  const launchKey = JSON.stringify({ cdpUrl: config.cdpUrl, profileDir: config.profileDir, binary, chromeArgs });
+  if (browserLaunch) {
+    if (browserLaunch.key !== launchKey) {
+      throw new Error("다른 Gemini Chrome cold launch가 진행 중이어서 새 process를 시작하지 않습니다.");
+    }
+    return browserLaunch.promise;
+  }
+  if (browserProcess && !chromeProcessExited(browserProcess)) {
+    throw new Error("게시된 Gemini Chrome owner가 실행 중이지만 CDP endpoint에 응답하지 않습니다. 새 process로 덮어쓰지 않습니다.");
+  }
+  if (browserProcess && chromeProcessExited(browserProcess)) browserProcess = null;
+  const launch = {
+    key: launchKey,
+    child: null,
+    promise: null
+  };
+  launch.promise = launchChromeSingleFlight(config, runtime, policy, binary, chromeArgs, launchKey);
+  browserLaunch = launch;
+  try {
+    return await launch.promise;
+  } finally {
+    if (browserLaunch === launch) browserLaunch = null;
+  }
+}
+
+export class CdpBrowser {
+  constructor(version, baseUrl = DEFAULT_CDP, options = {}) {
     this.version = version;
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.runtime = createGeminiBrowserRuntime(options);
+    this.WebSocketImpl = this.runtime.WebSocketImpl;
     this.ws = null;
+    this.messageListener = null;
     this.nextId = 1;
     this.pending = new Map();
     this.sessionId = null;
@@ -527,20 +1108,54 @@ class CdpBrowser {
   }
 
   async connect(options = {}) {
-    this.ws = new WebSocket(this.version.webSocketDebuggerUrl);
-    this.ws.addEventListener("message", (event) => {
+    assertGeminiBrowserRuntimeActive(this.runtime);
+    const webSocketUrl = validatedGeminiBrowserWebSocketUrl(this.version.webSocketDebuggerUrl, this.baseUrl);
+    try {
+      this.ws = new this.WebSocketImpl(webSocketUrl);
+    } catch {
+      throw new Error("Gemini Chrome DevTools 연결을 초기화하지 못했습니다.");
+    }
+    this.messageListener = (event) => {
       const message = JSON.parse(typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8"));
       const request = this.pending.get(message.id);
       if (!request) return;
-      this.pending.delete(message.id);
-      clearTimeout(request.timeout);
       if (message.error) request.reject(new Error(message.error.message || "Chrome DevTools 오류"));
       else request.resolve(message.result);
+    };
+    this.ws.addEventListener("message", this.messageListener);
+    let resolveOpen;
+    let rejectOpen;
+    const opened = new Promise((resolve, reject) => {
+      resolveOpen = resolve;
+      rejectOpen = reject;
     });
-    await new Promise((resolve, reject) => {
-      this.ws.addEventListener("open", resolve, { once: true });
-      this.ws.addEventListener("error", reject, { once: true });
-    });
+    const onOpen = () => resolveOpen();
+    const onError = () => rejectOpen(new Error("Gemini Chrome DevTools 연결에 실패했습니다."));
+    this.ws.addEventListener("open", onOpen, { once: true });
+    this.ws.addEventListener("error", onError, { once: true });
+    try {
+      await runWithinGeminiBrowserRuntime(() => opened, this.runtime);
+    } finally {
+      this.ws.removeEventListener("open", onOpen);
+      this.ws.removeEventListener("error", onError);
+    }
+    if (options.runtimeAttestation) {
+      const commandLine = await this.command("Browser.getBrowserCommandLine");
+      const browserVersion = await this.command("Browser.getVersion");
+      this.runtimeProof = canonicalGeminiObservedRuntimeProof({
+        job: {
+          geminiCdpUrl: options.runtimeAttestation.cdpUrl,
+          geminiProfileDir: options.runtimeAttestation.profileDir
+        },
+        version: browserVersion,
+        commandLine
+      });
+      this.runtimeProofHash = geminiObservedRuntimeProofHash(this.runtimeProof);
+      if (options.expectedRuntimeProofHash && this.runtimeProofHash !== options.expectedRuntimeProofHash) {
+        throw new Error("Gemini Chrome runtime이 사전 관측 이후 변경되었습니다. target을 만들거나 요청을 전송하지 않습니다.");
+      }
+      if (options.attestationOnly === true) return this;
+    }
     if (options.resumeTarget) {
       const listed = await this.command("Target.getTargets");
       const selection = selectGeminiRecoveryTarget(options.resumeTarget, listed.targetInfos || []);
@@ -555,28 +1170,68 @@ class CdpBrowser {
     }
     const attached = await this.command("Target.attachToTarget", { targetId: this.targetId, flatten: true });
     this.sessionId = attached.sessionId;
-    await mkdir(join(process.cwd(), "workspace", "downloads"), { recursive: true });
-    await this.command("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: join(process.cwd(), "workspace", "downloads") });
+    const downloadPath = join(dirname(JOBS_DIR), "downloads");
+    await this.runtime.mkdirFn(downloadPath, { recursive: true });
+    await this.command("Browser.setDownloadBehavior", { behavior: "allow", downloadPath });
     await this.command("Page.enable", {}, true);
     await this.command("Runtime.enable", {}, true);
-    await sleep(1200);
+    await sleepWithinGeminiBrowserRuntime(1200, this.runtime);
     return this;
   }
 
   command(method, params = {}, session = false) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Chrome DevTools WebSocket가 닫혀 있습니다."));
+    try {
+      assertGeminiBrowserRuntimeActive(this.runtime);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (!this.ws || this.ws.readyState !== (this.WebSocketImpl.OPEN ?? 1)) return Promise.reject(new Error("Chrome DevTools WebSocket가 닫혀 있습니다."));
     const id = this.nextId++;
     const message = { id, method, params };
     if (session && this.sessionId) message.sessionId = this.sessionId;
-    this.ws.send(JSON.stringify(message));
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      const timeout = setTimeout(() => {
-        if (!this.pending.has(id)) return;
+    return runWithinGeminiBrowserRuntime((signal) => new Promise((resolve, reject) => {
+      const cleanup = () => {
         this.pending.delete(id);
-        reject(new Error(`Chrome 명령 시간 초과: ${method}`));
-      }, 30000);
-      this.pending.get(id).timeout = timeout;
+        signal.removeEventListener("abort", abortCommand);
+      };
+      const settle = (callback) => (value) => {
+        cleanup();
+        callback(value);
+      };
+      const request = { resolve: settle(resolve), reject: settle(reject) };
+      const abortCommand = () => request.reject(signal.reason || geminiBrowserAbortError());
+      signal.addEventListener("abort", abortCommand, { once: true });
+      this.pending.set(id, request);
+      try {
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        request.reject(error);
+      }
+    }), this.runtime, { timeoutMs: CDP_COMMAND_TIMEOUT_MS });
+  }
+
+  commandForCleanup(method, params = {}) {
+    if (!this.ws || this.ws.readyState !== (this.WebSocketImpl.OPEN ?? 1)) {
+      return Promise.reject(new Error("Chrome DevTools WebSocket가 닫혀 있습니다."));
+    }
+    const id = this.nextId++;
+    const message = { id, method, params };
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const settle = (callback) => (value) => {
+        if (timer) clearTimeout(timer);
+        this.pending.delete(id);
+        callback(value);
+      };
+      const request = { resolve: settle(resolve), reject: settle(reject) };
+      this.pending.set(id, request);
+      timer = setTimeout(() => request.reject(new Error("Gemini fresh target 정리 시간이 초과되었습니다.")), CDP_VERSION_TIMEOUT_MS);
+      timer.unref?.();
+      try {
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        request.reject(error);
+      }
     });
   }
 
@@ -589,66 +1244,110 @@ class CdpBrowser {
   async navigate(url) {
     await this.command("Page.navigate", { url }, true);
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const ready = await this.evaluate("document.readyState === 'complete' || document.readyState === 'interactive'").catch(() => false);
+      const ready = await this.evaluate("document.readyState === 'complete' || document.readyState === 'interactive'").catch((error) => {
+        if (isGeminiBrowserBoundaryError(error)) throw error;
+        return false;
+      });
       if (ready) break;
-      await sleep(250);
+      await sleepWithinGeminiBrowserRuntime(250, this.runtime);
     }
-    await sleep(2500);
+    await sleepWithinGeminiBrowserRuntime(2500, this.runtime);
   }
 
   async close(options = {}) {
     const preserveTarget = options.preserveTarget === true;
+    const forceFreshTargetCleanup = options.forceFreshTargetCleanup === true && !preserveTarget;
     let targetClosed = false;
     let sessionDetached = false;
-    if (preserveTarget) {
-      try {
+    let boundaryError = null;
+    try {
+      if (preserveTarget) {
         if (this.sessionId) {
-          await this.command("Target.detachFromTarget", { sessionId: this.sessionId });
-          sessionDetached = true;
+          try {
+            await this.command("Target.detachFromTarget", { sessionId: this.sessionId });
+            sessionDetached = true;
+          } catch (error) {
+            if (isGeminiBrowserBoundaryError(error)) boundaryError = error;
+          }
         }
-      } catch {}
-    } else {
-      try {
+      } else {
         if (this.targetId) {
-          const result = await this.command("Target.closeTarget", { targetId: this.targetId });
-          targetClosed = result?.success === true;
+          try {
+            const result = forceFreshTargetCleanup
+              ? await this.commandForCleanup("Target.closeTarget", { targetId: this.targetId })
+              : await this.command("Target.closeTarget", { targetId: this.targetId });
+            targetClosed = result?.success === true;
+          } catch (error) {
+            if (isGeminiBrowserBoundaryError(error)) boundaryError = error;
+          }
         }
-      } catch {}
+      }
+    } finally {
+      for (const request of [...this.pending.values()]) {
+        request.reject(new Error("Chrome DevTools 세션이 닫혔습니다."));
+      }
+      this.pending.clear();
+      if (this.ws && this.messageListener) this.ws.removeEventListener("message", this.messageListener);
+      try { this.ws?.close(); } catch {}
     }
-    for (const request of this.pending.values()) {
-      clearTimeout(request.timeout);
-      request.reject(new Error("Chrome DevTools 세션이 닫혔습니다."));
-    }
-    this.pending.clear();
-    try { this.ws?.close(); } catch {}
+    boundaryError ||= currentGeminiBrowserBoundaryError(this.runtime);
+    if (boundaryError) throw boundaryError;
     return { preserveTarget, targetClosed, sessionDetached, targetId: this.targetId || null };
   }
 }
 
-async function resolveBrowserVersion(input = {}) {
+async function resolveBrowserVersion(input = {}, runtime = createGeminiBrowserRuntime(), policy = resolveGeminiChromeLaunchPolicy()) {
   const config = browserConfig(input);
   let version;
   try {
-    version = await getVersion(config.cdpUrl);
-  } catch {
-    version = await startChrome(config);
+    version = await getVersion(config.cdpUrl, runtime);
+  } catch (error) {
+    if (isGeminiBrowserBoundaryError(error)) throw error;
+    version = await startChrome(config, runtime, policy);
   }
-  assertGeminiChromeRuntime(version);
+  assertGeminiChromeRuntime(version, policy);
   return version;
 }
 
-async function connectBrowser(input = {}, options = {}) {
+export async function connectBrowser(input = {}, options = {}) {
   const config = browserConfig(input);
-  const version = options.version || await resolveBrowserVersion(config);
-  assertGeminiChromeRuntime(version);
-  const browser = new CdpBrowser(version, config.cdpUrl);
+  const runtime = createGeminiBrowserRuntime(input, options);
+  const policy = options.policy || resolveGeminiChromeLaunchPolicy();
+  const version = options.version || await resolveBrowserVersion(config, runtime, policy);
+  assertGeminiChromeRuntime(version, policy);
+  const browser = new CdpBrowser(version, config.cdpUrl, runtime);
   try {
-    await browser.connect({ resumeTarget: options.resumeTarget || null });
+    await browser.connect({
+      resumeTarget: options.resumeTarget || null,
+      runtimeAttestation: options.runtimeAttestation === true ? config : null,
+      expectedRuntimeProofHash: options.expectedRuntimeProofHash || null,
+      attestationOnly: options.attestationOnly === true
+    });
   } catch (error) {
-    await browser.close({ preserveTarget: true }).catch(() => {});
+    const preserveTarget = Boolean(options.resumeTarget);
+    const closeError = await browser.close({
+      preserveTarget,
+      forceFreshTargetCleanup: !preserveTarget
+    }).then(() => null, (caught) => caught);
+    if (isGeminiBrowserBoundaryError(closeError)) throw closeError;
     throw error;
   }
   return browser;
+}
+
+async function observeGeminiGenerationRuntime(config, version, policy, options = {}) {
+  const browser = await connectBrowser(config, {
+    ...options,
+    version,
+    policy,
+    runtimeAttestation: true,
+    attestationOnly: true
+  });
+  try {
+    return { proof: browser.runtimeProof, proofHash: browser.runtimeProofHash };
+  } finally {
+    await browser.close({ preserveTarget: true });
+  }
 }
 
 async function clickVideoTool(browser, format = "vertical") {
@@ -1291,6 +1990,50 @@ export async function writeGeminiGenerationCheckpoint(path, generation, dependen
   }
 }
 
+export async function publishDurableGeminiClip({ targetPath, bytes, format }, dependencies = {}) {
+  const exactBytes = Buffer.isBuffer(bytes) ? Buffer.from(bytes) : Buffer.from(bytes || []);
+  if (!exactBytes.length || exactBytes.length > 70 * 1024 * 1024) {
+    throw new Error("Gemini clip publication bytes가 올바르지 않습니다.");
+  }
+  const normalizedFormat = format === "vertical" ? "vertical" : format === "landscape" ? "landscape" : null;
+  if (!normalizedFormat || typeof targetPath !== "string" || !targetPath.endsWith(".mp4")) {
+    throw new Error("Gemini clip publication 경로 또는 format이 올바르지 않습니다.");
+  }
+  const openFn = dependencies.openFn || open;
+  const renameFn = dependencies.renameFn || rename;
+  const unlinkFn = dependencies.unlinkFn || unlink;
+  const clipMatchesFormatFn = dependencies.clipMatchesFormatFn || clipMatchesFormat;
+  const temporaryPath = `${targetPath}.${dependencies.tempId || `${process.pid}-${randomUUID()}`}.tmp`;
+  let renamed = false;
+  try {
+    const handle = await openFn(temporaryPath, "wx", 0o600);
+    try {
+      await handle.writeFile(exactBytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    if (!await clipMatchesFormatFn(temporaryPath, normalizedFormat)) {
+      throw new Error(`Gemini가 ${normalizedFormat === "vertical" ? "세로 9:16" : "가로 16:9"} 비율의 영상을 반환하지 않았습니다.`);
+    }
+    await renameFn(temporaryPath, targetPath);
+    renamed = true;
+    const directoryHandle = await openFn(dirname(targetPath), "r");
+    try {
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
+    return {
+      path: targetPath,
+      bytes: exactBytes.length,
+      sha256: `sha256:${createHash("sha256").update(exactBytes).digest("hex")}`
+    };
+  } finally {
+    if (!renamed) await unlinkFn(temporaryPath).catch(() => {});
+  }
+}
+
 function isSha256(value) {
   return /^sha256:[a-f0-9]{64}$/.test(String(value || ""));
 }
@@ -1305,9 +2048,9 @@ function validLegacyAbandonmentEvidenceReference(value) {
     && isSha256(value.receiptHash);
 }
 
-function validLegacyAbandonmentReceiptReference(value) {
+function validLegacyAbandonmentReceiptReference(value, strict = false) {
   if (value == null) return true;
-  return value?.path === "gemini-legacy-abandonment.json"
+  const structurallyValid = value?.path === "gemini-legacy-abandonment.json"
     && value.authorization === "explicit-operator-cli"
     && value.operatorAssertion === "no-live-recoverable-conversation-target"
     && Number.isFinite(Date.parse(value.authorizedAt))
@@ -1320,6 +2063,10 @@ function validLegacyAbandonmentReceiptReference(value) {
     && Number.isFinite(Date.parse(value.liveCdpObservation?.observedAt))
     && isSha256(value.liveCdpObservation?.cdpOriginHash)
     && isSha256(value.liveCdpObservation?.targetSetHash);
+  return structurallyValid && (!strict || (
+    value.liveCdpObservation?.headlessImplementation === "new"
+    && isSha256(value.liveCdpObservation?.runtimeProofHash)
+  ));
 }
 
 function validPromptReadinessFailure(value) {
@@ -1356,18 +2103,25 @@ function validPromptReadinessFailure(value) {
 }
 
 function validCurrentGeminiGenerationReceipt(generation) {
-  if (generation.schemaVersion !== 4) {
+  if (generation.schemaVersion < 4) {
     // Historical failed receipts with no completed segments remain eligible
     // for the explicit legacy-abandonment flow. A legacy receipt that claims
     // completion must contain at least one segment; otherwise treating it as
     // an ordinary previous run can fall through to a blind fresh submission.
-    return generation.schemaVersion < 4
-      && Array.isArray(generation.segments)
+    return Array.isArray(generation.segments)
       && (generation.status !== "completed" || (
         generation.segments.length > 0
         && Number.isFinite(Date.parse(generation.completedAt))
       ));
   }
+  if (![4, 5].includes(generation.schemaVersion)) return false;
+  const strict = generation.schemaVersion === 5;
+  const hasFailureText = Object.hasOwn(generation, "error") || Object.hasOwn(generation, "errorEvidence");
+  if (strict && hasFailureText && (
+    !verifyGeminiFailureEvidence(generation.errorEvidence)
+    || generation.error !== generation.errorEvidence.reasonCode
+    || !/^GEMINI_[A-Z0-9_]{1,95}$/.test(String(generation.errorCode || ""))
+  )) return false;
   if (!generation.request || typeof generation.request !== "object" || Array.isArray(generation.request)
     || generation.request.provider !== "gemini-browser"
     || !Number.isInteger(generation.request.clipCount) || generation.request.clipCount < 1
@@ -1384,6 +2138,7 @@ function validCurrentGeminiGenerationReceipt(generation) {
     || !generation.providerDecision || hashJson(generation.providerDecision) !== generation.providerDecisionHash
     || !generation.providerAttestation || hashJson(generation.providerAttestation) !== generation.providerAttestationHash
     || generation.providerAttestation.sessionBindingHash !== generation.sessionBindingHash) return false;
+  if (strict && !validGenerationRuntimeAttestation(generation.providerAttestation, generation.sessionBinding)) return false;
   if (!Array.isArray(generation.segments)
     || !Array.isArray(generation.recoveryAttempts)
     || !Array.isArray(generation.recoveredPendingSegments)
@@ -1411,6 +2166,26 @@ function validCurrentGeminiGenerationReceipt(generation) {
       || !isSha256(segment.sha256)
       || segment.path !== segment.output
       || segment.path !== `clips/${String(segment.index).padStart(2, "0")}.mp4`) return false;
+    if (strict && (
+      typeof segment.providerRequestSentThisRun !== "boolean"
+      || typeof segment.inheritedProviderSubmission !== "boolean"
+      || segment.inheritedProviderSubmission === segment.providerRequestSentThisRun
+      || !Object.hasOwn(segment, "sourceRunId")
+      || !Object.hasOwn(segment, "sourceGenerationHash")
+      || !validGeminiTargetConversationLineage(segment)
+    )) return false;
+    if (strict && segment.providerRequestSentThisRun === true && (
+      segment.inheritedProviderSubmission !== false
+      || segment.sourceRunId !== null
+      || segment.sourceGenerationHash !== null
+      || segment.submissionRunId !== generation.runId
+    )) return false;
+    if (strict && segment.providerRequestSentThisRun === false && (
+      segment.inheritedProviderSubmission !== true
+      || !String(segment.sourceRunId || "").trim()
+      || segment.sourceRunId === generation.runId
+      || !isSha256(segment.sourceGenerationHash)
+    )) return false;
     segmentIndexes.add(segment.index);
   }
   if (generation.pendingSegment != null && generation.pendingSegment.index !== generation.segments.length + 1) return false;
@@ -1423,10 +2198,33 @@ function validCurrentGeminiGenerationReceipt(generation) {
   ))) return false;
   if (generation.status === "completed"
     && (generation.pendingSegment != null || generation.segments.length !== generation.request.clipCount)) return false;
+  if (strict && (
+    typeof generation.providerRequestSentThisRun !== "boolean"
+    || typeof generation.inheritedProviderSubmission !== "boolean"
+    || generation.providerRequestSentThisRun !== generation.segments.some((segment) => segment.providerRequestSentThisRun)
+    || generation.inheritedProviderSubmission !== generation.segments.some((segment) => segment.inheritedProviderSubmission)
+    || !Array.isArray(generation.submissionRunIds)
+    || JSON.stringify(generation.submissionRunIds) !== JSON.stringify([
+      ...new Set(generation.segments.map((segment) => String(segment.submissionRunId || "").trim()).filter(Boolean))
+    ].sort())
+  )) return false;
+  if (strict && generation.resumedFromCompletedGeneration != null) {
+    const resume = generation.resumedFromCompletedGeneration;
+    if (!String(resume.sourceRunId || "").trim()
+      || !isSha256(resume.sourceGenerationHash)
+      || !Number.isFinite(Date.parse(resume.resumedAt))
+      || resume.providerRequestSent !== false
+      || generation.segments.some((segment) => (
+        segment.sourceRunId !== resume.sourceRunId
+        || segment.sourceGenerationHash !== resume.sourceGenerationHash
+        || segment.providerRequestSentThisRun !== false
+        || segment.inheritedProviderSubmission !== true
+      ))) return false;
+  }
   const hasLegacyReceipt = generation.legacySubmissionAbandonment != null;
   const hasLegacyEvidence = generation.legacySubmissionAbandonmentEvidence != null;
   if (hasLegacyReceipt !== hasLegacyEvidence
-    || !validLegacyAbandonmentReceiptReference(generation.legacySubmissionAbandonment)
+    || !validLegacyAbandonmentReceiptReference(generation.legacySubmissionAbandonment, strict)
     || !validLegacyAbandonmentEvidenceReference(generation.legacySubmissionAbandonmentEvidence)
     || (hasLegacyReceipt
       && generation.legacySubmissionAbandonment.receiptHash !== generation.legacySubmissionAbandonmentEvidence.receiptHash
@@ -1434,6 +2232,7 @@ function validCurrentGeminiGenerationReceipt(generation) {
       && generation.legacySubmissionAbandonment.sourceGenerationSha256 !== generation.legacySubmissionAbandonmentEvidence.generationSha256)) return false;
   if (!Array.isArray(generation.legacySubmissionAbandonmentConsumptions)) return false;
   if (!hasLegacyReceipt && generation.legacySubmissionAbandonmentConsumptions.length !== 0) return false;
+  if (!strict) return true;
   const submittedSegmentIndexes = new Set(generation.segments.map((segment) => segment.index));
   if (generation.pendingSegment) submittedSegmentIndexes.add(generation.pendingSegment.index);
   const consumedSegments = new Set();
@@ -1451,18 +2250,143 @@ function validCurrentGeminiGenerationReceipt(generation) {
   return true;
 }
 
+export const GEMINI_GENERATION_RECEIPT_MAX_BYTES = 16 * 1024 * 1024;
+
+function sameGenerationReceiptState(left, right) {
+  return sameFdIdentity(left, right)
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function canonicalGeminiGenerationReceiptLocation(path) {
+  const jobsRoot = resolve(JOBS_DIR);
+  const target = resolve(String(path || ""));
+  const jobDirectory = dirname(target);
+  const jobId = basename(jobDirectory);
+  if (
+    basename(target) !== "gemini-generation.json"
+    || dirname(jobDirectory) !== jobsRoot
+    || target !== join(jobsRoot, jobId, "gemini-generation.json")
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{5,120}$/.test(jobId)
+  ) throw new Error("Gemini generation 영수증 경로가 canonical jobs direct-child 경계가 아닙니다.");
+  return { jobsRoot, jobId, target };
+}
+
+function openPinnedGeminiJobsRoot(path) {
+  const fd = openSync(
+    path,
+    fsConstants.O_RDONLY
+      | fsConstants.O_NOFOLLOW
+      | fsConstants.O_NONBLOCK
+      | (fsConstants.O_DIRECTORY || 0)
+  );
+  const identity = statFd(fd);
+  if (!identity.isDirectory()) {
+    closeSync(fd);
+    throw new Error("Gemini generation jobs root가 디렉터리가 아닙니다.");
+  }
+  return { fd, identity };
+}
+
+async function readCanonicalGeminiGenerationReceiptBytes(path, dependencies = {}) {
+  const location = canonicalGeminiGenerationReceiptLocation(path);
+  let jobsRoot = null;
+  let jobFd = null;
+  let fileFd = null;
+  let currentJobsRoot = null;
+  let currentJobFd = null;
+  let currentFileFd = null;
+  try {
+    jobsRoot = openPinnedGeminiJobsRoot(location.jobsRoot);
+    jobFd = openDirectoryAt(jobsRoot.fd, location.jobId);
+    const jobIdentity = statFd(jobFd);
+    if (!jobIdentity.isDirectory()) throw new Error("Gemini generation job entry가 디렉터리가 아닙니다.");
+    try {
+      fileFd = openFileAt(jobFd, "gemini-generation.json", fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    } catch (error) {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    }
+    const before = statFd(fileFd);
+    if (
+      !before.isFile()
+      || before.nlink !== 1n
+      || before.size > BigInt(GEMINI_GENERATION_RECEIPT_MAX_BYTES)
+    ) throw new Error("Gemini generation 영수증은 bounded single-link regular file이어야 합니다.");
+    const bytes = readFdBuffer(fileFd, { maxBytes: GEMINI_GENERATION_RECEIPT_MAX_BYTES });
+    const after = statFd(fileFd);
+    if (after.nlink !== 1n || !sameGenerationReceiptState(before, after)) {
+      throw new Error("Gemini generation 영수증이 same-fd read 중 변경되었습니다.");
+    }
+
+    await dependencies.afterPinnedReadForTest?.({ path: location.target });
+
+    currentJobsRoot = openPinnedGeminiJobsRoot(location.jobsRoot);
+    if (!sameFdIdentity(jobsRoot.identity, currentJobsRoot.identity)) {
+      throw new Error("Gemini generation 영수증 jobs root가 읽는 중 교체되었습니다.");
+    }
+    currentJobFd = openDirectoryAt(currentJobsRoot.fd, location.jobId);
+    const currentJobIdentity = statFd(currentJobFd);
+    if (!currentJobIdentity.isDirectory() || !sameFdIdentity(jobIdentity, currentJobIdentity)) {
+      throw new Error("Gemini generation 영수증 job directory가 읽는 중 교체되었습니다.");
+    }
+    currentFileFd = openFileAt(currentJobFd, "gemini-generation.json", fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    const current = statFd(currentFileFd);
+    if (!current.isFile() || current.nlink !== 1n || !sameGenerationReceiptState(before, current)) {
+      throw new Error("Gemini generation 영수증 canonical path가 읽는 중 교체되었습니다.");
+    }
+    return bytes;
+  } finally {
+    if (currentFileFd !== null) closeFd(currentFileFd);
+    if (currentJobFd !== null) closeFd(currentJobFd);
+    if (currentJobsRoot) closeSync(currentJobsRoot.fd);
+    if (fileFd !== null) closeFd(fileFd);
+    if (jobFd !== null) closeFd(jobFd);
+    if (jobsRoot) closeSync(jobsRoot.fd);
+  }
+}
+
+async function readGeminiGenerationReceiptBytes(path, dependencies = {}) {
+  if (Object.hasOwn(dependencies, "receiptBytes")) {
+    if (dependencies.receiptBytes == null) return null;
+    if (
+      typeof dependencies.receiptBytes !== "string"
+      && !Buffer.isBuffer(dependencies.receiptBytes)
+      && !(dependencies.receiptBytes instanceof Uint8Array)
+    ) throw new TypeError("주입된 Gemini generation 영수증 바이트가 유효하지 않습니다.");
+    return dependencies.receiptBytes;
+  }
+
+  const hasInjectedExists = Object.hasOwn(dependencies, "existsFn");
+  const hasInjectedRead = Object.hasOwn(dependencies, "readFileFn");
+  if (hasInjectedExists || hasInjectedRead) {
+    if (!hasInjectedExists || !hasInjectedRead || typeof dependencies.existsFn !== "function" || typeof dependencies.readFileFn !== "function") {
+      throw new TypeError("Gemini generation 테스트 byte reader는 existsFn·readFileFn을 함께 명시해야 합니다.");
+    }
+    if (!dependencies.existsFn(path)) return null;
+    return dependencies.readFileFn(path);
+  }
+  return readCanonicalGeminiGenerationReceiptBytes(path, dependencies);
+}
+
 export async function readGeminiGenerationReceipt(path, dependencies = {}) {
-  const existsFn = dependencies.existsFn || existsSync;
-  const readFileFn = dependencies.readFileFn || readFile;
-  if (!existsFn(path)) return null;
   let bytes;
   try {
-    bytes = await readFileFn(path);
+    const input = await readGeminiGenerationReceiptBytes(path, dependencies);
+    if (input == null) return null;
+    const observedBytes = typeof input === "string" ? Buffer.byteLength(input, "utf8") : input?.byteLength;
+    if (!Number.isSafeInteger(observedBytes) || observedBytes > GEMINI_GENERATION_RECEIPT_MAX_BYTES) {
+      throw new Error(`영수증 크기가 ${GEMINI_GENERATION_RECEIPT_MAX_BYTES} byte 제한을 초과했습니다.`);
+    }
+    bytes = Buffer.from(input);
   } catch (error) {
     throw new Error(`기존 Gemini generation 영수증을 읽을 수 없습니다. 새 요청을 전송하지 않습니다 (${error.message}).`);
   }
   try {
-    const generation = JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : String(bytes));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const generation = JSON.parse(text);
     if (!generation || typeof generation !== "object" || Array.isArray(generation)) throw new Error("object expected");
     if (!Number.isInteger(generation.schemaVersion) || generation.schemaVersion < 1
       || generation.provider !== "gemini-browser"
@@ -1472,10 +2396,138 @@ export async function readGeminiGenerationReceipt(path, dependencies = {}) {
       || !validCurrentGeminiGenerationReceipt(generation)) {
       throw new Error("required generation fields are invalid");
     }
+    if (dependencies.includeSnapshot === true) {
+      const exactBytes = Buffer.isBuffer(bytes) ? Buffer.from(bytes) : Buffer.from(String(bytes));
+      return {
+        generation,
+        snapshot: {
+          bytes: exactBytes.length,
+          sha256: `sha256:${createHash("sha256").update(exactBytes).digest("hex")}`,
+          generationHash: hashJson(generation),
+          raw: exactBytes
+        }
+      };
+    }
     return generation;
   } catch (error) {
     throw new Error(`기존 Gemini generation 영수증이 손상되었습니다. 새 요청을 전송하지 않습니다 (${error.message}).`);
   }
+}
+
+function validateExpectedRecoverySourceReceipt(expected, actual) {
+  if (expected == null) return;
+  if (!expected || typeof expected !== "object" || Array.isArray(expected)
+    || JSON.stringify(Object.keys(expected).sort()) !== JSON.stringify([
+      "bytes", "sha256", "sourceGenerationHash", "sourceRunId"
+    ])
+    || !Number.isSafeInteger(expected.bytes) || expected.bytes < 1
+    || !isSha256(expected.sha256)
+    || !String(expected.sourceRunId || "").trim()
+    || !isSha256(expected.sourceGenerationHash)) {
+    throw new Error("기대된 Gemini recovery source 영수증이 올바르지 않습니다. 브라우저에 연결하지 않습니다.");
+  }
+  if (!actual
+    || actual.snapshot.bytes !== expected.bytes
+    || actual.snapshot.sha256 !== expected.sha256
+    || actual.generation.runId !== expected.sourceRunId
+    || actual.snapshot.generationHash !== expected.sourceGenerationHash) {
+    throw new Error("Gemini recovery source 영수증이 보존 이후 변경되었습니다. 브라우저에 연결하거나 새 요청을 전송하지 않습니다.");
+  }
+}
+
+export async function assertGeminiPartialResumePreflight({
+  job,
+  script,
+  jobDir,
+  previousGeneration,
+  requestPayload,
+  requestHash,
+  scriptHash,
+  resumeRequestHash,
+  resumeScriptHash,
+  sessionBinding,
+  sessionBindingHash,
+  providerDecision,
+  providerDecisionHash
+}, dependencies = {}) {
+  const segments = previousGeneration?.segments;
+  if (!["failed", "running"].includes(previousGeneration?.status) || !Array.isArray(segments) || segments.length === 0) {
+    return { required: false, segmentCount: 0 };
+  }
+  const fail = (reason) => {
+    const error = new Error(`기존 Gemini 완료 클립을 현재 실행에 exact 결속할 수 없습니다 (${reason}). 브라우저에 연결하거나 새 요청을 전송하지 않습니다.`);
+    error.code = "GEMINI_PARTIAL_RESUME_BINDING_MISMATCH";
+    throw error;
+  };
+  if (previousGeneration.schemaVersion !== 5
+    || previousGeneration.provider !== "gemini-browser"
+    || !validCurrentGeminiGenerationReceipt(previousGeneration)) fail("generation-schema");
+  if (previousGeneration.jobId !== job.id || !String(previousGeneration.runId || "").trim()) fail("job-run");
+  if (hashJson(previousGeneration.request) !== hashJson(requestPayload)
+    || previousGeneration.requestHash !== requestHash
+    || previousGeneration.requestHash !== hashJson({ ...previousGeneration.request, scriptHash: previousGeneration.scriptHash })
+    || previousGeneration.scriptHash !== scriptHash
+    || previousGeneration.resumeRequestHash !== resumeRequestHash
+    || previousGeneration.resumeRequestHash !== hashJson({ ...previousGeneration.request, scriptHash: previousGeneration.resumeScriptHash })
+    || previousGeneration.resumeScriptHash !== resumeScriptHash) fail("request-script");
+  if (hashJson(previousGeneration.sessionBinding) !== sessionBindingHash
+    || previousGeneration.sessionBindingHash !== sessionBindingHash
+    || hashJson(sessionBinding) !== sessionBindingHash) fail("session");
+  if (hashJson(previousGeneration.providerDecision) !== providerDecisionHash
+    || previousGeneration.providerDecisionHash !== providerDecisionHash
+    || hashJson(providerDecision) !== providerDecisionHash) fail("provider-decision");
+  if (!validGenerationRuntimeAttestation(previousGeneration.providerAttestation, job)
+    || previousGeneration.providerAttestationHash !== hashJson(previousGeneration.providerAttestation)
+    || previousGeneration.providerAttestation.sessionBindingHash !== sessionBindingHash) fail("observed-runtime-attestation");
+  if (segments.length > script.segments.length) fail("segment-count");
+  const readFileFn = dependencies.readFileFn || readFile;
+  const writeFileFn = dependencies.writeFileFn || writeFile;
+  const unlinkFn = dependencies.unlinkFn || unlink;
+  const clipMatchesFormatFn = dependencies.clipMatchesFormatFn || clipMatchesFormat;
+  const existsFn = dependencies.existsFn || existsSync;
+  for (let position = 0; position < segments.length; position += 1) {
+    const index = position + 1;
+    const segment = segments[position];
+    const currentScriptSegment = script.segments[position];
+    const prompt = buildGeminiClipPrompt(job, script, currentScriptSegment);
+    const promptBinding = providerPromptBindingForSegment(currentScriptSegment, "gemini-browser");
+    const relativePath = `clips/${String(index).padStart(2, "0")}.mp4`;
+    if (segment?.index !== index
+      || segment.runId !== previousGeneration.runId
+      || segment.requestHash !== previousGeneration.requestHash
+      || segment.scriptHash !== previousGeneration.scriptHash
+      || segment.resumeRequestHash !== previousGeneration.resumeRequestHash
+      || segment.resumeScriptHash !== previousGeneration.resumeScriptHash
+      || segment.providerDecisionHash !== previousGeneration.providerDecisionHash
+      || segment.providerAttestationHash !== previousGeneration.providerAttestationHash
+      || segment.prompt !== prompt
+      || segment.promptHash !== hashJson({ prompt })
+      || segment.providerVisualPromptHash !== promptBinding.providerVisualPromptHash
+      || hashJson(segment.shotPattern ?? null) !== hashJson(promptBinding.shotPattern ?? null)
+      || segment.path !== relativePath
+      || segment.output !== relativePath
+      || segment.submittedToProvider !== true
+      || segment.submissionAcknowledgement?.verified !== true
+      || !validGeminiTargetConversationLineage(segment)) fail(`segment-${index}-provenance`);
+    const absolutePath = join(jobDir, relativePath);
+    if (!existsFn(absolutePath)) fail(`segment-${index}-bytes`);
+    let clipBytes;
+    try { clipBytes = await readFileFn(absolutePath); } catch { fail(`segment-${index}-bytes`); }
+    const exactBytes = Buffer.isBuffer(clipBytes) ? clipBytes : Buffer.from(clipBytes);
+    if (`sha256:${createHash("sha256").update(exactBytes).digest("hex")}` !== segment.sha256) fail(`segment-${index}-bytes`);
+    const snapshotPath = join(dirname(absolutePath), `.gemini-resume-${index}-${randomUUID()}.mp4`);
+    try {
+      await writeFileFn(snapshotPath, exactBytes, { flag: "wx", mode: 0o400 });
+      if (!await clipMatchesFormatFn(snapshotPath, job.format).catch(() => false)) fail(`segment-${index}-format`);
+    } finally {
+      await unlinkFn(snapshotPath).catch(() => {});
+    }
+  }
+  return {
+    required: true,
+    segmentCount: segments.length,
+    providerAttestationHash: previousGeneration.providerAttestationHash
+  };
 }
 
 export function retainLegacyGeminiAbandonmentProvenance(previousGeneration, legacyDecision, newlyPreservedEvidence) {
@@ -1499,23 +2551,351 @@ export function retainLegacyGeminiAbandonmentProvenance(previousGeneration, lega
   return { receipt, evidence, consumptions };
 }
 
-async function downloadFromPage(browser, url) {
-  const encoded = JSON.stringify(url);
-  const result = await browser.evaluate(`(async () => {
+export async function openGeminiPageMediaSession(input, dependencies = {}) {
+  const globalObject = dependencies.globalObject || globalThis;
+  const fetchFn = dependencies.fetchFn || globalObject.fetch;
+  const nowFn = dependencies.nowFn || Date.now;
+  const setTimeoutFn = dependencies.setTimeoutFn || setTimeout;
+  const clearTimeoutFn = dependencies.clearTimeoutFn || clearTimeout;
+  const pageOrigin = dependencies.pageOrigin ?? globalObject.location?.origin;
+  const sessionKey = String(input?.sessionKey || "");
+  const url = String(input?.url || "");
+  const credentials = input?.credentials;
+  const deadlineMs = Number(input?.deadlineMs);
+  const maximumBytes = Number(input?.maximumBytes);
+  const failure = (code, status = null) => ({ ok: false, code, status: Number.isInteger(status) ? status : null });
+  if (
+    pageOrigin !== "https://gemini.google.com"
+    || !/^__ps4GeminiMedia_[a-f0-9]{32}$/u.test(sessionKey)
+    || !url
+    || !["same-origin", "omit"].includes(credentials)
+    || !Number.isSafeInteger(deadlineMs)
+    || !Number.isSafeInteger(maximumBytes)
+    || maximumBytes < 1
+    || maximumBytes > 70 * 1024 * 1024
+  ) return failure("invalid-session-input");
+  if (Object.prototype.hasOwnProperty.call(globalObject, sessionKey)) return failure("duplicate-session");
+  const controller = new AbortController();
+  const state = {
+    controller,
+    timer: null,
+    deadlinePromise: null,
+    reader: null,
+    response: null,
+    readPromise: null,
+    pending: null,
+    pendingOffset: 0,
+    observedBytes: 0,
+    declaredLength: null,
+    maximumBytes
+  };
+  const cleanup = async (reason) => {
+    try { controller.abort(); } catch {}
+    if (state.timer !== null) clearTimeoutFn(state.timer);
+    try { await state.reader?.cancel?.(reason); } catch {}
+    try { await state.response?.body?.cancel?.(reason); } catch {}
+    try { delete globalObject[sessionKey]; } catch {}
+  };
+  const remainingMs = deadlineMs - Number(nowFn());
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0 || remainingMs > 3_600_000) return failure("deadline-expired");
+  let markDeadline;
+  state.deadlinePromise = new Promise((resolveDeadline) => { markDeadline = () => resolveDeadline({ kind: "deadline" }); });
+  state.timer = setTimeoutFn(() => {
+    try { controller.abort(); } catch {}
+    markDeadline();
+  }, remainingMs);
+  try {
+    Object.defineProperty(globalObject, sessionKey, { value: state, configurable: true, enumerable: false });
+  } catch {
+    if (state.timer !== null) clearTimeoutFn(state.timer);
+    return failure("session-publication-failed");
+  }
+  const fetchPromise = Promise.resolve().then(() => fetchFn(url, {
+    method: "GET",
+    credentials,
+    redirect: "error",
+    referrerPolicy: "no-referrer",
+    cache: "no-store",
+    headers: { accept: "video/*, application/octet-stream;q=0.8" },
+    signal: controller.signal
+  })).then(
+    (response) => ({ kind: "response", response }),
+    () => ({ kind: "fetch-error" })
+  );
+  const opened = await Promise.race([fetchPromise, state.deadlinePromise]);
+  if (opened?.kind === "deadline") {
+    void fetchPromise.then(async (late) => {
+      try { await late?.response?.body?.cancel?.("deadline-expired"); } catch {}
+    });
+    await cleanup("deadline-expired");
+    return failure("deadline-expired");
+  }
+  if (opened?.kind !== "response") {
+    await cleanup("fetch-failed");
+    return failure("fetch-failed");
+  }
+  const response = opened.response;
+  state.response = response;
+  const status = Number(response?.status);
+  if (!response?.ok || status !== 200 || response.redirected === true) {
+    await cleanup(response?.redirected ? "redirect-rejected" : "http-rejected");
+    return failure(response?.redirected ? "redirect-rejected" : "http-rejected", status);
+  }
+  if (!["basic", "cors"].includes(String(response.type || ""))) {
+    await cleanup("response-type-rejected");
+    return failure("response-type-rejected", status);
+  }
+  let contentType;
+  let contentEncoding;
+  let contentLength;
+  let contentRange;
+  try {
+    contentType = response.headers.get("content-type");
+    contentEncoding = response.headers.get("content-encoding");
+    contentLength = response.headers.get("content-length");
+    contentRange = response.headers.get("content-range");
+  } catch {
+    await cleanup("headers-unreadable");
+    return failure("headers-unreadable", status);
+  }
+  const normalizedType = typeof contentType === "string" ? contentType.trim().toLowerCase() : "";
+  if (!(/^video\/[a-z0-9!#$&^_.+-]+$/u.test(normalizedType) || normalizedType === "application/octet-stream")) {
+    await cleanup("media-type-rejected");
+    return failure("media-type-rejected", status);
+  }
+  if (contentEncoding !== null && String(contentEncoding).trim().toLowerCase() !== "identity") {
+    await cleanup("content-encoding-rejected");
+    return failure("content-encoding-rejected", status);
+  }
+  if (contentRange !== null) {
+    await cleanup("content-range-rejected");
+    return failure("content-range-rejected", status);
+  }
+  if (contentLength !== null) {
+    const normalizedLength = String(contentLength).trim();
+    if (!/^\d+$/u.test(normalizedLength)) {
+      await cleanup("content-length-invalid");
+      return failure("content-length-invalid", status);
+    }
+    state.declaredLength = Number(normalizedLength);
+    if (!Number.isSafeInteger(state.declaredLength) || state.declaredLength > maximumBytes) {
+      await cleanup("content-length-rejected");
+      return failure("content-length-rejected", status);
+    }
+  }
+  try { state.reader = response.body?.getReader?.(); } catch { state.reader = null; }
+  if (!state.reader || typeof state.reader.read !== "function") {
+    await cleanup("body-unavailable");
+    return failure("body-unavailable", status);
+  }
+  return {
+    ok: true,
+    responseUrl: String(response.url || ""),
+    responseType: String(response.type || ""),
+    mediaType: normalizedType,
+    declaredLength: state.declaredLength
+  };
+}
+
+export async function pullGeminiPageMediaSession(input, dependencies = {}) {
+  const globalObject = dependencies.globalObject || globalThis;
+  const setTimeoutFn = dependencies.setTimeoutFn || setTimeout;
+  const clearTimeoutFn = dependencies.clearTimeoutFn || clearTimeout;
+  const btoaFn = dependencies.btoaFn || globalObject.btoa;
+  const sessionKey = String(input?.sessionKey || "");
+  const maximumChunkBytes = Number(input?.maximumChunkBytes);
+  const waitMs = Number(input?.waitMs);
+  const state = globalObject[sessionKey];
+  const failure = (code) => ({ ok: false, code });
+  if (
+    !state
+    || !/^__ps4GeminiMedia_[a-f0-9]{32}$/u.test(sessionKey)
+    || !Number.isSafeInteger(maximumChunkBytes)
+    || maximumChunkBytes < 1
+    || maximumChunkBytes > 256 * 1024
+    || !Number.isSafeInteger(waitMs)
+    || waitMs < 1
+    || waitMs > 5_000
+    || typeof btoaFn !== "function"
+  ) return failure("invalid-session");
+  const cleanup = async (reason) => {
+    try { state.controller?.abort?.(); } catch {}
+    if (state.timer !== null) clearTimeoutFn(state.timer);
+    try { await state.reader?.cancel?.(reason); } catch {}
+    try { delete globalObject[sessionKey]; } catch {}
+  };
+  if (!state.pending) {
+    if (!state.readPromise) {
+      state.readPromise = Promise.resolve().then(() => state.reader.read()).then(
+        (value) => ({ kind: "read", value }),
+        () => ({ kind: "read-error" })
+      );
+    }
+    let pollTimer = null;
+    const poll = new Promise((resolvePoll) => {
+      pollTimer = setTimeoutFn(() => resolvePoll({ kind: "pending" }), waitMs);
+    });
+    const next = await Promise.race([state.readPromise, state.deadlinePromise, poll]);
+    if (pollTimer !== null) clearTimeoutFn(pollTimer);
+    if (next?.kind === "pending") return { ok: true, pending: true };
+    if (next?.kind === "deadline") {
+      await cleanup("deadline-expired");
+      return failure("deadline-expired");
+    }
+    state.readPromise = null;
+    if (next?.kind !== "read") {
+      await cleanup("body-read-failed");
+      return failure("body-read-failed");
+    }
+    if (next.value?.done) {
+      if (state.declaredLength !== null && state.declaredLength !== state.observedBytes) {
+        await cleanup("content-length-mismatch");
+        return failure("content-length-mismatch");
+      }
+      const totalBytes = state.observedBytes;
+      await cleanup("complete");
+      return { ok: true, done: true, totalBytes };
+    }
+    let chunk;
     try {
-      const response = await fetch(${encoded}, { credentials: 'include' });
-      if (!response.ok) return { ok: false, status: response.status };
-      const buffer = await response.arrayBuffer();
-      if (buffer.byteLength > 70 * 1024 * 1024) return { ok: false, status: 'too-large', bytes: buffer.byteLength };
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      return { ok: true, base64: btoa(binary), bytes: bytes.length };
-    } catch (error) { return { ok: false, status: error.message }; }
-  })()`);
-  if (!result?.ok || !result.base64) return null;
-  return Buffer.from(result.base64, "base64");
+      chunk = next.value?.value instanceof Uint8Array
+        ? next.value.value
+        : new Uint8Array(next.value?.value);
+    } catch {
+      await cleanup("body-chunk-invalid");
+      return failure("body-chunk-invalid");
+    }
+    const nextTotal = state.observedBytes + chunk.byteLength;
+    if (
+      !Number.isSafeInteger(nextTotal)
+      || nextTotal > state.maximumBytes
+      || (state.declaredLength !== null && nextTotal > state.declaredLength)
+    ) {
+      await cleanup("body-too-large");
+      return failure("body-too-large");
+    }
+    state.observedBytes = nextTotal;
+    state.pending = chunk;
+    state.pendingOffset = 0;
+  }
+  const end = Math.min(state.pending.byteLength, state.pendingOffset + maximumChunkBytes);
+  const output = state.pending.subarray(state.pendingOffset, end);
+  state.pendingOffset = end;
+  if (state.pendingOffset >= state.pending.byteLength) {
+    state.pending = null;
+    state.pendingOffset = 0;
+  }
+  let binary = "";
+  for (let offset = 0; offset < output.byteLength; offset += 0x8000) {
+    binary += String.fromCharCode(...output.subarray(offset, Math.min(output.byteLength, offset + 0x8000)));
+  }
+  return {
+    ok: true,
+    done: false,
+    base64: btoaFn(binary),
+    chunkBytes: output.byteLength,
+    observedBytes: state.observedBytes
+  };
+}
+
+export async function cancelGeminiPageMediaSession(input, dependencies = {}) {
+  const globalObject = dependencies.globalObject || globalThis;
+  const clearTimeoutFn = dependencies.clearTimeoutFn || clearTimeout;
+  const sessionKey = String(input?.sessionKey || "");
+  const state = globalObject[sessionKey];
+  if (!state) return { ok: true, canceled: false };
+  try { state.controller?.abort?.(); } catch {}
+  if (state.timer !== null) clearTimeoutFn(state.timer);
+  try { await state.reader?.cancel?.("node-cleanup"); } catch {}
+  try { await state.response?.body?.cancel?.("node-cleanup"); } catch {}
+  try { delete globalObject[sessionKey]; } catch {}
+  return { ok: true, canceled: true };
+}
+
+function pageMediaExpression(fn, input) {
+  return `(${fn.toString()})(${JSON.stringify(input)})`;
+}
+
+function strictBase64Chunk(value, expectedBytes) {
+  if (typeof value !== "string" || value.length > Math.ceil(expectedBytes / 3) * 4 + 4
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) return null;
+  const bytes = Buffer.from(value, "base64");
+  return bytes.byteLength === expectedBytes && bytes.toString("base64") === value ? bytes : null;
+}
+
+export async function downloadGeminiMediaFromPage(browser, url, options = {}) {
+  if (!browser || typeof browser.evaluate !== "function") throw new TypeError("Gemini media browser가 올바르지 않습니다.");
+  const candidateKind = options.candidateKind || "video-src";
+  const policy = trustedGeminiMediaCandidateUrl(url, candidateKind);
+  if (!policy) throw new Error("Gemini media candidate provenance가 허용되지 않습니다.");
+  const deadlineMs = Number(options.deadlineMs);
+  const maximumBytes = options.maximumBytes ?? GEMINI_MEDIA_MAX_BYTES;
+  const maximumChunkBytes = options.maximumChunkBytes ?? GEMINI_MEDIA_TRANSFER_CHUNK_BYTES;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now() || deadlineMs - Date.now() > MAX_VIDEO_TIMEOUT_MS
+    || !Number.isSafeInteger(maximumBytes)
+    || maximumBytes < 1 || maximumBytes > GEMINI_MEDIA_MAX_BYTES
+    || !Number.isSafeInteger(maximumChunkBytes) || maximumChunkBytes < 1 || maximumChunkBytes > GEMINI_MEDIA_TRANSFER_CHUNK_BYTES) {
+    throw new TypeError("Gemini media download 경계가 올바르지 않습니다.");
+  }
+  const sessionKey = `__ps4GeminiMedia_${randomUUID().replaceAll("-", "")}`;
+  const cleanup = () => browser.evaluate(pageMediaExpression(cancelGeminiPageMediaSession, { sessionKey })).catch(() => null);
+  let opened;
+  try {
+    opened = await browser.evaluate(pageMediaExpression(openGeminiPageMediaSession, {
+      sessionKey,
+      url: policy.url,
+      credentials: policy.credentials,
+      deadlineMs,
+      maximumBytes
+    }));
+  } catch (error) {
+    await cleanup();
+    if (isGeminiBrowserBoundaryError(error)) throw error;
+    return null;
+  }
+  if (!opened?.ok) {
+    await cleanup();
+    return null;
+  }
+  let finalPolicy;
+  try { finalPolicy = validateGeminiMediaUrl(opened.responseUrl); } catch { finalPolicy = null; }
+  if (!finalPolicy || finalPolicy.url !== policy.url || finalPolicy.kind !== policy.kind
+    || !["basic", "cors"].includes(opened.responseType)) {
+    await cleanup();
+    return null;
+  }
+  const chunks = [];
+  let transferredBytes = 0;
+  try {
+    while (Date.now() < deadlineMs) {
+      let result;
+      try {
+        result = await browser.evaluate(pageMediaExpression(pullGeminiPageMediaSession, {
+          sessionKey,
+          maximumChunkBytes,
+          waitMs: Math.min(GEMINI_MEDIA_PULL_WAIT_MS, Math.max(1, deadlineMs - Date.now()))
+        }));
+      } catch (error) {
+        if (isGeminiBrowserBoundaryError(error)) throw error;
+        return null;
+      }
+      if (!result?.ok) return null;
+      if (result.pending === true) continue;
+      if (result.done === true) {
+        if (result.totalBytes !== transferredBytes || transferredBytes <= 0) return null;
+        return Buffer.concat(chunks, transferredBytes);
+      }
+      const chunkBytes = Number(result.chunkBytes);
+      if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > maximumChunkBytes) return null;
+      const chunk = strictBase64Chunk(result.base64, chunkBytes);
+      if (!chunk || !Number.isSafeInteger(transferredBytes + chunkBytes) || transferredBytes + chunkBytes > maximumBytes) return null;
+      chunks.push(chunk);
+      transferredBytes += chunkBytes;
+    }
+    return null;
+  } finally {
+    await cleanup();
+  }
 }
 
 export class GeminiClipTimeoutError extends Error {
@@ -1542,16 +2922,16 @@ async function waitForClip(browser, knownMedia, deadline, timeoutMs, expectedCon
     const freshVideos = media.videos.filter((video) => video.src
       && !knownVideos.has(hashJson({ type: "gemini-page-media", value: video.src }))
       && video.ready > 0);
-    const direct = freshVideos.find((video) => !video.src.startsWith("blob:")) || freshVideos[0];
+    const direct = freshVideos.find((video) => trustedGeminiMediaCandidateUrl(video.src, "video-src"));
     const freshLinks = media.links.filter((item) => item.href
       && !knownLinks.has(hashJson({ type: "gemini-page-media", value: item.href })));
-    const link = freshLinks[0];
+    const link = freshLinks.find((item) => trustedGeminiMediaCandidateUrl(item.href, "download-link"));
     if (direct?.src) {
-      const data = await downloadFromPage(browser, direct.src);
+      const data = await downloadGeminiMediaFromPage(browser, direct.src, { deadlineMs: deadline, candidateKind: "video-src" });
       if (data) return data;
     }
     if (link?.href) {
-      const data = await downloadFromPage(browser, link.href);
+      const data = await downloadGeminiMediaFromPage(browser, link.href, { deadlineMs: deadline, candidateKind: "download-link" });
       if (data) return data;
     }
     await sleep(2500);
@@ -1592,11 +2972,12 @@ export async function geminiBrowserStatus(input = {}) {
   }
 }
 
-export async function geminiQuotaStatus(input = {}) {
+export async function geminiQuotaStatus(input = {}, options = {}) {
   const config = browserConfig(input);
+  const runtime = createGeminiBrowserRuntime(input, options);
   let browser = null;
   try {
-    browser = await connectBrowser(config);
+    browser = await connectBrowser(config, runtime);
     await browser.navigate("https://gemini.google.com/videos");
     const observation = await browser.evaluate(`(() => {
       const quotaMessageFor = ${geminiVideoQuotaMessage.toString()};
@@ -1627,6 +3008,7 @@ export async function geminiQuotaStatus(input = {}) {
       ...observation
     };
   } catch (error) {
+    if (isGeminiBrowserBoundaryError(error)) throw error;
     return {
       schemaVersion: 1,
       observedAt: new Date().toISOString(),
@@ -1641,7 +3023,7 @@ export async function geminiQuotaStatus(input = {}) {
   }
 }
 
-export async function generateGeminiClips(job, script, onProgress = async () => {}) {
+export async function generateGeminiClips(job, script, onProgress = async () => {}, dependencies = {}) {
   const config = browserConfig({ cdpUrl: job.geminiCdpUrl, profileDir: job.geminiProfileDir });
   const jobDir = join(JOBS_DIR, job.id);
   const clipsDir = join(jobDir, "clips");
@@ -1663,7 +3045,17 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   const sessionBindingHash = geminiSessionBindingHash(job);
   if (!sessionBinding || !sessionBindingHash) throw new Error("Gemini 실행 세션을 안전하게 결속할 수 없습니다.");
 
-  const previousGeneration = await readGeminiGenerationReceipt(generationPath);
+  const previousGenerationRead = await readGeminiGenerationReceipt(generationPath, { includeSnapshot: true });
+  const previousGeneration = previousGenerationRead?.generation || null;
+  const recoverySourceRequired = Boolean(previousGeneration && (
+    job.resumeCompletedGenerationRunId
+    || (["failed", "running"].includes(previousGeneration.status)
+      && ((Array.isArray(previousGeneration.segments) && previousGeneration.segments.length > 0) || previousGeneration.pendingSegment))
+  ));
+  if (recoverySourceRequired && !job.expectedRecoverySourceGenerationReceipt) {
+    throw new Error("Gemini recovery source의 immutable byte 영수증이 없습니다. 브라우저에 연결하거나 새 요청을 전송하지 않습니다.");
+  }
+  validateExpectedRecoverySourceReceipt(job.expectedRecoverySourceGenerationReceipt || null, previousGenerationRead);
   const legacyAbandonment = previousGeneration
     ? await readLegacyGeminiAbandonmentDecision({ jobId: job.id, jobDir, generation: previousGeneration, generationPath })
     : { required: false, allowed: true, receipt: null };
@@ -1678,10 +3070,31 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     legacyAbandonment,
     legacyAbandonmentEvidence
   );
+  if (previousGeneration
+    && previousGeneration.schemaVersion !== 5
+    && legacyAbandonment.required !== true) {
+    throw new Error(`Historical Gemini schema ${previousGeneration.schemaVersion} 영수증은 관측 기반 재개 증명으로 해석하지 않습니다. 브라우저에 연결하거나 새 요청을 전송하지 않습니다.`);
+  }
+  const partialResumePreflight = await assertGeminiPartialResumePreflight({
+    job,
+    script,
+    jobDir,
+    previousGeneration,
+    requestPayload,
+    requestHash,
+    scriptHash,
+    resumeRequestHash,
+    resumeScriptHash,
+    sessionBinding,
+    sessionBindingHash,
+    providerDecision,
+    providerDecisionHash
+  }, dependencies);
 
   if (job.resumeCompletedGenerationRunId) {
     const expectedRunId = String(job.resumeCompletedGenerationRunId);
     const receiptIntegrity = previousGeneration?.status === "completed"
+      && previousGeneration.schemaVersion === 5
       && previousGeneration.runId === expectedRunId
       && previousGeneration.jobId === job.id
       && previousGeneration.provider === "gemini-browser"
@@ -1696,8 +3109,10 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       && hashJson(previousGeneration.providerDecision) === providerDecisionHash
       && previousGeneration.providerAttestationHash === hashJson(previousGeneration.providerAttestation)
       && previousGeneration.providerAttestation?.sessionBindingHash === sessionBindingHash
+      && validGenerationRuntimeAttestation(previousGeneration.providerAttestation, job)
       && Array.isArray(previousGeneration.segments)
-      && previousGeneration.segments.length === script.segments.length;
+      && previousGeneration.segments.length === script.segments.length
+      && previousGeneration.segments.every(validGeminiTargetConversationLineage);
     if (!receiptIntegrity) {
       throw new Error("중단된 pipeline의 완료 Gemini generation 영수증을 현재 요청·대본·세션에 결속할 수 없습니다. 새 요청을 전송하지 않습니다.");
     }
@@ -1731,8 +3146,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       resumedSegments.push({
         ...prior,
         runId: job.runId || null,
-        submissionRunId: prior.submissionRunId || prior.sourceRunId || expectedRunId,
-        sourceRunId: prior.sourceRunId || expectedRunId,
+        submissionRunId: prior.submissionRunId,
+        ...geminiSegmentSubmissionLineage(previousGeneration, false),
         resumeHops: [
           ...(Array.isArray(prior.resumeHops) ? prior.resumeHops : []),
           { fromRunId: expectedRunId, toRunId: job.runId || null, resumedAt }
@@ -1740,8 +3155,9 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         resumedCompletedGeneration: true
       });
     }
-    const completedResume = {
+    const completedResume = refreshGeminiSubmissionSummary({
       ...previousGeneration,
+      schemaVersion: 5,
       startedAt: resumedAt,
       completedAt: resumedAt,
       runId: job.runId || null,
@@ -1761,7 +3177,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       legacySubmissionAbandonment: retainedLegacyAbandonment.receipt,
       legacySubmissionAbandonmentEvidence: retainedLegacyAbandonment.evidence,
       legacySubmissionAbandonmentConsumptions: retainedLegacyAbandonment.consumptions
-    };
+    });
     await writeGeminiGenerationCheckpoint(generationPath, completedResume);
     await onProgress(100, `${script.segments.length}/${script.segments.length} 완료 Gemini 클립을 provider 요청 없이 복구했습니다.`);
     return completedResume;
@@ -1771,9 +3187,23 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     throw new Error("이 실행은 Gemini provider 요청 0회로 봉인되어 새 요청을 전송할 수 없습니다.");
   }
 
-  const version = await resolveBrowserVersion(config);
   const launchPolicy = resolveGeminiChromeLaunchPolicy();
+  assertGeminiGenerationLaunchPolicy(launchPolicy);
+  if (previousGeneration?.schemaVersion === 5
+    && ["failed", "running"].includes(previousGeneration.status)
+    && !validGenerationRuntimeAttestation(previousGeneration.providerAttestation, job)) {
+    throw new Error("기존 Gemini 영수증에 실제 CDP runtime 증명이 없습니다. historical 영수증을 무시하고 새 요청을 전송하지 않습니다.");
+  }
+  const resolveBrowserVersionFn = dependencies.resolveBrowserVersionFn || resolveBrowserVersion;
+  const observeGeminiGenerationRuntimeFn = dependencies.observeGeminiGenerationRuntimeFn || observeGeminiGenerationRuntime;
+  const connectBrowserFn = dependencies.connectBrowserFn || connectBrowser;
+  const version = await resolveBrowserVersionFn(config, createGeminiBrowserRuntime(), launchPolicy);
   const runtime = assertGeminiChromeRuntime(version, launchPolicy);
+  const observedRuntime = await observeGeminiGenerationRuntimeFn(config, version, launchPolicy);
+  if (!validateGeminiObservedRuntimeProof(observedRuntime?.proof, job)
+    || observedRuntime?.proofHash !== geminiObservedRuntimeProofHash(observedRuntime.proof)) {
+    throw new Error("실제 Gemini Chrome runtime 관측 증명을 신뢰할 수 없습니다. target을 만들거나 요청을 전송하지 않습니다.");
+  }
   const providerAttestation = {
     type: "gemini-chrome-session",
     provider: "gemini-browser",
@@ -1785,30 +3215,56 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     headlessRequested: launchPolicy.headless,
     chromeMajor: runtime.chromeMajor,
     headlessImplementation: launchPolicy.headlessImplementation,
+    runtimeProof: observedRuntime.proof,
+    runtimeProofHash: observedRuntime.proofHash,
     fallbackUsed: false
   };
   const providerAttestationHash = hashJson(providerAttestation);
+  if (!validGenerationRuntimeAttestation(providerAttestation, job)) {
+    throw new Error("Gemini Chrome version endpoint와 실제 browser-scope CDP 증명이 일치하지 않습니다. target을 만들거나 요청을 전송하지 않습니다.");
+  }
+  if (partialResumePreflight.required
+    && partialResumePreflight.providerAttestationHash !== providerAttestationHash) {
+    throw new Error("기존 Gemini 완료 클립의 실제 Chrome runtime attestation이 현재 관측과 일치하지 않습니다. target을 만들거나 새 요청을 전송하지 않습니다.");
+  }
   const pendingIndex = Number(previousGeneration?.pendingSegment?.index);
   const pendingScriptSegment = Number.isInteger(pendingIndex) ? script.segments[pendingIndex - 1] : null;
   const pendingPrompt = pendingScriptSegment ? buildGeminiClipPrompt(job, script, pendingScriptSegment) : "";
+  const pendingPromptBinding = pendingScriptSegment
+    ? providerPromptBindingForSegment(pendingScriptSegment, "gemini-browser")
+    : null;
   const recoveryDecision = geminiPendingRecoveryDecision(previousGeneration, {
     jobId: job.id,
     index: pendingIndex,
     prompt: pendingPrompt,
+    requestHash,
+    scriptHash,
     resumeRequestHash,
     resumeScriptHash,
     sessionBindingHash,
     providerDecisionHash,
-    providerAttestationHash
+    providerAttestationHash,
+    providerVisualPromptHash: pendingPromptBinding?.providerVisualPromptHash || null,
+    shotPattern: pendingPromptBinding?.shotPattern || null
   });
   if (previousGeneration?.pendingSegment && !recoveryDecision.eligible) {
     throw new Error(`Gemini 제출 체크포인트가 현재 실행과 안전하게 결속되지 않습니다 (${recoveryDecision.reason}). 중복 생성을 막기 위해 새 요청을 전송하지 않습니다.`);
   }
 
-  const browser = await connectBrowser(config, {
+  const browser = await connectBrowserFn(config, {
     version,
+    policy: launchPolicy,
+    runtimeAttestation: true,
+    expectedRuntimeProofHash: observedRuntime.proofHash,
     resumeTarget: recoveryDecision.eligible ? recoveryDecision.checkpoint : null
   });
+  if (browser.runtimeProofHash !== observedRuntime.proofHash) {
+    await browser.close({
+      preserveTarget: recoveryDecision.eligible,
+      forceFreshTargetCleanup: !recoveryDecision.eligible
+    }).catch(() => {});
+    throw new Error("Gemini Chrome runtime이 target 연결 중 변경되었습니다. 새 요청을 전송하지 않습니다.");
+  }
   const previousRecoveryAttempts = Array.isArray(previousGeneration?.recoveryAttempts)
     ? previousGeneration.recoveryAttempts.map((attempt) => attempt?.completedAt ? attempt : {
       ...attempt,
@@ -1819,7 +3275,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     : [];
   const previousSegments = new Map((previousGeneration?.segments || []).map((segment) => [segment.index, segment]));
   const generation = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     jobId: job.id,
     provider: "gemini-browser",
     sessionBinding,
@@ -1857,10 +3313,15 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       ? previousGeneration.recoveredPendingSegments
       : [],
     segments: [],
-    rejectedResumes: []
+    rejectedResumes: [],
+    providerRequestSentThisRun: false,
+    inheritedProviderSubmission: false,
+    submissionRunIds: []
   };
   await mkdir(clipsDir, { recursive: true });
-  const bindingMatches = previousGeneration?.resumeRequestHash === resumeRequestHash
+  const bindingMatches = previousGeneration?.requestHash === requestHash
+    && previousGeneration?.scriptHash === scriptHash
+    && previousGeneration?.resumeRequestHash === resumeRequestHash
     && previousGeneration?.resumeScriptHash === resumeScriptHash;
   const resumeSessionMatches = previousGeneration?.provider === "gemini-browser"
     && previousGeneration.providerDecisionHash === providerDecisionHash
@@ -1885,22 +3346,22 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       && segment.path === segment.output
     ))
   );
-  const canResumePartial = ["failed", "running"].includes(previousGeneration?.status)
-    && Array.isArray(previousGeneration.segments)
-    && previousGeneration.segments.length > 0
+  const canResumePartial = partialResumePreflight.required
     && bindingMatches
     && resumeSessionMatches
     && previousSegmentsBound;
   let preserveTarget = false;
 
   const completeSegment = async ({ index, segment, target, prompt, acknowledgement, bytes, recovered = false, recoverySource = null }) => {
-    await writeFile(target, bytes);
-    if (!(await clipMatchesFormat(target, job.format))) {
-      await unlink(target).catch(() => {});
-      throw new Error(`Gemini가 ${job.format === "vertical" ? "세로 9:16" : "가로 16:9"} 비율의 영상을 반환하지 않았습니다.`);
-    }
+    const publishDurableGeminiClipFn = dependencies.publishDurableGeminiClipFn || publishDurableGeminiClip;
+    const publishedClip = await publishDurableGeminiClipFn({ targetPath: target, bytes, format: job.format });
     const path = `clips/${String(index).padStart(2, "0")}.mp4`;
     const providerPromptBinding = providerPromptBindingForSegment(segment, "gemini-browser");
+    const pendingBeforeCompletion = generation.pendingSegment;
+    const targetConversation = geminiTargetConversationLineage(
+      pendingBeforeCompletion?.targetId,
+      pendingBeforeCompletion?.conversationUrl
+    );
     const completedSegment = {
       index,
       runId: job.runId || null,
@@ -1914,26 +3375,29 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
       promptHash: hashJson({ prompt }),
       providerVisualPromptHash: providerPromptBinding.providerVisualPromptHash,
       shotPattern: providerPromptBinding.shotPattern,
+      targetConversationLineage: targetConversation.lineage,
+      targetConversationLineageHash: targetConversation.lineageHash,
       submittedToProvider: true,
+      ...geminiSegmentSubmissionLineage(recovered ? previousGeneration : null, recovered !== true),
       submissionAcknowledgement: acknowledgement,
       path,
       output: path,
-      sha256: await hashFile(target).catch(() => null),
+      sha256: publishedClip.sha256,
       providerDecisionHash,
       providerAttestationHash,
       ...(recovered ? {
         recovered: true,
-        sourceRunId: recoverySource?.submissionRunId || recoverySource?.runId || null,
         sourceSubmittedAt: recoverySource?.submittedAt || null
       } : {})
     };
-    const pendingBeforeCompletion = generation.pendingSegment;
     generation.segments.push(completedSegment);
+    refreshGeminiSubmissionSummary(generation);
     generation.pendingSegment = null;
     try {
       await writeGeminiGenerationCheckpoint(generationPath, generation);
     } catch (error) {
       generation.segments.pop();
+      refreshGeminiSubmissionSummary(generation);
       generation.pendingSegment = pendingBeforeCompletion;
       throw error;
     }
@@ -1951,6 +3415,10 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
         && existsSync(target)
         && await hashFile(target).catch(() => null) === previousSegment.sha256;
       const existingFormatMatches = existingHashMatches ? await clipMatchesFormat(target, job.format) : false;
+      const mustReusePriorSegment = canResumePartial && segmentNumber <= previousGeneration.segments.length;
+      if (mustReusePriorSegment && (!existingHashMatches || !existingFormatMatches)) {
+        throw new Error(`${segmentNumber}번 기존 Gemini 완료 클립이 사전 검증 이후 변경되었습니다. 새 요청을 전송하지 않습니다.`);
+      }
       if (existingHashMatches && existingFormatMatches) {
         const path = `clips/${String(segmentNumber).padStart(2, "0")}.mp4`;
         generation.segments.push({
@@ -1963,8 +3431,8 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
           resumeScriptHash,
           path,
           output: path,
-          submissionRunId: previousSegment.submissionRunId || previousSegment.sourceRunId || previousGeneration.runId,
-          sourceRunId: previousSegment.sourceRunId || previousGeneration.runId,
+          submissionRunId: previousSegment.submissionRunId,
+          ...geminiSegmentSubmissionLineage(previousGeneration, false),
           sourceRequestHash: previousGeneration.requestHash,
           sourceScriptHash: previousGeneration.scriptHash,
           resumeHops: [
@@ -1975,6 +3443,7 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
           providerAttestationHash,
           resumed: true
         });
+        refreshGeminiSubmissionSummary(generation);
         await onProgress(Math.round((segmentNumber / script.segments.length) * 100), `${segmentNumber}/${script.segments.length} 기존 Gemini 클립을 재사용했습니다.`);
         continue;
       }
@@ -2231,12 +3700,17 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   } catch (error) {
     preserveTarget = Boolean(generation.pendingSegment);
     generation.status = "failed";
-    generation.error = error.message;
-    generation.errorCode = error.code || null;
+    const failureEvidence = createGeminiFailureEvidence(error, { phase: "pipeline" });
+    const safeErrorCode = /^GEMINI_[A-Z0-9_]{1,95}$/.test(String(error.code || ""))
+      ? String(error.code)
+      : "GEMINI_PROVIDER_FAILURE";
+    generation.error = failureEvidence.reasonCode;
+    generation.errorEvidence = failureEvidence;
+    generation.errorCode = safeErrorCode;
     if (error.promptReadinessDiagnostics) {
       generation.promptReadinessFailure = {
         schemaVersion: 1,
-        code: error.code || "GEMINI_PROMPT_NOT_READY",
+        code: safeErrorCode,
         recordedAt: new Date().toISOString(),
         ...error.promptReadinessDiagnostics
       };
@@ -2245,11 +3719,11 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
     if (recoveryAttempt?.runId === (job.runId || null) && !recoveryAttempt.completedAt) {
       recoveryAttempt.completedAt = new Date().toISOString();
       recoveryAttempt.status = "failed";
-      recoveryAttempt.errorCode = error.code || "GEMINI_PENDING_RESULT_FAILURE";
+      recoveryAttempt.errorCode = safeErrorCode;
     }
     if (generation.pendingSegment) {
       generation.pendingSegment.lastFailureAt = new Date().toISOString();
-      generation.pendingSegment.lastFailureCode = error.code || "GEMINI_PENDING_RESULT_FAILURE";
+      generation.pendingSegment.lastFailureCode = safeErrorCode;
       generation.pendingSegment.targetPreservationRequested = true;
     }
     throw error;
@@ -2270,17 +3744,21 @@ export async function generateGeminiClips(job, script, onProgress = async () => 
   }
   return generation;
 }
-export async function startGeminiBrowser(input = {}) {
+export async function startGeminiBrowser(input = {}, options = {}) {
   const config = browserConfig(input);
+  const browserRuntime = createGeminiBrowserRuntime(input, options);
   const policy = resolveGeminiChromeLaunchPolicy();
   let version;
   try {
-    version = await getVersion(config.cdpUrl);
-  } catch {
-    version = await startChrome(config);
+    version = await getVersion(config.cdpUrl, browserRuntime);
+  } catch (error) {
+    if (isGeminiBrowserBoundaryError(error)) throw error;
+    version = await startChrome(config, browserRuntime, policy);
     const startedRuntime = assertGeminiChromeRuntime(version, policy);
+    assertGeminiBrowserRuntimeActive(browserRuntime);
     return { connected: true, started: true, browser: version.Browser || "Chrome", headless: startedRuntime.actualHeadless, requestedHeadless: policy.headless, chromeMajor: startedRuntime.chromeMajor };
   }
-  const runtime = assertGeminiChromeRuntime(version, policy);
-  return { connected: true, started: false, browser: version.Browser || "Chrome", headless: runtime.actualHeadless, requestedHeadless: policy.headless, chromeMajor: runtime.chromeMajor };
+  const attestedRuntime = assertGeminiChromeRuntime(version, policy);
+  assertGeminiBrowserRuntimeActive(browserRuntime);
+  return { connected: true, started: false, browser: version.Browser || "Chrome", headless: attestedRuntime.actualHeadless, requestedHeadless: policy.headless, chromeMajor: attestedRuntime.chromeMajor };
 }

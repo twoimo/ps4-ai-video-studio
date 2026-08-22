@@ -1,6 +1,5 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { constants as fsConstants, openSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   AHP_CRITERIA,
   canonicalJsonHash,
@@ -9,10 +8,32 @@ import {
   committeeEvidenceHash,
   validateCommitteeReview
 } from "./quality.mjs";
+import { WORKSPACE_DIR } from "./pipeline.mjs";
+import {
+  appendFileAt,
+  closeFd,
+  createFileAt,
+  mkdirAt,
+  openDirectoryAt,
+  openFileAt,
+  readFdBuffer,
+  replaceFileAt,
+  sameFdIdentity,
+  statFd,
+  syncFd,
+  tryLockExclusive,
+  unlock
+} from "./dirfd.mjs";
 
 export const AUTOMATED_REVIEW_ALGORITHM_VERSION = "deterministic-evidence-panel/v1";
 export const AUTOMATED_REVIEW_PANEL_FAMILY_ID = "ps4-software-review-methods/v1";
 export const AUTOMATED_REVIEW_CHECKPOINT_SCHEMA_VERSION = 1;
+export const AUTOMATED_REVIEW_FILE_POLICY = Object.freeze({
+  checkpointBytes: 4 * 1024 * 1024,
+  journalBytes: 4 * 1024 * 1024,
+  journalLineBytes: 16 * 1024,
+  lockBytes: 0
+});
 
 export const AUTOMATED_REVIEW_METHODS = Object.freeze([
   Object.freeze({
@@ -74,7 +95,7 @@ const RESOLVABLE_REVIEW_BLOCKERS = new Set([
   "콘텐츠 의미 품질은 자동 판정하지 않습니다. VLM 장면 관련성·번인 자막 OCR·ASR 정렬·사실 함의에 대한 사람 또는 별도 검증이 필요합니다."
 ]);
 
-const DEFAULT_CHECKPOINT_ROOT = resolve(import.meta.dirname, "..", "workspace", "automated-review");
+const DEFAULT_CHECKPOINT_ROOT = join(WORKSPACE_DIR, "automated-review");
 const CHECKPOINT_PHASES = new Set([
   "prepared",
   "submitting",
@@ -487,33 +508,325 @@ function safePathSegment(value, label) {
   return segment;
 }
 
+function canonicalCheckpointPath(value) {
+  let path = resolve(String(value || ""));
+  // macOS exposes these fixed system aliases as symlinks. Normalize only the
+  // OS aliases; every user-controlled ancestry component is still traversed
+  // with O_NOFOLLOW below.
+  if (process.platform === "darwin") {
+    if (path === "/var" || path.startsWith("/var/")) path = `/private${path}`;
+    else if (path === "/tmp" || path.startsWith("/tmp/")) path = `/private${path}`;
+  }
+  return path;
+}
+
 export function automatedReviewCheckpointPath(jobId, runId, root = DEFAULT_CHECKPOINT_ROOT) {
-  return join(resolve(root), safePathSegment(jobId, "jobId"), `${safePathSegment(runId, "runId")}.json`);
+  return join(canonicalCheckpointPath(root), safePathSegment(jobId, "jobId"), `${safePathSegment(runId, "runId")}.json`);
 }
 
-function checkpointJournalPath(path) {
-  return path.replace(/\.json$/, ".jsonl");
-}
-
-export async function readAutomatedReviewCheckpoint(path) {
-  try {
-    const value = JSON.parse(await readFile(path, "utf8"));
-    const { checkpointHash, ...payload } = value || {};
-    if (
-      value?.schemaVersion !== AUTOMATED_REVIEW_CHECKPOINT_SCHEMA_VERSION
-      || !CHECKPOINT_PHASES.has(value.phase)
-      || !value.jobId
-      || !value.runId
-      || checkpointHash !== canonicalJsonHash(payload)
-    ) throw new Error("checkpoint schema가 유효하지 않습니다.");
-    return value;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw new Error(`자동 리뷰 checkpoint를 안전하게 읽지 못했습니다: ${error.message}`);
+function closePinnedDirectories(pinned) {
+  for (const directory of [...(pinned?.directories || [])].reverse()) {
+    try { closeFd(directory.fd); } catch {}
   }
 }
 
-async function persistCheckpoint(path, checkpoint, onTransition = async () => {}) {
+function pinCheckpointDirectory(path, { create = false } = {}) {
+  const target = canonicalCheckpointPath(path);
+  if (target === "/") throw new Error("자동 리뷰 checkpoint root로 filesystem root를 사용할 수 없습니다.");
+  const segments = target.split("/").filter(Boolean);
+  const directories = [];
+  let currentFd = openSync(
+    "/",
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (fsConstants.O_DIRECTORY || 0)
+  );
+  try {
+    directories.push({ segment: null, fd: currentFd, identity: statFd(currentFd) });
+    for (const segment of segments) {
+      let nextFd;
+      try {
+        nextFd = openDirectoryAt(currentFd, segment);
+      } catch (error) {
+        if (!create || error?.code !== "ENOENT") throw error;
+        mkdirAt(currentFd, segment, 0o700);
+        syncFd(currentFd);
+        nextFd = openDirectoryAt(currentFd, segment);
+      }
+      const identity = statFd(nextFd);
+      if (!identity.isDirectory()) {
+        closeFd(nextFd);
+        throw new Error("자동 리뷰 checkpoint ancestry가 directory가 아닙니다.");
+      }
+      directories.push({ segment, fd: nextFd, identity });
+      currentFd = nextFd;
+    }
+    return { target, segments, directories, fd: currentFd, identity: directories.at(-1).identity };
+  } catch (error) {
+    closePinnedDirectories({ directories });
+    throw error;
+  }
+}
+
+function assertCheckpointDirectoryPinned(pinned) {
+  let currentFd = openSync(
+    "/",
+    fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (fsConstants.O_DIRECTORY || 0)
+  );
+  try {
+    if (!sameFdIdentity(pinned.directories[0].identity, statFd(currentFd))) {
+      throw new Error("자동 리뷰 checkpoint filesystem root가 교체되었습니다.");
+    }
+    for (let index = 0; index < pinned.segments.length; index += 1) {
+      const nextFd = openDirectoryAt(currentFd, pinned.segments[index]);
+      closeFd(currentFd);
+      currentFd = nextFd;
+      if (!sameFdIdentity(pinned.directories[index + 1].identity, statFd(currentFd))) {
+        throw new Error("자동 리뷰 checkpoint ancestry가 작업 중 교체되었습니다.");
+      }
+    }
+  } finally {
+    closeFd(currentFd);
+  }
+}
+
+function pinAutomatedReviewBoundary(jobId, runId, checkpointRoot, { create = false } = {}) {
+  const safeJobId = safePathSegment(jobId, "jobId");
+  const safeRunId = safePathSegment(runId, "runId");
+  const root = pinCheckpointDirectory(checkpointRoot, { create });
+  let jobFd = null;
+  try {
+    try {
+      jobFd = openDirectoryAt(root.fd, safeJobId);
+    } catch (error) {
+      if (!create || error?.code !== "ENOENT") throw error;
+      mkdirAt(root.fd, safeJobId, 0o700);
+      syncFd(root.fd);
+      jobFd = openDirectoryAt(root.fd, safeJobId);
+    }
+    const jobIdentity = statFd(jobFd);
+    if (!jobIdentity.isDirectory()) throw new Error("자동 리뷰 checkpoint job entry가 directory가 아닙니다.");
+    const name = `${safeRunId}.json`;
+    return {
+      root,
+      jobId: safeJobId,
+      runId: safeRunId,
+      jobFd,
+      jobIdentity,
+      name,
+      journalName: `${safeRunId}.jsonl`,
+      lockName: `${safeRunId}.lock`,
+      path: join(root.target, safeJobId, name)
+    };
+  } catch (error) {
+    if (jobFd !== null) closeFd(jobFd);
+    closePinnedDirectories(root);
+    throw error;
+  }
+}
+
+function closeAutomatedReviewBoundary(boundary) {
+  if (boundary?.jobFd !== null && boundary?.jobFd !== undefined) {
+    try { closeFd(boundary.jobFd); } catch {}
+  }
+  closePinnedDirectories(boundary?.root);
+}
+
+function assertAutomatedReviewBoundaryPinned(boundary) {
+  assertCheckpointDirectoryPinned(boundary.root);
+  const currentJobFd = openDirectoryAt(boundary.root.fd, boundary.jobId);
+  try {
+    if (!sameFdIdentity(boundary.jobIdentity, statFd(currentJobFd))) {
+      throw new Error("자동 리뷰 checkpoint job directory가 작업 중 교체되었습니다.");
+    }
+  } finally {
+    closeFd(currentJobFd);
+  }
+}
+
+function automatedReviewLockError(message, code = "AUTOMATED_REVIEW_LOCK_INVALID") {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function acquireAutomatedReviewLock(boundary) {
+  let lockFd = null;
+  let acquired = false;
+  try {
+    assertAutomatedReviewBoundaryPinned(boundary);
+    try {
+      lockFd = createFileAt(boundary.jobFd, boundary.lockName, fsConstants.O_RDWR, 0o600, {
+        initialBytes: Buffer.alloc(0)
+      });
+      syncFd(boundary.jobFd);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      lockFd = openFileAt(boundary.jobFd, boundary.lockName, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
+    }
+    const before = statFd(lockFd);
+    if (!before.isFile() || before.nlink !== 1n || before.size !== 0n || (before.mode & 0o777n) !== 0o600n) {
+      throw automatedReviewLockError("자동 리뷰 lock은 비어 있는 single-link regular file이어야 합니다.");
+    }
+    if (!tryLockExclusive(lockFd)) {
+      throw automatedReviewLockError("동일 job/run의 자동 리뷰가 이미 실행 중입니다.", "AUTOMATED_REVIEW_LOCK_BUSY");
+    }
+    acquired = true;
+    const locked = statFd(lockFd);
+    if (!locked.isFile() || locked.nlink !== 1n || locked.size !== 0n || (locked.mode & 0o777n) !== 0o600n || !sameCheckpointFileSnapshot(before, locked)) {
+      throw automatedReviewLockError("자동 리뷰 lock inode가 획득 중 변경되었습니다.");
+    }
+    assertAutomatedReviewBoundaryPinned(boundary);
+    const currentFd = openFileAt(boundary.jobFd, boundary.lockName, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    try {
+      const current = statFd(currentFd);
+      if (!current.isFile() || current.nlink !== 1n || current.size !== 0n || (current.mode & 0o777n) !== 0o600n || !sameCheckpointFileSnapshot(locked, current)) {
+        throw automatedReviewLockError("자동 리뷰 lock canonical inode가 획득 중 교체되었습니다.");
+      }
+    } finally {
+      closeFd(currentFd);
+    }
+    return { fd: lockFd, identity: locked };
+  } catch (error) {
+    if (lockFd !== null) {
+      if (acquired) try { unlock(lockFd); } catch {}
+      try { closeFd(lockFd); } catch {}
+    }
+    if (error?.code === "AUTOMATED_REVIEW_LOCK_BUSY" || error?.code === "AUTOMATED_REVIEW_LOCK_INVALID") throw error;
+    throw automatedReviewLockError(`자동 리뷰 lock을 안전하게 획득하지 못했습니다 (${error.message}).`);
+  }
+}
+
+function assertAutomatedReviewLockPinned(boundary, lock = boundary?.automatedReviewLock) {
+  if (!lock) throw automatedReviewLockError("자동 리뷰 lock이 획득되지 않았습니다.");
+  assertAutomatedReviewBoundaryPinned(boundary);
+  const held = statFd(lock.fd);
+  const currentFd = openFileAt(boundary.jobFd, boundary.lockName, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  try {
+    const current = statFd(currentFd);
+    if (
+      !held.isFile()
+      || held.nlink !== 1n
+      || held.size !== 0n
+      || (held.mode & 0o777n) !== 0o600n
+      || (current.mode & 0o777n) !== 0o600n
+      || !sameCheckpointFileSnapshot(lock.identity, held)
+      || !sameCheckpointFileSnapshot(held, current)
+    ) throw automatedReviewLockError("자동 리뷰 lock canonical inode가 보유 중 교체되었습니다.");
+    return held;
+  } finally {
+    closeFd(currentFd);
+  }
+}
+
+function releaseAutomatedReviewLock(boundary, lock) {
+  if (!lock) return;
+  try {
+    assertAutomatedReviewLockPinned(boundary, lock);
+    unlock(lock.fd);
+  } finally {
+    closeFd(lock.fd);
+  }
+}
+
+function sameCheckpointFileSnapshot(left, right) {
+  return Boolean(left && right
+    && sameFdIdentity(left, right)
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs);
+}
+
+function checkpointLeafIdentity(boundary, name, maximumBytes, { allowMissing = false } = {}) {
+  let fd = null;
+  try {
+    fd = openFileAt(boundary.jobFd, name, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  } catch (error) {
+    if (allowMissing && error?.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const identity = statFd(fd);
+    if (!identity.isFile() || identity.nlink !== 1n || identity.size > BigInt(maximumBytes)) {
+      throw new Error("자동 리뷰 checkpoint leaf가 bounded single-link regular file이 아닙니다.");
+    }
+    return identity;
+  } finally {
+    closeFd(fd);
+  }
+}
+
+function decodeCheckpointJson(bytes) {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return JSON.parse(text);
+}
+
+function checkpointValue(bytes) {
+  const value = decodeCheckpointJson(bytes);
+  const { checkpointHash, ...payload } = value || {};
+  if (
+    value?.schemaVersion !== AUTOMATED_REVIEW_CHECKPOINT_SCHEMA_VERSION
+    || !CHECKPOINT_PHASES.has(value.phase)
+    || !value.jobId
+    || !value.runId
+    || checkpointHash !== canonicalJsonHash(payload)
+  ) throw new Error("checkpoint schema가 유효하지 않습니다.");
+  return value;
+}
+
+async function readCheckpointFromBoundary(boundary) {
+  await assertAutomatedReviewBoundaryPinned(boundary);
+  let fd = null;
+  try {
+    fd = openFileAt(boundary.jobFd, boundary.name, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const before = statFd(fd);
+    if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(AUTOMATED_REVIEW_FILE_POLICY.checkpointBytes)) {
+      throw new Error("checkpoint가 bounded single-link regular file이 아닙니다.");
+    }
+    const bytes = readFdBuffer(fd, { maxBytes: AUTOMATED_REVIEW_FILE_POLICY.checkpointBytes });
+    const after = statFd(fd);
+    const current = checkpointLeafIdentity(boundary, boundary.name, AUTOMATED_REVIEW_FILE_POLICY.checkpointBytes);
+    if (!sameCheckpointFileSnapshot(before, after) || !sameCheckpointFileSnapshot(after, current)) {
+      throw new Error("checkpoint가 읽는 동안 교체되었습니다.");
+    }
+    await assertAutomatedReviewBoundaryPinned(boundary);
+    return checkpointValue(bytes);
+  } finally {
+    closeFd(fd);
+  }
+}
+
+export async function readAutomatedReviewCheckpoint(path, options = {}) {
+  let ownedBoundary = null;
+  try {
+    let boundary = options.boundary || null;
+    if (!boundary) {
+      const canonicalPath = canonicalCheckpointPath(path);
+      const name = basename(canonicalPath);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{5,160}\.json$/u.test(name)) {
+        throw new Error("checkpoint 파일 이름이 유효하지 않습니다.");
+      }
+      const runId = name.slice(0, -".json".length);
+      const jobId = basename(dirname(canonicalPath));
+      const root = dirname(dirname(canonicalPath));
+      ownedBoundary = pinAutomatedReviewBoundary(jobId, runId, root);
+      if (ownedBoundary.path !== canonicalPath) throw new Error("checkpoint 경로가 canonical root/job/run 경계와 일치하지 않습니다.");
+      boundary = ownedBoundary;
+    }
+    return await readCheckpointFromBoundary(boundary);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw new Error(`자동 리뷰 checkpoint를 안전하게 읽지 못했습니다: ${error.message}`);
+  } finally {
+    closeAutomatedReviewBoundary(ownedBoundary);
+  }
+}
+
+async function persistCheckpoint(boundary, checkpoint, onTransition = async () => {}) {
+  assertAutomatedReviewLockPinned(boundary);
   const { checkpointHash: _previousCheckpointHash, ...checkpointPayload } = checkpoint;
   const payload = {
     ...checkpointPayload,
@@ -522,11 +835,35 @@ async function persistCheckpoint(path, checkpoint, onTransition = async () => {}
     updatedAt: checkpoint.updatedAt || new Date().toISOString()
   };
   const value = { ...payload, checkpointHash: canonicalJsonHash(payload) };
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`;
-  await writeFile(temporary, JSON.stringify(value, null, 2));
-  await rename(temporary, path);
-  await appendFile(checkpointJournalPath(path), `${JSON.stringify({ phase: value.phase, at: value.updatedAt, jobId: value.jobId, runId: value.runId, revisionId: value.revisionId || null, evidenceHash: value.evidenceHash || null })}\n`);
+  const bytes = Buffer.from(JSON.stringify(value, null, 2));
+  if (bytes.byteLength > AUTOMATED_REVIEW_FILE_POLICY.checkpointBytes) {
+    throw new Error("자동 리뷰 checkpoint가 byte limit을 초과했습니다.");
+  }
+  const journalLine = Buffer.from(`${JSON.stringify({ phase: value.phase, at: value.updatedAt, jobId: value.jobId, runId: value.runId, revisionId: value.revisionId || null, evidenceHash: value.evidenceHash || null })}\n`);
+  if (journalLine.byteLength > AUTOMATED_REVIEW_FILE_POLICY.journalLineBytes) {
+    throw new Error("자동 리뷰 checkpoint journal record가 byte limit을 초과했습니다.");
+  }
+  await assertAutomatedReviewBoundaryPinned(boundary);
+  const expectedIdentity = checkpointLeafIdentity(
+    boundary,
+    boundary.name,
+    AUTOMATED_REVIEW_FILE_POLICY.checkpointBytes,
+    { allowMissing: true }
+  );
+  checkpointLeafIdentity(
+    boundary,
+    boundary.journalName,
+    AUTOMATED_REVIEW_FILE_POLICY.journalBytes,
+    { allowMissing: true }
+  );
+  replaceFileAt(boundary.jobFd, boundary.name, bytes, { mode: 0o600, expectedIdentity });
+  appendFileAt(boundary.jobFd, boundary.journalName, journalLine, {
+    mode: 0o600,
+    maxBytes: AUTOMATED_REVIEW_FILE_POLICY.journalBytes
+  });
+  syncFd(boundary.jobFd);
+  await assertAutomatedReviewBoundaryPinned(boundary);
+  assertAutomatedReviewLockPinned(boundary);
   await onTransition({ phase: value.phase, jobId: value.jobId, runId: value.runId, revisionId: value.revisionId || null, evidenceHash: value.evidenceHash || null });
   return value;
 }
@@ -561,10 +898,11 @@ function checkpointResultKind(checkpoint) {
           : "submission-unknown";
 }
 
-async function reconcileSubmission({ api, jobId, checkpoint, checkpointPath, onTransition, now, sleepFn, recoveryPollMs, maxRecoveryPolls }) {
+async function reconcileSubmission({ api, jobId, checkpoint, checkpointBoundary, onTransition, now, sleepFn, recoveryPollMs, maxRecoveryPolls }) {
   let lastIntegrityError = null;
   for (let attempt = 0; attempt < Math.max(1, maxRecoveryPolls); attempt += 1) {
     try {
+      assertAutomatedReviewLockPinned(checkpointBoundary);
       const [job, quality, history] = await Promise.all([
         api(`/api/jobs/${encodeURIComponent(jobId)}`),
         api(`/api/jobs/${encodeURIComponent(jobId)}/quality`),
@@ -575,7 +913,7 @@ async function reconcileSubmission({ api, jobId, checkpoint, checkpointPath, onT
         : null;
       if (sealed) {
         const phase = sealed.status === "passed" && sealed.semanticGate === true ? "sealed_completed" : "sealed_needs_improvement";
-        const next = await persistCheckpoint(checkpointPath, {
+        const next = await persistCheckpoint(checkpointBoundary, {
           ...checkpoint,
           phase,
           updatedAt: now(),
@@ -594,7 +932,7 @@ async function reconcileSubmission({ api, jobId, checkpoint, checkpointPath, onT
     if (attempt + 1 < maxRecoveryPolls) await sleepFn(recoveryPollMs);
   }
   if (lastIntegrityError) {
-    const next = await persistCheckpoint(checkpointPath, {
+    const next = await persistCheckpoint(checkpointBoundary, {
       ...checkpoint,
       phase: "reconciliation_required",
       updatedAt: now(),
@@ -626,7 +964,7 @@ export async function runAutomatedQualityReview({
   jobId,
   api,
   checkpointPath = null,
-  checkpointRoot = DEFAULT_CHECKPOINT_ROOT,
+  checkpointRoot = null,
   onTransition = async () => {},
   now = () => new Date().toISOString(),
   sleepFn = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)),
@@ -637,23 +975,48 @@ export async function runAutomatedQualityReview({
   let job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
   if (job.status === "completed") return { kind: "completed", job, skipped: "already-completed" };
   if (job.status !== "needs-improvement" || !job.runId) return { kind: "not-eligible", job, skipped: "job-status" };
+  const explicitPath = checkpointPath ? canonicalCheckpointPath(checkpointPath) : null;
+  const effectiveRoot = checkpointRoot
+    ? canonicalCheckpointPath(checkpointRoot)
+    : explicitPath
+      ? dirname(dirname(explicitPath))
+      : canonicalCheckpointPath(DEFAULT_CHECKPOINT_ROOT);
+  const path = automatedReviewCheckpointPath(jobId, job.runId, effectiveRoot);
+  if (explicitPath && explicitPath !== path) {
+    throw new Error("명시적 자동 리뷰 checkpoint 경로가 canonical root/job/run.json 경계와 일치하지 않습니다.");
+  }
+  const checkpointBoundary = pinAutomatedReviewBoundary(jobId, job.runId, effectiveRoot, { create: true });
+  let automatedReviewLock = null;
+  try {
+  automatedReviewLock = acquireAutomatedReviewLock(checkpointBoundary);
+  checkpointBoundary.automatedReviewLock = automatedReviewLock;
+  assertAutomatedReviewLockPinned(checkpointBoundary);
+  const lockedJob = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+  assertAutomatedReviewLockPinned(checkpointBoundary);
+  if (lockedJob?.status === "completed") return { kind: "completed", job: lockedJob, skipped: "completed-before-lock" };
+  if (lockedJob?.id !== jobId || lockedJob?.runId !== job.runId || lockedJob?.status !== "needs-improvement") {
+    const error = new Error("자동 리뷰 lock 획득 전후 jobId·runId·상태가 변경되었습니다.");
+    error.code = "AUTOMATED_REVIEW_JOB_CHANGED";
+    throw error;
+  }
+  job = lockedJob;
   let quality = await api(`/api/jobs/${encodeURIComponent(jobId)}/quality`);
+  assertAutomatedReviewLockPinned(checkpointBoundary);
   if (quality.jobId !== jobId || quality.runId !== job.runId) throw new Error("품질 응답이 현재 jobId·runId에 결속되어 있지 않습니다.");
-  const path = checkpointPath || automatedReviewCheckpointPath(jobId, job.runId, checkpointRoot);
-  let checkpoint = await readAutomatedReviewCheckpoint(path);
+  let checkpoint = await readAutomatedReviewCheckpoint(path, { boundary: checkpointBoundary });
   const currentFingerprint = qualityReviewFingerprint({ quality, evidenceHashes: quality.metrics?.evidenceHashes });
   const currentEvidenceHash = committeeEvidenceHash(normalizedEvidenceHashes(quality.metrics?.evidenceHashes));
   if (checkpoint) {
     validateCheckpointIdentity(checkpoint, jobId, job.runId);
     if (["submitting", "submission_unknown", "reconciliation_required", "sealed_completed", "sealed_needs_improvement"].includes(checkpoint.phase)) {
-      const reconciled = await reconcileSubmission({ api, jobId, checkpoint, checkpointPath: path, onTransition, now, sleepFn, recoveryPollMs, maxRecoveryPolls });
+      const reconciled = await reconcileSubmission({ api, jobId, checkpoint, checkpointBoundary, onTransition, now, sleepFn, recoveryPollMs, maxRecoveryPolls });
       if (reconciled) return reconciled;
       if (checkpoint.phase === "sealed_needs_improvement" && checkpoint.evidenceHash === currentEvidenceHash && checkpoint.qualityFingerprint === currentFingerprint) {
         return { kind: "needs-remediation", checkpoint, job, quality, skipped: "unchanged-evidence" };
       }
       if (checkpoint.phase === "sealed_completed") throw new Error("completed checkpoint에 대응하는 봉인 revision을 찾지 못했습니다.");
       if (["submitting", "submission_unknown", "reconciliation_required"].includes(checkpoint.phase)) {
-        const next = checkpoint.phase === "reconciliation_required" ? checkpoint : await persistCheckpoint(path, {
+        const next = checkpoint.phase === "reconciliation_required" ? checkpoint : await persistCheckpoint(checkpointBoundary, {
           ...checkpoint,
           phase: "submission_unknown",
           updatedAt: now(),
@@ -669,6 +1032,7 @@ export async function runAutomatedQualityReview({
 
   let refreshes = 0;
   const prepareAndBuild = async () => {
+    assertAutomatedReviewLockPinned(checkpointBoundary);
     const prepared = await postJson(api, `/api/jobs/${encodeURIComponent(jobId)}/quality/revisions/prepare`, { runId: job.runId });
     const context = prepared?.revisionContext;
     if (!context || context.jobId !== jobId || context.runId !== job.runId) throw new Error("prepare 응답의 revision context가 현재 작업과 일치하지 않습니다.");
@@ -678,7 +1042,7 @@ export async function runAutomatedQualityReview({
     }
     const analysis = analyzeAutomatedPanel({ quality, evidenceHashes: preparedHashes, revisionContext: context });
     if (!analysis.eligible) {
-      const blocked = await persistCheckpoint(path, {
+      const blocked = await persistCheckpoint(checkpointBoundary, {
         phase: "preflight_blocked",
         jobId,
         runId: job.runId,
@@ -696,7 +1060,7 @@ export async function runAutomatedQualityReview({
     const review = buildAutomatedCommitteeReview({ jobId, runId: job.runId, quality, evidenceHashes: preparedHashes, revisionContext: context });
     validateAutomatedCommitteeReview(review, { quality, revisionContext: context });
     const request = { revisionContext: context, review };
-    const preparedCheckpoint = await persistCheckpoint(path, {
+    const preparedCheckpoint = await persistCheckpoint(checkpointBoundary, {
       phase: "prepared",
       jobId,
       runId: job.runId,
@@ -727,15 +1091,16 @@ export async function runAutomatedQualityReview({
   }
 
   while (prepared) {
-    const submitting = await persistCheckpoint(path, {
+    const submitting = await persistCheckpoint(checkpointBoundary, {
       ...prepared.preparedCheckpoint,
       phase: "submitting",
       updatedAt: now()
     }, onTransition);
     try {
+      assertAutomatedReviewLockPinned(checkpointBoundary);
       const response = await postJson(api, `/api/jobs/${encodeURIComponent(jobId)}/quality/revisions/submit`, prepared.request);
       const phase = verifySubmitResponse(response, prepared.context);
-      const sealed = await persistCheckpoint(path, {
+      const sealed = await persistCheckpoint(checkpointBoundary, {
         ...submitting,
         phase,
         updatedAt: now(),
@@ -746,14 +1111,14 @@ export async function runAutomatedQualityReview({
       return { kind: checkpointResultKind(sealed), checkpoint: sealed, ...response };
     } catch (error) {
       const ambiguous = errorStatus(error) == null || errorStatus(error) >= 500;
-      const failed = await persistCheckpoint(path, {
+      const failed = await persistCheckpoint(checkpointBoundary, {
         ...submitting,
         phase: ambiguous ? "submission_unknown" : "submission_rejected",
         updatedAt: now(),
         lastError: errorText(error),
         responseStatus: errorStatus(error)
       }, onTransition);
-      const reconciled = await reconcileSubmission({ api, jobId, checkpoint: failed, checkpointPath: path, onTransition, now, sleepFn, recoveryPollMs, maxRecoveryPolls });
+      const reconciled = await reconcileSubmission({ api, jobId, checkpoint: failed, checkpointBoundary, onTransition, now, sleepFn, recoveryPollMs, maxRecoveryPolls });
       if (reconciled) return reconciled;
       if (!ambiguous && staleContextError(error) && refreshes < 1) {
         refreshes += 1;
@@ -772,4 +1137,11 @@ export async function runAutomatedQualityReview({
     }
   }
   throw new Error("자동 리뷰 제출 상태를 결정하지 못했습니다.");
+  } finally {
+    try {
+      releaseAutomatedReviewLock(checkpointBoundary, automatedReviewLock);
+    } finally {
+      closeAutomatedReviewBoundary(checkpointBoundary);
+    }
+  }
 }
