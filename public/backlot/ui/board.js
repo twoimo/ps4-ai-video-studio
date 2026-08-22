@@ -1072,8 +1072,6 @@ function render() {
   const main = el("div", { class: "main-col" });
   const approvalReview = renderApprovalReview(s);
   if (approvalReview) main.append(approvalReview);
-  const script = renderScriptCard(s);
-  if (script) main.append(script);
   const aside = el("aside", {});
   const decisions = renderDecisions(s);
   const activity = renderActivity(s);
@@ -1086,7 +1084,7 @@ function render() {
   const found = renderFoundMedia(s);
   const renders = renderRenders(s);
 
-  if (approvalReview || script || decisions || activity) {
+  if (approvalReview || decisions || activity) {
     for (const section of [storyboard, found, renders]) {
       if (section) main.append(section);
     }

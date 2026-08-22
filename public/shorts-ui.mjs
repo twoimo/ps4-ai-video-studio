@@ -145,6 +145,8 @@ export function inspectVideoDownloads(job = {}) {
   const picks = [];
   const master = artifacts.find((artifact) => artifact?.url && /(?:^|\/)master\.mp4$/i.test(artifact.name || ""));
   if (master) picks.push({ ...master, label: "마스터", href: href(master) });
+  const final = !master && artifacts.find((artifact) => artifact?.url && /(?:^|\/)final\.mp4$/i.test(artifact.name || ""));
+  if (final) picks.push({ ...final, label: "최종", href: href(final) });
   const parts = artifacts
     .filter((artifact) => artifact?.url && (/(?:^|\/)parts\/part-\d+\.mp4$/i.test(artifact.name || "") || artifact.kind === "part"))
     .sort((left, right) => Number((left.name || "").match(/part-(\d+)/i)?.[1] || 0) - Number((right.name || "").match(/part-(\d+)/i)?.[1] || 0));

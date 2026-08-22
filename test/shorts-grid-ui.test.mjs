@@ -18,6 +18,7 @@ import {
   shortUploadPack
 } from "../public/shorts-ui.mjs";
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
+import { machineSheetHtml, pipelineStages, PIPE_EDIT_MISSING, PIPE_PAUSED, PIPE_SCRIPT_MISSING } from "../public/studio-pipe.mjs";
 
 const publicDir = join(process.cwd(), "public");
 
@@ -78,7 +79,10 @@ test("short cards map status, hook still, and duration", () => {
 test("studio HTML is a shorts grid first with factory default create", async () => {
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
   const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
   const home = html.slice(html.indexOf('id="shorts"'), html.indexOf('id="create-overlay"'));
   const shortsIndex = html.indexOf('id="shorts"');
   const gridIndex = html.indexOf('id="shorts-grid"');
@@ -99,21 +103,27 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(html.includes("id=\"close-short\""), false);
   assert.match(html, /목소리 미리 듣기/);
   assert.equal(html.includes("완벽"), false);
-  assert.match(html, /option value="grok-imagine" selected/);
+  assert.match(html, /option value="grok-imagine" selected>Grok Imagine</);
+  assert.equal(html.includes("Grok Imagine 공장"), false);
   assert.match(html, /<details class="advanced-create"/);
   assert.match(html, /<summary>고급<\/summary>/);
+  const advanced = html.slice(html.indexOf('<details class="advanced-create"'), html.indexOf("</details>", html.indexOf('<details class="advanced-create"')));
+  assert.match(advanced, /Grok Imagine으로 그림과 움직임을 만듭니다\./);
+  assert.equal(/PATH|OAuth|Gemini|공장/.test(advanced), false);
+  assert.match(app, /Grok Imagine으로 그림과 움직임을 만듭니다\./);
+  assert.equal(/PATH의 grok|SuperGrok OAuth|Gemini로 대체/.test(app), false);
   assert.equal((home.match(/id="create-tile"/g) || []).length, 1);
   assert.match(home, /id="create-tile"[^>]*aria-label="새 쇼츠"/);
   assert.equal(home.includes("short-card-body"), false);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.library\s*\{[^}]*padding:\s*8px 0 0/);
-  assert.match(css, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
+  assert.match(css, /@import url\('\.\/studio-chrome\.css'\)/);
   assert.match(css, /--rows:\s*1/);
   assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
-  assert.match(css, /--n:\s*4/);
   assert.equal(css.includes("round(up"), false);
-  assert.match(css, /grid-template-columns:\s*repeat\(var\(--n\),\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(var\(--col\),\s*1fr\)\)/);
   assert.match(css, /grid-auto-rows:\s*auto/);
   assert.match(css, /\.shorts-grid\s*\{[^}]*overflow:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
@@ -126,6 +136,15 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
   assert.equal(css.includes("grid-template-rows: repeat(var(--n)"), false);
   assert.equal(/repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/.test(css), false);
+  assert.match(html, /class="short-card short-skeleton"/);
+  assert.equal((html.match(/class="short-card short-skeleton"/g) || []).length, 8);
+  assert.match(app, /jobsLoaded/);
+  assert.match(app, /from "\.\/studio-pipe\.mjs"/);
+  assert.match(app, /from "\.\/studio-chrome\.mjs"/);
+  assert.match(pipe, /export function pipelineStages/);
+  assert.match(pipe, /export function renderStudioPipe/);
+  assert.match(chrome, /export function paintStudioPipe/);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
   assert.equal(css.includes("short-card-body"), false);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
@@ -166,11 +185,16 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /contextmenu/);
   assert.match(app, /#studio-chips/);
   assert.match(app, /function renderChips/);
-  assert.match(app, /만드는 과정/);
-  assert.match(app, /label: "대본"/);
-  assert.match(app, /label: "그림"/);
-  assert.match(app, /label: "움직임"/);
-  assert.match(app, /label: "편집"/);
+  assert.match(app, /function renderMachineSheet/);
+  assert.match(app, /machineSheetHtml\(state\.health/);
+  assert.match(pipe, /export function pipelineStages/);
+  assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
+  assert.equal(app.includes("대본 ${grok ? \"준비\" : \"없음\"}"), false);
+  assert.match(pipe, /만드는 과정/);
+  assert.match(pipe, /label: "대본"/);
+  assert.match(pipe, /label: "그림"/);
+  assert.match(pipe, /label: "움직임"/);
+  assert.match(pipe, /label: "편집"/);
   assert.equal(app.includes("그림 · 멈춤"), false);
   assert.equal(app.includes("움직임 · 멈춤"), false);
   assert.equal(app.includes("크레딧 부족"), false);
@@ -187,6 +211,13 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /createWatchPlayer/);
   assert.equal(app.includes('class="watch-dl"'), false);
   assert.match(html, /id="studio-chips"/);
+  assert.doesNotMatch(html, /id="studio-chips"[^>]*hidden/);
+  assert.match(html, /class="studio-pipe"/);
+  assert.match(html, />대본</);
+  assert.match(html, />그림</);
+  assert.match(html, />움직임</);
+  assert.match(html, />편집</);
+  assert.equal(html.includes("그림 · 멈춤"), false);
   assert.match(html, /id="feed-banner"/);
   assert.ok(html.indexOf('id="home-brand"') < html.indexOf('id="studio-chips"'));
   assert.ok(html.indexOf('id="studio-chips"') < html.indexOf('class="studio-chrome-actions"'));
@@ -273,6 +304,7 @@ test("library and overlays fill the viewport instead of a phone column", async (
 test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const homeEnd = html.indexOf('id="create-overlay"');
   const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
@@ -320,24 +352,24 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(html, /id="watch-feed" hidden/);
   assert.match(html, /id="shorts">/);
   assert.match(home, /id="create-tile"/);
-  assert.match(css, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
-  assert.match(css, /\.studio-chrome\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
-  assert.match(css, /\.studio-chips\s*\{[^}]*justify-self:\s*center/);
-  assert.match(css, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
-  assert.match(css, /\.studio-chip\s*\{[^}]*border:\s*0/);
-  assert.match(css, /\.studio-chip\s*\{[^}]*border-radius:\s*0/);
-  assert.match(css, /\.studio-chip\.pause\s*\{[^}]*color:\s*var\(--dim\)/);
-  assert.equal(/\.studio-chip\s*\{[^}]*border-radius:\s*999px/.test(css), false);
-  assert.equal(/\.studio-chips\s*\{[^}]*flex:\s*1/.test(css), false);
-  assert.match(css, /\.brand-mark\s*\{[^}]*display:\s*grid/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*width:\s*24px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*height:\s*24px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*aspect-ratio:\s*1\s*\/\s*1/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*flex:\s*0 0 24px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*overflow:\s*hidden/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent\)/);
-  assert.equal(/\.brand-mark\s*\{[^}]*background:\s*var\(--accent\)/.test(css), false);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
+  assert.match(chromeCss, /\.studio-chips\s*\{[^}]*justify-self:\s*center/);
+  assert.match(chromeCss, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border:\s*0/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border-radius:\s*0/);
+  assert.match(chromeCss, /\.studio-chip\.pause\s*\{[^}]*color:\s*var\(--dim/);
+  assert.equal(/\.studio-chip\s*\{[^}]*border-radius:\s*999px/.test(chromeCss), false);
+  assert.equal(/\.studio-chips\s*\{[^}]*flex:\s*1/.test(chromeCss), false);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*display:\s*grid/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*place-items:\s*center/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*width:\s*24px/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*height:\s*24px/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*aspect-ratio:\s*1\s*\/\s*1/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*flex:\s*0 0 24px/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent/);
+  assert.equal(/\.brand-mark\s*\{[^}]*background:\s*var\(--accent\)/.test(chromeCss), false);
   assert.equal(home.includes('width="13.6"'), false);
   assert.equal(home.includes('height="19.6"'), false);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
@@ -445,6 +477,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("function renderLiveFactory"), false);
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
   assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
+  assert.match(app, /if \(view === "machine"\) return "#machine"/);
+  assert.match(app, /hash === "machine"/);
+  assert.match(app, /hash === "machine"[\s\S]*setView\("machine"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /hash === "short"/);
@@ -565,10 +600,23 @@ test("completed short lists master chat parts and ASS downloads", () => {
       { name: "chat.mp4", url: "/api/jobs/a/artifacts/chat.mp4" }
     ]
   }).map((item) => item.label), ["마스터", "채팅용"]);
+  assert.deepEqual(inspectVideoDownloads({
+    artifacts: [
+      { name: "final.mp4", url: "/api/jobs/a/artifacts/final.mp4" },
+      { name: "chat.mp4", url: "/api/jobs/a/artifacts/chat.mp4" }
+    ]
+  }).map((item) => item.label), ["최종", "채팅용"]);
+  assert.deepEqual(inspectVideoDownloads({
+    artifacts: [
+      { name: "final.mp4", url: "/api/jobs/a/artifacts/final.mp4" },
+      { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-01.mp4" }
+    ]
+  }).map((item) => item.label), ["최종", "채팅용 1"]);
 });
 
 test("watch inspector saves drafts and freezes regen", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
   const editor = await readFile(join(publicDir, "materials-editor.mjs"), "utf8");
   const materials = await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8");
   const board = await readFile(join(publicDir, "backlot/board.html"), "utf8");
@@ -625,12 +673,18 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /String\(400 \+ 2\)/);
   assert.match(materials, /지금은 다시 못 만들어요/);
   assert.equal(materials.includes("402"), false);
-  assert.match(app, /지금은 그림을 안 만들어요/);
+  assert.match(pipe, /지금은 그림을 안 만들어요/);
+  assert.match(pipe, /대본을 쓸 수 없습니다/);
+  assert.match(pipe, /편집을 할 수 없습니다/);
   assert.match(app, /if \(frozen\) reasons\.push\("지금은 그림을 안 만들어요"\)/);
+  assert.match(app, /machineSheetHtml\(state\.health/);
+  assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
+  assert.equal(pipe.includes("없음"), false);
+  assert.equal(pipe.includes("지금은 다시 못 만들어요"), false);
   assert.equal(app.includes("그림 · 멈춤"), false);
   assert.equal(app.includes("움직임 · 멈춤"), false);
-  assert.match(app, /paused: frozen/);
-  assert.match(app, /if \(paused\) return " pause"/);
+  assert.match(pipe, /paused: frozen/);
+  assert.match(pipe, /if \(paused\) return " pause"/);
   assert.match(app, /function youtubePrepMarkup/);
   assert.equal(editor.includes("youtubePrepMarkup"), false);
   assert.equal(editor.includes("업로드 준비"), false);
@@ -654,6 +708,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(materials.includes("크레딧 부족"), false);
   assert.equal(materials.includes("크레딧 402"), false);
   assert.match(boardCss, /\.wrap\s*\{\s*max-width:\s*1440px/);
+  assert.match(boardCss, /Studio extra: full-width wrap/);
+  assert.match(boardCss, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.doesNotMatch(boardCss, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
   assert.doesNotMatch(boardCss, /@media \(max-width: 720px\)/);
@@ -828,14 +884,41 @@ test("materials fallback captions follow job.lines then captions then script the
   assert.deepEqual(fallbackCaptionPrompts({ captions: true, scriptDraft: "" }).shots, []);
 });
 
+test("machine sheet uses the same frozen and missing copy as chips", () => {
+  const frozen = pipelineStages({ imagine: { frozen: true }, capabilities: {} });
+  assert.deepEqual(frozen.map((stage) => stage.label), ["대본", "그림", "움직임", "편집"]);
+  assert.equal(frozen[0].title, PIPE_SCRIPT_MISSING);
+  assert.equal(frozen[1].title, PIPE_PAUSED);
+  assert.equal(frozen[2].title, PIPE_PAUSED);
+  assert.equal(frozen[3].title, PIPE_EDIT_MISSING);
+  assert.equal(frozen[1].paused, true);
+  const sheet = machineSheetHtml({ imagine: { frozen: true }, capabilities: {} });
+  assert.match(sheet, /대본 대본을 쓸 수 없습니다/);
+  assert.match(sheet, /그림 지금은 그림을 안 만들어요/);
+  assert.match(sheet, /움직임 지금은 그림을 안 만들어요/);
+  assert.match(sheet, /편집 편집을 할 수 없습니다/);
+  assert.equal(sheet.includes("없음"), false);
+  const ready = machineSheetHtml({
+    imagine: { frozen: false },
+    capabilities: { grokCli: true, ffmpeg: true }
+  });
+  assert.match(ready, /대본 준비/);
+  assert.match(ready, /그림 준비/);
+  assert.match(ready, /움직임 준비/);
+  assert.match(ready, /편집 준비/);
+});
+
 test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and wrap.work", async () => {
   const files = [
     await readFile(join(publicDir, "app.js"), "utf8"),
     await readFile(join(publicDir, "index.html"), "utf8"),
     await readFile(join(publicDir, "watch-feed.mjs"), "utf8"),
     await readFile(join(publicDir, "materials-editor.mjs"), "utf8"),
+    await readFile(join(publicDir, "studio-pipe.mjs"), "utf8"),
+    await readFile(join(publicDir, "studio-chrome.mjs"), "utf8"),
     await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8"),
     await readFile(join(publicDir, "backlot/board.html"), "utf8"),
+    await readFile(join(publicDir, "backlot/index.html"), "utf8"),
     await readFile(join(publicDir, "template/index.html"), "utf8"),
     await readFile(join(publicDir, "template/template.js"), "utf8")
   ];
@@ -850,8 +933,8 @@ test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and 
     assert.equal(source.includes("class=\"wrap work\""), false);
   }
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
-  assert.equal(files[4].includes("402"), false);
   assert.equal(files[3].includes("402"), false);
+  assert.equal((await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8")).includes("402"), false);
   assert.match(app, /location\.replace\("\/backlot"\)/);
   assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
 });

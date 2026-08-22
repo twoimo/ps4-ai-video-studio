@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0e14" />
     <title>PS4_JUSTDOIT</title>
+    <link rel="stylesheet" href="/studio-chrome.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -27,7 +28,7 @@
         <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><rect x="3.2" y="3.2" width="17.6" height="17.6" rx="4.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="currentColor" d="M9.4 8.2v7.6L16.6 12z"/></svg></span>
         <h1>PS4_JUSTDOIT</h1>
       </a>
-      <div id="studio-chips" class="studio-chips" hidden aria-label="만드는 과정"></div>
+      <div id="studio-chips" class="studio-chips" aria-label="만드는 과정"><nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정"><button type="button" class="studio-chip warn" data-open-machine title="대본을 쓸 수 없습니다" aria-label="대본을 쓸 수 없습니다">대본</button><span class="studio-pipe-arrow" aria-hidden="true">→</span><button type="button" class="studio-chip pause" data-open-machine title="지금은 그림을 안 만들어요" aria-label="지금은 그림을 안 만들어요">그림</button><span class="studio-pipe-arrow" aria-hidden="true">→</span><button type="button" class="studio-chip pause" data-open-machine title="지금은 그림을 안 만들어요" aria-label="지금은 그림을 안 만들어요">움직임</button><span class="studio-pipe-arrow" aria-hidden="true">→</span><button type="button" class="studio-chip warn" data-open-machine title="편집을 할 수 없습니다" aria-label="편집을 할 수 없습니다">편집</button></nav></div>
       <div class="studio-chrome-actions">
         <a class="library-board-toggle" id="open-board" href="/backlot">보드</a>
         <a class="library-board-toggle" id="open-template" href="/template">템플릿</a>
@@ -43,6 +44,14 @@
         <button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠">
           <div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div>
         </button>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
+        <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
       </div>
     </main>
 
@@ -101,7 +110,7 @@
           </div>
           <details class="advanced-create" id="advanced-create">
             <summary>고급</summary>
-            <p class="form-footnote">월드 슬롯, 다른 생성 소스, 로컬 업로드는 여기에만 있습니다. 공장은 공식 grok CLI만 쓰며 Gemini로 대체하지 않습니다.</p>
+            <p class="form-footnote">월드 슬롯, 다른 생성 소스, 로컬 업로드는 여기에만 있습니다.</p>
             <label class="field-label" for="sources">검증 출처 URL</label>
             <textarea id="sources" rows="2" placeholder="주제에 맞는 공식 출처 URL"></textarea>
             <div id="create-world-slots" class="slot-grid"></div>
@@ -127,11 +136,11 @@
             </div>
             <label class="field-label" for="provider">생성 소스</label>
             <select id="provider" aria-describedby="provider-help">
-              <option value="grok-imagine" selected>Grok Imagine 공장</option>
+              <option value="grok-imagine" selected>Grok Imagine</option>
               <option value="local-video">로컬 영상 모델</option>
               <option value="local">로컬 클립 업로드</option>
             </select>
-            <p id="provider-help" class="form-footnote">Grok Imagine 공장은 PATH의 grok 또는 ~/.grok/bin/grok와 이미 되어 있는 SuperGrok OAuth만 사용합니다. XAI_API_KEY와 grok login/logout은 쓰지 않으며 Gemini로 대체하지 않습니다.</p>
+            <p id="provider-help" class="form-footnote">Grok Imagine으로 그림과 움직임을 만듭니다.</p>
             <div class="toggle-row">
               <label class="toggle-label"><input id="captions" type="checkbox" checked /><span class="toggle"></span><span>한국어 자막 <b class="toggle-state" data-toggle-state="captions">켜짐</b></span></label>
               <label class="toggle-label"><input id="voiceover" type="checkbox" /><span class="toggle"></span><span>macOS 음성 <b class="toggle-state" data-toggle-state="voiceover">꺼짐</b></span></label>

@@ -113,7 +113,11 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(html.includes("id=\"template-overlay\""), false);
   assert.equal(html.includes("id=\"short-overlay\""), false);
   assert.match(page, /class="template-studio" id="template-page"/);
+  assert.match(page, /class="studio-chrome" id="studio-chrome"/);
+  assert.match(page, /id="studio-chips"/);
   assert.match(page, /id="template-root"/);
+  assert.match(page, /class="template-skeleton"/);
+  assert.match(page, /src="\/studio-chrome\.mjs"/);
   assert.match(page, /src="\/template\/template\.js"/);
   assert.match(js, /renderLockedSpec/);
   assert.match(js, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
@@ -136,6 +140,8 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(page.includes("watch-inspect"), false);
   assert.equal(js.includes("watch-inspect"), false);
   assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
+  assert.match(css, /\.template-root\s*\{[^}]*max-width:\s*none/);
+  assert.doesNotMatch(css, /max-width:\s*min\(1120px/);
   assert.equal(css.includes("body.template-open"), false);
   assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(page.includes("쇼츠 공장"), false);

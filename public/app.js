@@ -1,5 +1,7 @@
 import { formatClock, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
+import { machineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
+import { paintStudioPipe } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -25,7 +27,8 @@ const state = {
   watchLockUntil: 0,
   watchSwiping: false,
   createMode: "single",
-  focusOpener: null
+  focusOpener: null,
+  jobsLoaded: false
 };
 
 function escapeHtml(value = "") {
@@ -66,6 +69,7 @@ function hashForView(view) {
   if (view === "create") return "#create";
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "settings") return "#settings";
+  if (view === "machine") return "#machine";
   return "#shorts";
 }
 
@@ -197,6 +201,10 @@ function applyHash() {
   }
   if (hash === "settings") {
     setView("settings", { skipHash: true });
+    return;
+  }
+  if (hash === "machine") {
+    setView("machine", { skipHash: true });
     return;
   }
   if (hash === "watch" || hash.startsWith("watch/")) {
@@ -571,14 +579,14 @@ function patchGridCard(job) {
 
 function renderJobs() {
   const grid = $("#shorts-grid");
-  if (grid) {
+  if (grid && state.jobsLoaded) {
     grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}<div class="feed-sentinel"></div>`;
     $("#create-tile")?.addEventListener("click", openCreate);
     $$(".short-card[data-job-id]").forEach(bindShortCard);
     bindFeedScroll();
     sizeShortsGrid();
-    renderStudioChrome();
   }
+  renderStudioChrome();
   if (state.view === "watch") {
     renderWatchFeed();
     return;
@@ -819,7 +827,8 @@ async function refreshJobs() {
     }
     return job;
   });
-  const structural = previousIds !== nextIds || !document.querySelector("#create-tile");
+  const structural = previousIds !== nextIds || !state.jobsLoaded || !document.querySelector("#create-tile");
+  state.jobsLoaded = true;
   if (structural) renderJobs();
   else {
     state.jobs.forEach(patchGridCard);
@@ -879,7 +888,7 @@ function syncProviderForm() {
   if (factsField) factsField.hidden = provider !== "grok-imagine";
   if (help) {
     help.textContent = provider === "grok-imagine"
-      ? "Grok Imagine 공장은 PATH의 grok 또는 ~/.grok/bin/grok와 이미 되어 있는 SuperGrok OAuth만 사용합니다. XAI_API_KEY와 grok login/logout은 쓰지 않으며 Gemini로 대체하지 않습니다."
+      ? "Grok Imagine으로 그림과 움직임을 만듭니다."
       : provider === "local-video"
         ? "로컬 영상 모델은 설정된 생성기 명령이 필요합니다."
         : "업로드한 로컬 클립만 편집합니다.";
@@ -1013,41 +1022,14 @@ function openMachine(event) {
   setView("machine");
 }
 
-function pipelineChipClass({ ready, blocked, paused }) {
-  if (paused) return " pause";
-  if (blocked) return " danger";
-  if (!ready) return " warn";
-  return " ok";
-}
-
 function renderChips(health = {}) {
-  const grok = Boolean(health.capabilities?.grokCli);
-  const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
-  const pictureReady = grok && !frozen;
-  const pausedTitle = "지금은 그림을 안 만들어요";
-  const stages = [
-    { label: "대본", ready: grok, blocked: false, title: grok ? "대본 · grok CLI 텍스트" : "대본을 쓸 수 없습니다" },
-    { label: "그림", ready: pictureReady, paused: frozen, title: pictureReady ? "그림 · Grok Imagine" : pausedTitle },
-    { label: "움직임", ready: pictureReady, paused: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : pausedTitle },
-    { label: "편집", ready: ffmpeg, blocked: false, title: ffmpeg ? "편집 · ffmpeg" : "편집을 할 수 없습니다" }
-  ];
-  return `<nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정">${stages.map((stage, index) => {
-    const arrow = index ? `<span class="studio-pipe-arrow" aria-hidden="true">→</span>` : "";
-    return `${arrow}<button type="button" class="studio-chip${pipelineChipClass(stage)}" data-open-machine title="${escapeHtml(stage.title)}" aria-label="${escapeHtml(stage.title)}">${stage.label}</button>`;
-  }).join("")}</nav>`;
+  return renderStudioPipe(health);
 }
 
 function renderMachineSheet() {
   const root = $("#machine-root");
   if (!root) return;
-  const health = state.health || {};
-  const grok = Boolean(health.capabilities?.grokCli);
-  const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
-  const picture = grok && !frozen ? "준비" : frozen ? "지금은 그림을 안 만들어요" : "없음";
-  const motion = grok && !frozen ? "준비" : frozen ? "지금은 다시 못 만들어요" : "없음";
-  root.innerHTML = `<h2 id="machine-title">사양</h2><p>대본 ${grok ? "준비" : "없음"} · 그림 ${picture} · 움직임 ${motion} · 편집 ${ffmpeg ? "준비" : "없음"}</p>`;
+  root.innerHTML = machineSheetHtml(state.health || {});
 }
 
 function renderStudioChrome() {
@@ -1057,9 +1039,7 @@ function renderStudioChrome() {
   const frozen = health.imagine?.frozen !== false;
   const chips = $("#studio-chips");
   if (chips) {
-    chips.hidden = false;
-    chips.innerHTML = renderChips(health);
-    chips.querySelectorAll("[data-open-machine]").forEach((button) => button.addEventListener("click", openMachine));
+    paintStudioPipe(document, health, openMachine);
   }
   const banner = $("#feed-banner");
   if (banner) {
@@ -1430,6 +1410,8 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
+    state.jobsLoaded = true;
+    renderJobs();
     showToast(error.message, "error");
   }
 }
