@@ -191,7 +191,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
   assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overscroll-behavior:\s*none/);
+  assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*touch-action:\s*pan-y/);
+  assert.match(css, /body\s*\{[^}]*overscroll-behavior:\s*none/);
   assert.match(chromeCss, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(chromeCss, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*touch-action:\s*pan-y/);
   assert.match(css, /@import url\('\.\/studio-chrome\.css'\)/);
   assert.match(css, /--rows:\s*1/);
   assert.match(css, /--chrome:\s*calc\(52px \+ env\(safe-area-inset-top, 0px\)\)/);
@@ -232,6 +235,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /export function rescrollFocusedField/);
   assert.match(chrome, /overlayLockY/);
   assert.match(chrome, /export function restoreOverlayLockY/);
+  assert.match(chrome, /behavior:\s*"instant"/);
   assert.match(chrome, /export function syncOverlayLock/);
   assert.match(chrome, /--vv-height/);
   assert.match(chrome, /node\.style\.left/);
@@ -1031,6 +1035,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(css, /--vv-height:\s*100dvh/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /input,\s*select\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /\.secondary-button\s*\{[^}]*min-height:\s*44px/);
   assert.doesNotMatch(css, /#watch-feed[\s\S]{0,180}bottom:\s*var\(--vv-bottom/);
   assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
   assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);

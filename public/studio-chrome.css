@@ -35,7 +35,7 @@
 .lib-skeleton { min-height: 220px; border-radius: 12px; }
 .template-skeleton { min-height: 160px; border-radius: 8px; }
 html:has(body.overlay-open),
-body.overlay-open { overflow: hidden; overscroll-behavior: none; }
+body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: pan-y; }
 #satellite-menu[hidden] { display: none; }
 #satellite-menu {
   position: fixed;

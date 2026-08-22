@@ -121,7 +121,7 @@ export function restoreOverlayLockY() {
   const y = overlayLockY;
   overlayLockY = 0;
   overlayLocked = false;
-  if (typeof globalThis.scrollTo === "function") globalThis.scrollTo(0, y);
+  if (typeof globalThis.scrollTo === "function") globalThis.scrollTo({ top: y, left: 0, behavior: "instant" });
 }
 
 export function syncOverlayLock(root = document) {
