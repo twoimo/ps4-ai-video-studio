@@ -160,7 +160,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(libJs, /bindBacklotLeave|pauseBacklotMedia/);
   assert.doesNotMatch(library, /backlot-close|viewport-fit/);
   assert.match(library, /interactive-widget=resizes-content/);
+  assert.match(board, /content="width=device-width, initial-scale=1, interactive-widget=resizes-content"/);
   assert.match(board, /interactive-widget=resizes-content/);
+  assert.doesNotMatch(board, /viewport-fit/);
   assert.match(library, /PS4_JUSTDOIT/);
   assert.match(library, /id="studio-chrome"/);
   assert.match(library, /id="studio-chips"/);

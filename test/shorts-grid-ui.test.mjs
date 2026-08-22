@@ -306,6 +306,11 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /history\.pushState\(\{ studioView:/);
   assert.match(app, /pushStudioLayer\("confirm"\)/);
   assert.match(app, /pushStudioLayer\("menu"\)/);
+  assert.match(app, /function replaceClearStudioLayer/);
+  assert.match(app, /history\.replaceState\(null, "", location\.href\)/);
+  assert.match(app, /options\.leave \|\| options\.replace \|\| pageHiding/);
+  assert.match(app, /closeMenu\(event, \{ leave: true \}\)/);
+  assert.match(app, /hideLeftoverOverlays[\s\S]*replaceClearStudioLayer\(\)/);
   assert.match(app, /prev === "grid" && next !== "grid"/);
   assert.match(app, /addEventListener\("popstate"/);
   assert.match(app, /studioLayer === "confirm"/);
@@ -317,6 +322,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /shortStatus\(job\)\.key !== "running"/);
   assert.match(app, /function dismissStudioLayer/);
   assert.match(app, /if \(!studioLayer\) return false;\s*history\.back\(\)/);
+  assert.match(app, /pageHiding = true;\s*replaceClearStudioLayer\(\)/);
+  assert.doesNotMatch(app, /pagehide[\s\S]{0,200}history\.back/);
   assert.match(app, /function bindCreateTile[\s\S]*addEventListener\("contextmenu"/);
   assert.match(app, /function askDeleteJob/);
   assert.match(app, /function closeDeleteConfirm/);
@@ -687,6 +694,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /hash === "machine"[\s\S]*setView\("machine"/);
   assert.match(app, /function resumeWatchIfVisible/);
   assert.match(app, /addEventListener\("pageshow", resumeWatchIfVisible\)/);
+  assert.match(app, /addEventListener\("pageshow", \(\) => \{ pageHiding = false; \}\)/);
   assert.match(app, /addEventListener\("studio-open-machine", openMachine\)/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
@@ -874,6 +882,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   const materials = await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8");
   const board = await readFile(join(publicDir, "backlot/board.html"), "utf8");
   const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
+  assert.match(board, /content="width=device-width, initial-scale=1, interactive-widget=resizes-content"/);
+  assert.doesNotMatch(board, /viewport-fit/);
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");

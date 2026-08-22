@@ -607,6 +607,7 @@ function hideLeftoverOverlays() {
   document.body.classList.remove("overlay-open");
   pinOverlaysToVisualViewport();
   syncOverlayLock();
+  replaceClearStudioLayer();
 }
 
 function openMaterials(jobId) {
@@ -656,7 +657,7 @@ async function saveInspectDraft(jobId, root) {
 function openHome(event) {
   event?.preventDefault();
   stopWatchFeed($("#watch-feed"));
-  closeMenu();
+  closeMenu(event, { leave: true });
   setView("grid");
   renderJobs();
   sizeShortsGrid();
@@ -697,6 +698,7 @@ function canDeleteJob(job) {
 }
 
 let studioLayer = "";
+let pageHiding = false;
 let deleteSwallowUntil = 0;
 
 function pushStudioLayer(layer) {
@@ -705,10 +707,24 @@ function pushStudioLayer(layer) {
   studioLayer = layer;
 }
 
-function clearStudioLayer(options = {}) {
+function replaceClearStudioLayer() {
   if (!studioLayer) return;
   studioLayer = "";
-  if (!options.fromPop) history.back();
+  history.replaceState(null, "", location.href);
+}
+
+function clearStudioLayer(options = {}) {
+  if (!studioLayer) return;
+  if (options.fromPop) {
+    studioLayer = "";
+    return;
+  }
+  if (options.leave || options.replace || pageHiding) {
+    replaceClearStudioLayer();
+    return;
+  }
+  studioLayer = "";
+  history.back();
 }
 
 function dismissStudioLayer() {
@@ -1319,7 +1335,7 @@ function openCreate(event) {
 function openBatch(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu();
+  closeMenu(event, { leave: true });
   state.createMode = "batch";
   setView("create");
   void hydrateCreateSlots();
@@ -1399,7 +1415,7 @@ async function queueBatchJobs() {
 
 function openTemplate(event) {
   event?.preventDefault();
-  closeMenu();
+  closeMenu(event, { leave: true });
   stopWatchFeed($("#watch-feed"));
   location.assign("/template");
 }
@@ -1407,7 +1423,7 @@ function openTemplate(event) {
 function openSettings(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu();
+  closeMenu(event, { leave: true });
   if (state.view === "watch") state.returnToWatch = true;
   setView("settings");
 }
@@ -1425,7 +1441,7 @@ async function refreshMachineHealth() {
 function openMachine(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu();
+  closeMenu(event, { leave: true });
   setView("machine");
 }
 
@@ -1795,7 +1811,7 @@ function bindEvents() {
   syncProviderForm();
   bindCreateTile();
   $("#menu-create")?.addEventListener("click", (event) => {
-    closeMenu();
+    closeMenu(event, { leave: true });
     if (state.view === "watch") state.returnToWatch = true;
     openCreate(event);
   });
@@ -1906,7 +1922,10 @@ function bindEvents() {
     resumeWatchIfVisible();
   });
   window.addEventListener("pageshow", resumeWatchIfVisible);
+  window.addEventListener("pageshow", () => { pageHiding = false; });
   window.addEventListener("pagehide", () => {
+    pageHiding = true;
+    replaceClearStudioLayer();
     stopWatchFeed($("#watch-feed"));
   });
   window.addEventListener("studio-open-machine", openMachine);
