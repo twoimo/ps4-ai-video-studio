@@ -85,7 +85,17 @@ async function render() {
   for (const p of projects) grid.append(card(p));
 }
 
-render().catch(console.error);
+render().catch((error) => {
+  const count = document.getElementById("count");
+  const empty = document.getElementById("empty");
+  const grid = document.getElementById("grid");
+  if (count) count.textContent = "불러오지 못함";
+  if (grid) grid.innerHTML = "";
+  if (empty) {
+    empty.style.display = "block";
+    empty.textContent = String(error?.message || error || "보드를 불러오지 못했습니다.");
+  }
+});
 if (!new URLSearchParams(location.search).has("static")) {
   subscribe("/api/library/events", () => render().catch(console.error));
 }

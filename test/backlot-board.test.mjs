@@ -233,6 +233,15 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
 
   const alias = await handleBacklotPage(new Request("http://backlot.local/p/demo"), new URL("http://backlot.local/p/demo"));
   assert.match(await alias.text(), /id="app"/);
+
+  for (const path of ["/backlot", "/p/demo", "/backlot/p/demo"]) {
+    const head = await handleBacklotPage(new Request(`http://backlot.local${path}`, { method: "HEAD" }), new URL(`http://backlot.local${path}`));
+    assert.ok(head);
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("content-type"), "text/html; charset=utf-8");
+  }
+  assert.match(boardJs, /replace\(\/\\\/\+\$\/, ""\)/);
+  assert.match(libraryJs, /불러오지 못함/);
 });
 
 test("OpenMontage-shaped projects and path escape stay defensive", async () => {

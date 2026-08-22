@@ -5,7 +5,7 @@ import {
   getJSON, mediaURL, subscribe, thumbURL, waveBars,
 } from "/backlot/ui/lib.js";
 
-const rawProjectPath = location.pathname.split("/p/")[1] || "";
+const rawProjectPath = (location.pathname.split("/p/")[1] || "").replace(/\/+$/, "");
 const projectId = decodeURIComponent(rawProjectPath);
 const encodedProjectId = encodeURIComponent(projectId);
 const app = document.getElementById("app");

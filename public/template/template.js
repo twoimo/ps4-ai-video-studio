@@ -15,6 +15,7 @@ async function loadTemplatePage() {
     root.innerHTML = renderLockedSpec(spec);
   } catch (error) {
     document.title = `템플릿 · ${APP_TITLE}`;
+    if (title) title.textContent = "템플릿을 불러오지 못했습니다";
     root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><pre>${escapeSpecHtml(error.message)}</pre></div>`;
   }
 }

@@ -238,6 +238,15 @@ function applyHash() {
     setView("grid", { skipHash: true });
     return;
   }
+  if (hash.startsWith("p/") || hash.startsWith("materials/")) {
+    const jobId = decodeURIComponent(hash.replace(/^(p|materials)\//, "").replace(/\/+$/, ""));
+    if (jobId) {
+      location.replace(`/backlot/p/${encodeURIComponent(jobId)}`);
+      return;
+    }
+    location.replace("/backlot");
+    return;
+  }
   if (hash === "short" || hash.startsWith("short/")) {
     const jobId = hash.startsWith("short/") ? decodeURIComponent(hash.slice("short/".length)) : "";
     if (jobId) {
@@ -801,6 +810,11 @@ async function hydrateCreateSlots() {
     }
     await refreshCreatePreview();
   } catch (error) {
+    const mount = $("#create-world-slots");
+    if (mount && !mount.dataset.ready) {
+      mount.innerHTML = `<p class="form-footnote">월드 슬롯을 불러오지 못했습니다.</p>`;
+      mount.dataset.ready = "1";
+    }
     showToast(`템플릿을 불러오지 못했습니다: ${error.message}`, "error");
   }
 }

@@ -303,11 +303,14 @@ export async function handleBacklotMedia(request, url) {
 }
 
 export async function handleBacklotPage(request, url) {
-  if (request.method !== "GET") return null;
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+  const headers = { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" };
   if (url.pathname === "/backlot" || url.pathname === "/backlot/") {
+    if (request.method === "HEAD") return new Response(null, { status: 200, headers });
     return uiHtml("index.html", ["board.css", "library.js"]);
   }
   if (/^\/(?:backlot\/)?p\/[^/]+\/?$/.test(url.pathname)) {
+    if (request.method === "HEAD") return new Response(null, { status: 200, headers });
     return uiHtml("board.html", ["board.css", "board.js", "materials.js"]);
   }
   return null;

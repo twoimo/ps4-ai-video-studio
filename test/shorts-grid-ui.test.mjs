@@ -483,6 +483,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /hash === "short"/);
+  assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
+  assert.match(app, /\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}/);
   assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
   assert.match(app, /function openMaterials/);
   const shortHash = app.slice(app.indexOf('if (hash === "short"'), app.indexOf('if (!hash || hash === "shorts")'));
@@ -731,6 +733,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="settings-form"[^>]*onsubmit="return false"/);
   assert.match(html, /곡을 불러오는 중/);
   assert.match(html, /id="create-world-slots"[\s\S]*template-skeleton/);
+  assert.match(app, /월드 슬롯을 불러오지 못했습니다/);
   assert.match(html, /hash === "create" \|\| hash === "batch"/);
   assert.match(css, /--vv-bottom/);
   assert.match(editor, /class="inspect-form"/);
