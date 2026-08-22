@@ -117,7 +117,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /function renderNoState/);
   assert.match(boardJs, /function renderAwaitingNotice/);
   assert.match(boardJs, /function renderReplayBar/);
-  const parsed = spawnSync(process.execPath, ["--check", join(root, "public/backlot/ui/board.js")], { encoding: "utf8" });
+  const parsed = spawnSync("node", ["--check", join(root, "public/backlot/ui/board.js")], { encoding: "utf8" });
   assert.equal(parsed.status, 0, parsed.stderr);
   assert.match(boardJs, /subscribe\(`\/api\/project\/\$\{encodeURIComponent\(projectId\)\}\/events`/);
   assert.match(libraryJs, /subscribe\("\/api\/library\/events"/);
