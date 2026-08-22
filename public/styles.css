@@ -102,7 +102,7 @@ h1, h2, h3, p { margin-top: 0; }
 input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 16px; outline: none; }
 input:focus, textarea:focus, select:focus, button:focus-visible, a:focus-visible, summary:focus-visible { border-color: rgba(183,243,107,.55); box-shadow: 0 0 0 3px rgba(183,243,107,.12); outline: none; }
 input, select { padding: 12px; min-height: 44px; }
-textarea { resize: vertical; min-height: 72px; padding: 10px 12px; line-height: 1.5; }
+textarea { resize: vertical; min-height: 72px; max-height: 36dvh; padding: 10px 12px; line-height: 1.5; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 860px) {
   .form-row { grid-template-columns: 1fr; }
@@ -435,7 +435,7 @@ body.watch-open { display: block; overflow: hidden; overflow-x: hidden; overscro
 body.watch-open .studio-chrome { display: none; }
 body.watch-open .library { display: none; }
 
-.toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: min(360px, calc(100% - 32px)); transform: translateY(20px); opacity: 0; pointer-events: none; color: var(--text); background: var(--surface-3); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; transition: .25s ease; }
+.toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: min(360px, calc(100% - 32px)); overflow-wrap: anywhere; transform: translateY(20px); opacity: 0; pointer-events: none; color: var(--text); background: var(--surface-3); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; transition: .25s ease; }
 .toast.visible { transform: translateY(0); opacity: 1; }
 .toast.error { color: #ffd2cd; border-color: rgba(255,120,109,.4); }
 

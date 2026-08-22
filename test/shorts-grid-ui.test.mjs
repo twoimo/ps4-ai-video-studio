@@ -512,7 +512,12 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(chromeCss, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border:\s*0/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border-radius:\s*0/);
+  assert.match(chromeCss, /\.studio-chips\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(chromeCss, /\.studio-pipe\s*\{[^}]*flex-wrap:\s*nowrap/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*display:\s*inline/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*padding:\s*16px 4px/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*margin:\s*-16px 0/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*0/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*0/);
   assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*44px/);
@@ -1051,6 +1056,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(css, /--vv-bottom/);
   assert.match(css, /--vv-height:\s*100dvh/);
   assert.match(css, /\.toast\s*\{[^}]*max-width:\s*min\(360px,\s*calc\(100% - 32px\)\)/);
+  assert.match(css, /\.toast\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /textarea\s*\{[^}]*max-height:\s*36dvh/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /input,\s*select\s*\{[^}]*min-height:\s*44px/);
