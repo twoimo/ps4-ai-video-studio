@@ -2,6 +2,24 @@
 
 import { friendlyJobError, parseJsonText, stripErrorPrefix } from "../../shorts-ui.mjs";
 
+const THEME_KEY = "backlot.theme";
+
+export function readStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+export function writeStoredTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme === "light" ? "light" : "dark");
+  } catch {
+    /* private mode / blocked storage */
+  }
+}
+
 export function projectIdFromPath(pathname = "") {
   const match = String(pathname || "").match(/\/(?:backlot\/)?p\/([^/]+)\/?$/);
   return match ? decodeURIComponent(match[1]) : "";

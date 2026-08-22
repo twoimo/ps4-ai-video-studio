@@ -112,6 +112,16 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(parsed.status, 0, parsed.stderr);
   assert.match(boardJs, /subscribe\(`\/api\/project\/\$\{encodeURIComponent\(projectId\)\}\/events`/);
   assert.match(libraryJs, /subscribe\("\/api\/library\/events"/);
+  assert.match(libJs, /export function readStoredTheme/);
+  assert.match(libJs, /export function writeStoredTheme/);
+  assert.match(libJs, /function readStoredTheme\(\) \{\s*try \{/);
+  assert.match(libJs, /function writeStoredTheme\(theme\) \{\s*try \{/);
+  assert.match(boardJs, /readStoredTheme\(\)/);
+  assert.match(boardJs, /writeStoredTheme\(currentTheme\)/);
+  assert.match(libraryJs, /readStoredTheme\(\)/);
+  assert.match(libraryJs, /writeStoredTheme\(currentTheme\)/);
+  assert.equal(boardJs.includes("localStorage"), false);
+  assert.equal(libraryJs.includes("localStorage"), false);
   assert.match(libJs, /export function subscribe/);
   assert.match(libJs, /export const STAGE_ICONS/);
   assert.match(css, /\.clapper/);

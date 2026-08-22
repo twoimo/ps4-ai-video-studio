@@ -638,7 +638,13 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /fieldLines\("#facts"\)/);
   assert.match(app, /\$\("#provider"\)\?\.value/);
   assert.match(app, /function keepPaintedGrid/);
+  assert.match(app, /function isAbortError/);
   assert.match(app, /error\?\.name === "AbortError"/);
+  assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;/);
+  assert.match(app, /\$\("#script-draft"\)\?\.value\?\.trim\(\)/);
+  assert.match(app, /\$\("#topic"\)\?\.value\?\.trim\(\)/);
+  assert.doesNotMatch(app, /\$\("#script-draft"\)\?\.value\.trim\(/);
+  assert.doesNotMatch(app, /\$\("#topic"\)\?\.value\.trim\(/);
   assert.match(app, /new AbortController/);
   assert.equal(app.includes("error.message"), false);
   assert.equal(app.includes("$(\"#sources\").value"), false);
@@ -1134,7 +1140,7 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
     /if \(!Array\.isArray\(payload\?\.jobs\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
   );
   const initFn = app.slice(app.indexOf("async function init"), app.lastIndexOf("init();"));
-  assert.match(initFn, /if \(keepPaintedGrid\(error\)\) return/);
+  assert.match(initFn, /if \(isAbortError\(error\)\) return/);
   assert.match(initFn, /showToast\(error, "error"\)/);
   assert.equal(initFn.includes("state.jobs = []"), false);
   assert.equal(initFn.includes("renderJobs()"), false);

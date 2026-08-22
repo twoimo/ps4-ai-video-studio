@@ -3,7 +3,7 @@
 import { displayTitle } from "../../shorts-ui.mjs";
 import {
   STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
-  getJSON, mediaURL, projectIdFromPath, subscribe, thumbURL, waveBars,
+  getJSON, mediaURL, projectIdFromPath, readStoredTheme, writeStoredTheme, subscribe, thumbURL, waveBars,
 } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);
@@ -12,8 +12,7 @@ const app = document.getElementById("app");
 const modal = document.getElementById("modal");
 const player = document.getElementById("player");
 
-const THEME_KEY = "backlot.theme";
-let currentTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+let currentTheme = readStoredTheme();
 let state = null;
 let selectedStage = null;   // stage drawer open for this stage name
 let activeRender = 0;
@@ -23,7 +22,7 @@ let firstPaint = true;
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = currentTheme;
-  localStorage.setItem(THEME_KEY, currentTheme);
+  writeStoredTheme(currentTheme);
 }
 
 function renderThemeToggle() {

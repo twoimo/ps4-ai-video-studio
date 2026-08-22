@@ -1,15 +1,14 @@
 import { displayTitle, friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
-import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
+import { el, fmtAgo, getJSON, readStoredTheme, writeStoredTheme, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
 const app = document.getElementById("app") || grid;
-const THEME_KEY = "backlot.theme";
-let currentTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+let currentTheme = readStoredTheme();
 
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = currentTheme;
-  localStorage.setItem(THEME_KEY, currentTheme);
+  writeStoredTheme(currentTheme);
 }
 
 function renderThemeToggle() {

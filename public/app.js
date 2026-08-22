@@ -50,7 +50,7 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, options);
   } catch (error) {
-    if (error?.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
     throw new Error(friendlyJobError(stripErrorPrefix(error)));
   }
   let text;
@@ -926,10 +926,10 @@ async function refreshCreatePreview() {
     if (preview) preview.innerHTML = "";
     return;
   }
-  const topic = $("#topic")?.value || "";
+  const topic = $("#topic")?.value?.trim() || "";
   const facts = fieldLines("#facts");
   const worldSlots = collectWorldSlots();
-  if (topic.trim().length < 4 && !facts.length) {
+  if (topic.length < 4 && !facts.length) {
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = "";
     return;
@@ -939,10 +939,10 @@ async function refreshCreatePreview() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        topic: topic.trim(),
+        topic,
         facts,
         worldSlots,
-        scriptDraft: $("#script-draft")?.value.trim() || ""
+        scriptDraft: $("#script-draft")?.value?.trim() || ""
       })
     });
     if (seq !== state.createSeq) return;
@@ -997,7 +997,7 @@ async function pollJobs() {
   try {
     await refreshJobs();
   } catch (error) {
-    if (keepPaintedGrid(error)) return;
+    if (isAbortError(error)) return;
     enqueueToast(error, "error");
   }
 }
@@ -1008,8 +1008,12 @@ function syncPollTimer() {
   if (active) state.poll = window.setInterval(pollJobs, 900);
 }
 
+function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === 20;
+}
+
 function keepPaintedGrid(error) {
-  if (error?.name !== "AbortError") return false;
+  if (!isAbortError(error)) return false;
   return Boolean(
     state.jobs.length
     || document.querySelector("#shorts-grid .short-card, #shorts-grid .short-skeleton")
@@ -1026,7 +1030,10 @@ async function refreshJobs() {
   try {
     payload = await api("/api/jobs", { signal: controller.signal });
   } catch (error) {
-    if (keepPaintedGrid(error) || error?.name === "AbortError") return;
+    if (isAbortError(error)) {
+      keepPaintedGrid(error);
+      return;
+    }
     throw error;
   }
   if (controller.signal.aborted) return;
@@ -1069,7 +1076,7 @@ async function refreshJobs() {
 
 async function createProduction(event) {
   event.preventDefault();
-  const topic = ($("#topic")?.value || "").trim();
+  const topic = $("#topic")?.value?.trim() || "";
   if (topic.length < 4) {
     showToast("영상 주제를 4자 이상 입력하세요.", "error");
     return;
@@ -1078,7 +1085,7 @@ async function createProduction(event) {
   const sources = fieldLines("#sources").map((url) => ({ title: url, url }));
   const facts = fieldLines("#facts");
   const worldSlots = collectWorldSlots();
-  const scriptDraft = $("#script-draft")?.value.trim() || "";
+  const scriptDraft = $("#script-draft")?.value?.trim() || "";
   const ttsProvider = $("#create-tts-provider")?.value || "edge";
   const ttsVoice = $("#create-tts-voice")?.value || "";
   const body = { topic, format: $("#format")?.value || "vertical", clipCount: Number($("#clip-count")?.value || 7), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions")?.checked !== false, voiceover: provider === "grok-imagine" ? false : $("#voiceover")?.checked === true, draftOnly: true };
@@ -1394,7 +1401,7 @@ async function previewVoice(buttonId, audioId, providerId, voiceId) {
   const button = $(buttonId);
   if (button) button.disabled = true;
   try {
-    const text = $("#script-draft")?.value.trim() || $("#topic")?.value.trim() || "이렇게 설계된 겁니다.";
+    const text = $("#script-draft")?.value?.trim() || $("#topic")?.value?.trim() || "이렇게 설계된 겁니다.";
     const response = await fetch("/api/tts/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1469,7 +1476,7 @@ async function draftScriptFromTopic() {
     const payload = await api("/api/script/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ topic: $("#topic")?.value, facts })
+      body: JSON.stringify({ topic: $("#topic")?.value?.trim(), facts })
     });
     if (area) {
       area.hidden = false;
@@ -1727,7 +1734,7 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
-    if (keepPaintedGrid(error)) return;
+    if (isAbortError(error)) return;
     showToast(error, "error");
   }
 }
