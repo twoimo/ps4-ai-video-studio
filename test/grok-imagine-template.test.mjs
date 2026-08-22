@@ -141,6 +141,8 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.doesNotMatch(specJs, /<h2>\$\{escapeSpecHtml\(spec\.title\)\}<\/h2>/);
   assert.ok(js.includes("템플릿을 불러오지 못했습니다"), "fail fallback leaves 불러오는 중");
   assert.match(js, /friendlyJobError/);
+  assert.match(js, /parseJsonText\(await response\.text\(\)\)/);
+  assert.equal(js.includes(".json().catch(() => ({}))"), false);
   assert.equal(js.includes("Failed to fetch"), false);
   assert.equal(js.includes("요청 실패"), false);
   assert.match(specJs, /id="spec-corpus"/);
