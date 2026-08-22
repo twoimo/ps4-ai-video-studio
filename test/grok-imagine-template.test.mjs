@@ -129,6 +129,10 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(app, /location\.replace\("\/template"\)/);
   assert.equal(app.includes('setView("template")'), false);
   assert.equal(app.includes('setView("detail")'), false);
+  assert.equal(app.includes("#short-overlay"), false);
+  assert.equal(app.includes('trapOverlay("#short-overlay")'), false);
+  assert.equal(html.includes("공장 시작"), false);
+  assert.equal(app.includes("공장 시작"), false);
   assert.equal(page.includes("watch-inspect"), false);
   assert.equal(js.includes("watch-inspect"), false);
   assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);

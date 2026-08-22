@@ -567,41 +567,6 @@ function patchGridCard(job) {
   });
 }
 
-function currentStageText(job = {}) {
-  if (Number(job.queuePosition) > 0) return job.message || `대기 ${job.queuePosition}`;
-  return job.live?.message || job.stage || job.message || shortStatus(job).label;
-}
-
-function currentStillUrl(job = {}) {
-  const live = state.live[job.id] || {};
-  const shot = [...(live.shots || [])].reverse().find((item) => item.stillUrl || item.clipUrl);
-  return bust(shot?.stillUrl || shortThumbnail(job), job.updatedAt);
-}
-
-function patchDetailProgress(job) {
-  if (!job || state.selectedJobId !== job.id || state.view !== "detail") return;
-  const message = document.querySelector("#job-detail .detail-progress span, #live-factory .live-now");
-  const percent = document.querySelector("#job-detail .detail-progress b");
-  const bar = document.querySelector("#job-detail .progress-track i");
-  const stage = currentStageText(job);
-  if (message) message.textContent = stage;
-  if (percent) percent.textContent = `${job.progress || 0}%`;
-  if (bar) bar.style.width = `${job.progress || 0}%`;
-  const still = document.querySelector("#job-detail .preview-still, #live-factory .live-still");
-  const next = currentStillUrl(job);
-  if (still && next) still.src = next;
-  else if (!still && next && !document.querySelector("#job-detail video")) {
-    const wrap = document.querySelector("#job-detail .preview-wrap, #live-factory .live-still-wrap");
-    if (wrap) {
-      const img = document.createElement("img");
-      img.className = wrap.classList.contains("live-still-wrap") ? "live-still" : "preview-still";
-      img.alt = "";
-      img.src = next;
-      wrap.prepend(img);
-    }
-  }
-}
-
 function renderJobs() {
   const grid = $("#shorts-grid");
   if (grid) {
@@ -634,22 +599,6 @@ function defaultFactoryStages() {
   ].map(([id, label]) => ({ id, label, status: "WAIT", message: "" }));
 }
 
-function renderLiveFactory(job) {
-  const root = $("#live-factory");
-  if (!root) return;
-  const running = job && ["queued", "running", "verifying"].includes(job.status);
-  if (!job || job.provider !== "grok-imagine" || !running) {
-    root.hidden = true;
-    root.innerHTML = "";
-    return;
-  }
-  root.hidden = false;
-  const still = currentStillUrl(job);
-  const timeline = state.live[job.id]?.timeline?.length ? state.live[job.id].timeline : defaultFactoryStages();
-  const stages = `<ol class="live-stages">${timeline.map((stage) => `<li class="live-stage status-${escapeHtml(String(stage.status || "WAIT").toLowerCase())}"><b>${escapeHtml(stage.label || stage.id)}</b><span>${escapeHtml(stage.message || stage.status || "")}</span></li>`).join("")}</ol>`;
-  root.innerHTML = `<p class="live-now">${escapeHtml(currentStageText(job))}</p>${still ? `<div class="live-still-wrap"><img class="live-still" src="${escapeHtml(still)}" alt="" /></div>` : ""}${stages}`;
-}
-
 function applyLiveSnapshot(jobId, payload) {
   if (!payload || !jobId) return;
   const previous = state.live[jobId] || {};
@@ -670,8 +619,6 @@ function applyLiveSnapshot(jobId, payload) {
     job.updatedAt = payload.job.updatedAt || job.updatedAt;
   }
   const selected = state.jobs.find((item) => item.id === jobId);
-  renderLiveFactory(selected);
-  patchDetailProgress(selected);
   patchGridCard(selected);
 }
 
@@ -708,8 +655,6 @@ function applyFactoryStage(jobId, event) {
     message: event.message,
     artifacts: [...(state.jobs.find((item) => item.id === jobId)?.artifacts || []), ...(event.artifacts || [])]
   });
-  renderLiveFactory(job);
-  patchDetailProgress(job);
   patchGridCard(job);
 }
 

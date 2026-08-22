@@ -423,6 +423,13 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
   assert.equal(app.includes('setView("detail")'), false);
+  assert.equal(app.includes("#short-overlay"), false);
+  assert.equal(app.includes('trapOverlay("#short-overlay")'), false);
+  assert.equal(app.includes('view === "detail"'), false);
+  assert.equal(app.includes("state.view !== \"detail\""), false);
+  assert.equal(app.includes("#job-detail"), false);
+  assert.equal(app.includes("function patchDetailProgress"), false);
+  assert.equal(app.includes("function renderLiveFactory"), false);
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
   assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
