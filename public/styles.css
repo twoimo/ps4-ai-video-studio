@@ -16,7 +16,7 @@
   --danger: #ff786d;
   --amber: #f0bd68;
   --sans: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
-  --watch-col: min(100vw, calc(100dvh * 9 / 16));
+  --watch-col: min(100%, calc(100dvh * 9 / 16));
   --vv-bottom: 0px;
   --vv-height: 100dvh;
   --chrome: calc(52px + env(safe-area-inset-top, 0px));
@@ -435,7 +435,7 @@ body.watch-open { display: block; overflow: hidden; overflow-x: hidden; overscro
 body.watch-open .studio-chrome { display: none; }
 body.watch-open .library { display: none; }
 
-.toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: 360px; transform: translateY(20px); opacity: 0; pointer-events: none; color: var(--text); background: var(--surface-3); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; transition: .25s ease; }
+.toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: min(360px, calc(100% - 32px)); transform: translateY(20px); opacity: 0; pointer-events: none; color: var(--text); background: var(--surface-3); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; transition: .25s ease; }
 .toast.visible { transform: translateY(0); opacity: 1; }
 .toast.error { color: #ffd2cd; border-color: rgba(255,120,109,.4); }
 

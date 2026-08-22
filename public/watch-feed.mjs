@@ -141,6 +141,7 @@ function attachWatchVideo(video) {
   if (typeof video.setAttribute === "function") {
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
+    video.setAttribute("x5-playsinline", "");
     video.setAttribute("controlslist", "nodownload");
   }
   video.playsInline = true;

@@ -353,6 +353,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, />그림</);
   assert.match(html, />움직임</);
   assert.match(html, />편집</);
+  assert.match(html, />대본<\/button>[\s\S]{0,120}→[\s\S]{0,120}>그림<\/button>[\s\S]{0,120}→[\s\S]{0,120}>움직임<\/button>[\s\S]{0,120}→[\s\S]{0,120}>편집<\/button>/);
   assert.equal(html.includes("그림 · 멈춤"), false);
   assert.match(html, /id="feed-banner"/);
   assert.ok(html.indexOf('id="home-brand"') < html.indexOf('id="studio-chips"'));
@@ -360,6 +361,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.ok(html.indexOf('id="studio-chips"') < html.indexOf('id="open-board"'));
   assert.match(html, /id="machine-overlay"/);
   assert.match(html, /viewport-fit=cover/);
+  assert.match(html, /interactive-widget=resizes-content/);
   assert.match(html, /class="studio-overlay feed-card" id="create-overlay"/);
   assert.match(html, /class="studio-overlay feed-card" id="settings-overlay"/);
   assert.equal(html.includes("id=\"template-overlay\""), false);
@@ -510,6 +512,11 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(chromeCss, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border:\s*0/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border-radius:\s*0/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*display:\s*inline/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*0/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*0/);
+  assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*44px/);
+  assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*44px/);
   assert.match(chromeCss, /\.studio-chip\.pause\s*\{[^}]*color:\s*var\(--dim/);
   assert.equal(/\.studio-chip\s*\{[^}]*border-radius:\s*999px/.test(chromeCss), false);
   assert.equal(/\.studio-chips\s*\{[^}]*flex:\s*1/.test(chromeCss), false);
@@ -575,7 +582,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-slide\s*\{[^}]*contain:\s*size layout/);
   assert.equal(/\.watch-slide\s*\{[^}]*isolation:\s*isolate/.test(css), false);
   assert.equal(/\.watch-slide\s*\{[^}]*height:\s*100dvh/.test(css), false);
-  assert.match(css, /--watch-col:\s*min\(100vw,\s*calc\(100dvh \* 9 \/ 16\)\)/);
+  assert.match(css, /--watch-col:\s*min\(100%,\s*calc\(100dvh \* 9 \/ 16\)\)/);
   assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*100%/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100%/);
   assert.match(css, /\.watch-slide\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
@@ -1043,6 +1050,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="batch-actions" hidden/);
   assert.match(css, /--vv-bottom/);
   assert.match(css, /--vv-height:\s*100dvh/);
+  assert.match(css, /\.toast\s*\{[^}]*max-width:\s*min\(360px,\s*calc\(100% - 32px\)\)/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /input,\s*select\s*\{[^}]*min-height:\s*44px/);

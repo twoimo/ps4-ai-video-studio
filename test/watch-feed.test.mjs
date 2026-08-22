@@ -316,6 +316,7 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   assert.match(playFn, /playing/);
   assert.match(feed, /setAttribute\("playsinline"/);
   assert.match(feed, /setAttribute\("webkit-playsinline"/);
+  assert.match(feed, /setAttribute\("x5-playsinline"/);
   assert.match(feed, /setAttribute\("controlslist", "nodownload"\)/);
   assert.match(feed, /controlsList = "nodownload"/);
   assert.match(feed, /addEventListener\("contextmenu"/);
