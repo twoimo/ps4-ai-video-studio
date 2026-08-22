@@ -29,7 +29,8 @@ const state = {
   createMode: "single",
   focusOpener: null,
   jobsLoaded: false,
-  settingsSeq: 0
+  settingsSeq: 0,
+  createSeq: 0
 };
 
 function escapeHtml(value = "") {
@@ -137,9 +138,10 @@ function overlayStartFocus(root) {
   if (root.id === "create-overlay") {
     const active = document.activeElement;
     if (active && root.contains(active) && active !== root && !active.classList?.contains("draft-close")) return;
-    const topic = root.querySelector("#topic");
-    if (topic && topic.closest("[hidden]") == null && typeof topic.focus === "function") {
-      topic.focus();
+    const batch = state.createMode === "batch";
+    const target = batch ? root.querySelector("#batch-topics") : root.querySelector("#topic");
+    if (target && target.closest("[hidden]") == null && typeof target.focus === "function") {
+      target.focus();
       return;
     }
   }
@@ -257,12 +259,14 @@ function applyHash() {
   }
   if (hash === "watch" || hash.startsWith("watch/")) {
     const jobId = hash.startsWith("watch/") ? decodeURIComponent(hash.slice("watch/".length)) : "";
-    if (jobId) state.selectedJobId = jobId;
-    if (watchableJobs().length) {
-      setView("watch", { skipHash: true, instant: true });
+    const playable = watchableJobs();
+    if (!playable.length) {
+      setView("grid", { skipHash: true });
       return;
     }
-    setView("grid", { skipHash: true });
+    const requested = jobId && playable.find((job) => job.id === jobId);
+    state.selectedJobId = requested?.id || playable[0].id;
+    setView("watch", { skipHash: true, instant: true });
     return;
   }
   if (hash.startsWith("p/") || hash.startsWith("materials/")) {
@@ -816,6 +820,7 @@ function collectWorldSlots() {
 }
 
 async function refreshCreatePreview() {
+  const seq = state.createSeq;
   if ($("#provider")?.value !== "grok-imagine") {
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = "";
@@ -830,7 +835,7 @@ async function refreshCreatePreview() {
     return;
   }
   try {
-    state.createPreview = await api("/api/grok-imagine/template/preview", {
+    const payload = await api("/api/grok-imagine/template/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -840,17 +845,22 @@ async function refreshCreatePreview() {
         scriptDraft: $("#script-draft")?.value.trim() || ""
       })
     });
+    if (seq !== state.createSeq) return;
+    state.createPreview = payload;
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = `${renderWorldSlotFields(state.createPreview.worldSlots)}<h4 class="prompt-subhead">채워진 샷</h4>${renderShotPromptList(state.createPreview.shots)}`;
   } catch (error) {
+    if (seq !== state.createSeq) return;
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = `<div class="warning-box"><b>미리보기 실패</b><p>${escapeHtml(error.message)}</p></div>`;
   }
 }
 
 async function hydrateCreateSlots() {
+  const seq = state.createSeq;
   try {
     if (!state.template) state.template = await api("/api/grok-imagine/template");
+    if (seq !== state.createSeq) return;
     const mount = $("#create-world-slots");
     if (mount && !mount.dataset.ready) {
       mount.innerHTML = renderWorldSlotFields(state.template.slots, { editable: true, namePrefix: "create-slot" });
@@ -860,8 +870,10 @@ async function hydrateCreateSlots() {
         state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
       }));
     }
+    if (seq !== state.createSeq) return;
     await refreshCreatePreview();
   } catch (error) {
+    if (seq !== state.createSeq) return;
     const mount = $("#create-world-slots");
     if (mount && !mount.dataset.ready) {
       mount.innerHTML = `<p class="form-footnote">월드 슬롯을 불러오지 못했습니다.</p>`;
@@ -1057,6 +1069,7 @@ async function saveBatchDrafts() {
   const topics = parseBatchTopics();
   if (!topics.length) {
     showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
+    $("#batch-topics")?.focus();
     return;
   }
   try {
@@ -1077,6 +1090,7 @@ async function queueBatchJobs() {
   const topics = parseBatchTopics();
   if (!topics.length) {
     showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
+    $("#batch-topics")?.focus();
     return;
   }
   try {
@@ -1388,6 +1402,7 @@ async function importLibrary(event) {
 
 function closeOverlays(event) {
   event?.preventDefault();
+  if (state.view === "create") state.createSeq += 1;
   if (closeMenu()) return;
   if (state.returnToWatch) {
     state.returnToWatch = false;

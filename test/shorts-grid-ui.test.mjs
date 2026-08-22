@@ -493,6 +493,11 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /hash === "machine"[\s\S]*setView\("machine"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
+  assert.match(app, /const playable = watchableJobs\(\)/);
+  assert.match(app, /requested\?\.id \|\| playable\[0\]\.id/);
+  assert.match(app, /createSeq/);
+  assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
+  assert.match(app, /#batch-topics"\)\?\.focus\(\)/);
   assert.match(app, /hash === "short"/);
   assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
   assert.match(app, /\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}/);
@@ -744,6 +749,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
   assert.match(app, /function overlayStartFocus/);
   assert.match(app, /root\.id === "create-overlay"/);
+  assert.match(app, /createMode === "batch"/);
+  assert.match(app, /querySelector\("#batch-topics"\)/);
   assert.match(app, /querySelector\("#topic"\)/);
   assert.match(app, /active && root\.contains\(active\)/);
   assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);

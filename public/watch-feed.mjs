@@ -126,6 +126,8 @@ export function goWatchIndex(root, index, { animate = false } = {}) {
 }
 
 export function moveWatchIndex(root, index, options) {
+  bumpWatchEpoch(root);
+  pauseLeftoverMedia(root);
   return goWatchIndex(root, index, options);
 }
 

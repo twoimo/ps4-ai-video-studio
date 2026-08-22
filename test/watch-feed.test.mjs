@@ -790,6 +790,7 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /function reparentWatchVideo/);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(feed, /export function moveWatchIndex/);
+  assert.match(feed, /export function moveWatchIndex\(root, index, options\) \{\s*bumpWatchEpoch\(root\);\s*pauseLeftoverMedia\(root\)/);
   assert.match(feed, /export function settleWatchIndex/);
   assert.match(feed, /addEventListener\("wheel"/);
   assert.match(feed, /passive:\s*false/);
