@@ -7,6 +7,7 @@ import { loadBoardState, listProjects, safeMediaPath, safeProjectDir, STUDIO_RAI
 import { backlotHealth, handleBacklotApi, handleBacklotMedia, handleBacklotPage } from "../src/backlot-server.mjs";
 import { getLockedSpec } from "../src/grok-imagine-spec.mjs";
 import { FACTORY_LOCKS, WORLD_SLOT_IDS } from "../src/grok-imagine-template.mjs";
+import { importSatelliteLibrary } from "../public/satellite-menu.mjs";
 
 async function api(path) {
   const url = new URL(`http://backlot.local${path}`);
@@ -194,6 +195,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satellite, /resetSatelliteMenu\(root\)/);
   assert.match(satellite, /function showSatelliteImportResult/);
   assert.match(satellite, /가져옴 \$\{imported\}/);
+  assert.match(satellite, /await request\("\/api\/library\/import", \{ method: "POST" \}[\s\S]*resetSatelliteMenu\(root\);\s*showSatelliteImportResult/);
   assert.match(library, /id="satellite-import-result"/);
   assert.match(board, /id="satellite-import-result"/);
   assert.match(library, /id="satellite-import-summary"/);
@@ -295,6 +297,31 @@ test("OpenMontage-shaped projects and path escape stay defensive", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("satellite import resets the menu then paints the result card", async () => {
+  const title = { textContent: "가져오기" };
+  const actions = { hidden: false };
+  const result = { hidden: true };
+  const summary = { textContent: "" };
+  const overlay = { hidden: true };
+  const nodes = {
+    "#satellite-menu-title": title,
+    "#satellite-menu-actions": actions,
+    "#satellite-import-result": result,
+    "#satellite-import-summary": summary,
+    "#satellite-menu": overlay
+  };
+  const root = { querySelector(sel) { return nodes[sel] || null; } };
+  await importSatelliteLibrary(root, async (url, init) => {
+    assert.equal(url, "/api/library/import");
+    assert.equal(init.method, "POST");
+    return { ok: true, json: async () => ({ imported: ["a"], seeded: [], roots: ["/x"] }) };
+  });
+  assert.equal(overlay.hidden, false);
+  assert.equal(actions.hidden, true);
+  assert.equal(result.hidden, false);
+  assert.match(summary.textContent, /가져옴 1/);
 });
 
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {

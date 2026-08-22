@@ -730,8 +730,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /--vv-bottom/);
   assert.equal(app.includes("event.submitter"), false);
   assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
-  assert.match(html, /id="create-form"[^>]*onsubmit="return false"/);
-  assert.match(html, /id="settings-form"[^>]*onsubmit="return false"/);
+  assert.match(html, /<form class="create-panel" id="create-form" onsubmit="return false">/);
+  assert.match(html, /<form class="create-panel" id="settings-form" onsubmit="return false">/);
+  assert.equal(/id="create-form"[^>]*(action=|method=)/i.test(html), false);
+  assert.equal(/id="settings-form"[^>]*(action=|method=)/i.test(html), false);
   assert.match(html, /id="settings-bgm-songs"[^>]*>곡을 불러오는 중</);
   assert.equal(/id="settings-bgm-songs"[^>]*>곡 없음</.test(html), false);
   assert.match(html, /id="create-world-slots"[\s\S]*template-skeleton/);
