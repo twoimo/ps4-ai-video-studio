@@ -48,6 +48,11 @@ export async function hydrateStudioChrome(root = document, { fetchHealth, openMa
   return health;
 }
 
+if (typeof window !== "undefined" && !window.__studioOpenMachine) {
+  window.__studioOpenMachine = true;
+  window.addEventListener("studio-open-machine", defaultOpenMachine);
+}
+
 if (typeof document !== "undefined" && document.documentElement?.dataset?.studioChrome === "auto") {
   bindStudioPipe(document);
   void hydrateStudioChrome(document);

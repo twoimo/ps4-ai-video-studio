@@ -85,7 +85,7 @@ export function renderInspectCaptions(shots = []) {
   return shots.map((shot, offset) => {
     const index = Number(shot.index || offset + 1);
     const kind = shot.type || shot.role || "";
-    return `<div class="inspect-caption" data-shot-index="${index}"><b>${index}${kind ? `<i>${escapeMaterialsHtml(kind)}</i>` : ""}</b><textarea class="inspect-shot-caption" data-shot-caption data-shot-index="${index}" rows="2">${escapeMaterialsHtml(shot.caption || shot.narration || "")}</textarea></div>`;
+    return `<div class="inspect-caption" data-shot-index="${index}"><b>${index}${kind ? `<i>${escapeMaterialsHtml(kind)}</i>` : ""}</b><textarea class="inspect-shot-caption" data-shot-caption data-shot-index="${index}" rows="2" placeholder="자막">${escapeMaterialsHtml(shot.caption || shot.narration || "")}</textarea></div>`;
   }).join("");
 }
 

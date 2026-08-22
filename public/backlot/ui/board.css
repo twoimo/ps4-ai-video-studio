@@ -1222,8 +1222,11 @@ body:has(#studio-chrome) .wrap:not(#app) .slate h1,
 body:has(#studio-chrome) .wrap:not(#app) .slate > div:has(h1),
 body:has(#studio-chrome) .wrap:not(#app) .theme-toggle { display: none; }
 body:has(#studio-chrome) .wrap:not(#app) .slate {
-  gap: 10px;
-  padding: 10px 0;
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-height: 0;
+  border-bottom: 0;
+  background: none;
 }
 
 /* Studio extra: compact 9:16 render-hero so 720p files are not squashed */
@@ -1256,4 +1259,13 @@ body:has(#studio-chrome) .wrap#app .slate h1 {
   font-size: calc(13px * var(--fs-scale));
   letter-spacing: 0.04em;
   text-transform: none;
+}
+
+/* Studio extra: slim library slate under chrome, not a second header */
+body:has(#studio-chrome) .wrap:not(#app) .slate {
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-height: 0;
+  border-bottom: 0;
+  background: none;
 }

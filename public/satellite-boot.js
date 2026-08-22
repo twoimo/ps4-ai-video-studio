@@ -1,5 +1,7 @@
 (function () {
-  var hash = (location.hash || "").replace(/^#/, "");
+  var raw = (location.hash || "").replace(/^#/, "").replace(/\/+$/, "");
+  var machine = raw === "machine" || raw.indexOf("machine/") === 0;
+  var hash = machine ? "machine" : raw;
   if (hash === "create" || hash === "batch" || hash === "settings" || hash === "machine") {
     location.replace("/#" + hash);
   }

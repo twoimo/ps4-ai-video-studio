@@ -164,6 +164,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(board.includes("그림 · 멈춤"), false);
   assert.match(board, /src="\/studio-chrome\.mjs"/);
   const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
+  assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
   assert.match(chrome, /bindStudioPipe\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.doesNotMatch(boardJs, /main\.append\(script\)/);
   assert.doesNotMatch(boardJs, /if \(script\) main\.append/);
@@ -219,6 +220,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /src="\/satellite-boot\.js"/);
   const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
   assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings" \|\| hash === "machine"/);
+  assert.match(satelliteBoot, /raw === "machine" \|\| raw\.indexOf\("machine\/"\) === 0/);
   assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
   const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
   assert.match(satellite, /export function resetSatelliteMenu/);

@@ -253,7 +253,7 @@ function applyHash() {
     setView("settings", { skipHash: true });
     return;
   }
-  if (hash === "machine") {
+  if (hash === "machine" || hash.startsWith("machine/")) {
     setView("machine", { skipHash: true });
     return;
   }
@@ -1528,20 +1528,23 @@ function bindEvents() {
       }
     }
   });
+  function resumeWatchIfVisible() {
+    if (document.hidden || !document.body.classList.contains("watch-open")) return;
+    const play = playWatchFeed($("#watch-feed"));
+    if (play && typeof play.catch === "function") play.catch(() => {});
+  }
   document.addEventListener("visibilitychange", () => {
-    const feed = $("#watch-feed");
     if (document.hidden) {
-      pauseWatchFeed(feed);
+      pauseWatchFeed($("#watch-feed"));
       return;
     }
-    if (document.body.classList.contains("watch-open")) {
-      const play = playWatchFeed(feed);
-      if (play && typeof play.catch === "function") play.catch(() => {});
-    }
+    resumeWatchIfVisible();
   });
+  window.addEventListener("pageshow", resumeWatchIfVisible);
   window.addEventListener("pagehide", () => {
     stopWatchFeed($("#watch-feed"));
   });
+  window.addEventListener("studio-open-machine", openMachine);
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });
   $$(".toggle-label input").forEach((input) => input.addEventListener("change", syncToggleLabels));
   syncToggleLabels();

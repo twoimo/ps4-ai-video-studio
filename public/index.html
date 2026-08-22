@@ -217,7 +217,7 @@
           ? Math.round(grid.getBoundingClientRect().top)
           : header ? header.offsetHeight + 8 : 0;
         if (chrome) document.documentElement.style.setProperty("--chrome", chrome + "px");
-        var hash = (location.hash || "").replace(/^#/, "");
+        var hash = (location.hash || "").replace(/^#/, "").replace(/\/+$/, "");
         function show(id) {
           var node = document.getElementById(id);
           if (node) node.hidden = false;
@@ -239,7 +239,7 @@
           }
         } else if (hash === "settings") {
           show("settings-overlay");
-        } else if (hash === "machine") {
+        } else if (hash === "machine" || hash.indexOf("machine/") === 0) {
           show("machine-overlay");
         }
       })();

@@ -146,6 +146,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(pipe, /export function machineSheetHtml[\s\S]*pipelineStages\(health\)/);
   assert.match(pipe, /export function renderStudioPipe/);
   assert.match(chrome, /export function paintStudioPipe/);
+  assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
   assert.match(chrome, /bindStudioPipe\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
   assert.equal(css.includes("short-card-body"), false);
@@ -490,7 +491,11 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
   assert.match(app, /if \(view === "machine"\) return "#machine"/);
   assert.match(app, /hash === "machine"/);
+  assert.match(app, /hash === "machine" \|\| hash\.startsWith\("machine\/"\)/);
   assert.match(app, /hash === "machine"[\s\S]*setView\("machine"/);
+  assert.match(app, /function resumeWatchIfVisible/);
+  assert.match(app, /addEventListener\("pageshow", resumeWatchIfVisible\)/);
+  assert.match(app, /addEventListener\("studio-open-machine", openMachine\)/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /const playable = watchableJobs\(\)/);
@@ -676,6 +681,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /class="inspect-facts"/);
   assert.match(editor, /class="inspect-script"/);
   assert.match(editor, /class="inspect-shot-caption"/);
+  assert.match(editor, /placeholder="자막"/);
   assert.match(editor, /class="inspect-shot-prompt"/);
   assert.match(editor, /class="inspect-shot-animate"/);
   assert.match(editor, /data-world-slot/);
@@ -749,6 +755,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(boardCss, /Studio extra: slim board slate under chrome/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap#app \.slate/);
+  assert.match(boardCss, /Studio extra: slim library slate under chrome/);
+  assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate/);
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
   assert.match(app, /function overlayStartFocus/);
   assert.match(app, /root\.id === "create-overlay"/);
