@@ -905,6 +905,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.doesNotMatch(boardCss, /#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(boardCss, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(boardCss, /body:has\([^\)]*materials[^\)]*\)[\s\S]{0,120}#app[\s\S]{0,80}display:\s*none/);
+  assert.match(boardCss, /No materials-page hide/);
+  assert.match(boardCss, /body:has\(#materials\) \.wrap#app/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*safe-area-inset-left/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*safe-area-inset-right/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*safe-area-inset-bottom/);
   assert.doesNotMatch(materials, /getElementById\("app"\)/);
   assert.doesNotMatch(materials, /#app/);
   assert.match(materials, /renderMaterialsPanel/);

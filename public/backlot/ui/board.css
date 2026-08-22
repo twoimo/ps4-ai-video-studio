@@ -1036,8 +1036,8 @@ body:not(.first) .approval-review { animation: none; }
 .materials {
   box-sizing: border-box;
   max-width: 1440px;
-  margin: 0 auto 80px;
-  padding: 0 28px;
+  margin: 0 auto max(80px, env(safe-area-inset-bottom));
+  padding: 0 max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left));
 }
 .materials[hidden] { display: none; }
 .materials .inspect-stack {
@@ -1102,6 +1102,13 @@ body:not(.first) .approval-review { animation: none; }
 .materials {
   max-width: none;
   width: 100%;
+}
+
+/* Studio extra: /backlot/p/:id keeps the board. Materials sit below. No materials-page hide. */
+body:has(#materials) .wrap#app,
+.wrap#app {
+  display: block;
+  visibility: visible;
 }
 :root[data-theme="light"] .wrap {
   max-width: none;

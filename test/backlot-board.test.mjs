@@ -97,6 +97,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /body:has\([^\)]*materials[^\)]*\)[\s\S]{0,120}#app[\s\S]{0,80}display:\s*none/);
+  assert.match(css, /No materials-page hide/);
+  assert.match(css, /body:has\(#materials\) \.wrap#app/);
+  assert.match(css, /\.materials\s*\{[^}]*safe-area-inset-left/);
+  assert.match(css, /\.materials\s*\{[^}]*safe-area-inset-right/);
+  assert.match(css, /\.materials\s*\{[^}]*safe-area-inset-bottom/);
   assert.match(board, /id="modal"/);
   assert.match(board, /id="player"/);
   assert.match(boardJs, /function renderSlate/);
