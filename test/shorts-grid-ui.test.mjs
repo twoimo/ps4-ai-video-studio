@@ -200,7 +200,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /function renderMachineSheet/);
   assert.match(app, /renderMachineSheetHtml\(state\.health/);
   assert.match(pipe, /export function pipelineStages/);
-  assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
+  assert.match(pipe, /stage\.ready \? "준비" : stage\.paused \? PIPE_PAUSED : stage\.title/);
   assert.equal(app.includes("대본 ${grok ? \"준비\" : \"없음\"}"), false);
   assert.match(pipe, /만드는 과정/);
   assert.match(pipe, /label: "대본"/);
@@ -725,7 +725,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(/reasons\.push\("그림 · 멈춤"\)/.test(app), false);
   assert.equal(/if \(frozen\) reasons\.push/.test(app), false);
   assert.match(app, /renderMachineSheetHtml\(state\.health/);
-  assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
+  assert.match(pipe, /stage\.ready \? "준비" : stage\.paused \? PIPE_PAUSED : stage\.title/);
   assert.equal(pipe.includes("없음"), false);
   assert.equal(pipe.includes("지금은 다시 못 만들어요"), false);
   assert.equal(app.includes("그림 · 멈춤"), false);
