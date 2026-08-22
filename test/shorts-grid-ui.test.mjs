@@ -14,6 +14,7 @@ import {
   displayItemLabel,
   displayPipelineLabel,
   displayStageLabel,
+  frozenRemakeLabel,
   projectsFromListPayload,
   inspectVideoDownloads,
   isAbortError,
@@ -252,6 +253,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /armSatelliteHistory\(\)/);
   assert.match(chrome, /export function pinOverlaysToVisualViewport/);
   assert.match(chrome, /export function pinNodeToVisualViewport/);
+  assert.match(chrome, /export function pinOverlayTop/);
+  assert.match(chrome, /node\.style\.top = open \? "0px" : ""/);
+  assert.match(chrome, /pinOverlayTop\(node, open\)/);
   assert.match(chrome, /export function scrollFocusedFieldIntoView/);
   assert.match(chrome, /export function scrollFocusIntoPanel/);
   assert.match(chrome, /export function rescrollFocusedField/);
@@ -383,7 +387,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /names\.join\(" · "\)/);
   assert.equal(app.includes("곡 ${count}개"), false);
   assert.match(app, /function emptyGridNote/);
-  assert.match(app, /id="grid-empty">쇼츠가 없습니다/);
+  assert.match(app, /id="grid-empty">아직 영상이 없어요/);
   assert.match(app, /\$\{emptyGridNote\(\)\}/);
   assert.match(css, /\.shorts-grid \.empty-note\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
   assert.match(app, /importBroughtCopy\(payload\)/);
@@ -846,6 +850,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
   assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
@@ -972,7 +978,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /secondary-button inspect-regen/);
   assert.match(editor, /is-paused/);
   assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
-  assert.match(editor, /다시 만들기 · 멈춤/);
+  assert.match(editor, /frozenRemakeLabel\(frozen\)/);
+  assert.match(editor, /지금은 못 만들어요/);
+  assert.doesNotMatch(editor, /다시 만들기 · 멈춤/);
   assert.match(editor, /지금은 그림을 안 만들어요/);
   assert.match(editor, /export function fallbackCaptionPrompts/);
   assert.match(editor, /job\.lines/);
@@ -1057,6 +1065,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /\.clapper\s*\{[^}]*display:\s*none/);
   assert.match(boardCss, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
   assert.match(boardCss, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
+  assert.match(boardCss, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(boardCss, /\.filmstrip\s*\{[^}]*scroll-snap-type:\s*none/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(boardCss, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
   assert.match(boardCss, /\.wrap#app \.slate/);
@@ -1168,7 +1178,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(css, /#delete-confirm\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /#delete-confirm\s*\{[^}]*min-width:\s*44px/);
   assert.match(boardCss, /\.materials\s*\{[^}]*var\(--vv-bottom/);
-  assert.match(boardCss, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
+  assert.match(boardCss, /\.materials input,\s*\.materials textarea,\s*\.materials select\s*\{[^}]*font-size:\s*16px/);
   assert.match(boardCss, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
   assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
   assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome h1\s*\{[^}]*display:\s*none/);
@@ -1270,7 +1280,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(panel, /inert/);
   assert.doesNotMatch(panel, /data-inspect-regen[^>]*disabled/);
   assert.match(panel, /is-paused/);
-  assert.match(panel, /다시 만들기 · 멈춤/);
+  assert.match(panel, /지금은 못 만들어요/);
+  assert.doesNotMatch(panel, /다시 만들기 · 멈춤/);
   assert.match(panel, /title="지금은 그림을 안 만들어요"/);
   assert.match(panel, /지금은 그림을 안 만들어요/);
   const fakeRoot = {
@@ -1527,6 +1538,8 @@ test("displayTitle drops workspace paths and falls back to 보드", () => {
   assert.equal(displayPipelineLabel("unknown"), "단계");
   assert.equal(displayPipelineLabel("ps4-studio"), "보드");
   assert.equal(displayPipelineLabel("style_playbook"), "");
+  assert.equal(frozenRemakeLabel(true), "지금은 못 만들어요");
+  assert.equal(frozenRemakeLabel(false), "다시 만들기");
 });
 
 test("leftover watch with no clips replaces /", async () => {

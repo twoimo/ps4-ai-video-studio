@@ -207,6 +207,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /\.clapper\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
+  assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*scroll-snap-type:\s*none/);
   assert.match(libraryJs, /el\("h3", \{\}, displayTitle\(p\.title, p\.project_id, "보드"\)\)/);
   assert.doesNotMatch(libraryJs, /\(p\.title \|\| p\.project_id\)\.toUpperCase\(\)/);
   assert.match(libraryJs, /script:\s*"대본"/);
@@ -259,7 +261,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.materials\s*\{[^}]*var\(--vv-bottom/);
-  assert.match(css, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /\.materials input,\s*\.materials textarea,\s*\.materials select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /\.wrap#app select,\s*\.materials select\s*\{[^}]*font-size:\s*16px/);
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
   assert.equal(css.includes("family=Inter"), false);
   const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
@@ -325,6 +328,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(library, /src="\/satellite-boot\.js"/);
   assert.match(board, /src="\/satellite-boot\.js"/);
   const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  assert.match(satelliteBoot, /hash === "template"/);
+  assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
   assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings" \|\| hash === "machine"/);
   assert.match(satelliteBoot, /raw === "machine" \|\| raw\.indexOf\("machine\/"\) === 0/);
   assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
@@ -594,6 +599,8 @@ test("library long-press blocks contextmenu and the board rail stays visible", a
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+  assert.match(satelliteBoot, /hash === "template"/);
+  assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
   assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
   assert.match(chrome, /export function armSatelliteHistory/);
   assert.match(chrome, /export function leaveSatelliteIfNeeded/);

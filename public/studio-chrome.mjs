@@ -73,9 +73,16 @@ export function pinNodeToVisualViewport(node, open) {
   node.style.bottom = "auto";
 }
 
+export function pinOverlayTop(node, open) {
+  if (!node?.style) return;
+  node.style.top = open ? "0px" : "";
+}
+
 export function pinOverlaysToVisualViewport(root = document) {
   root.querySelectorAll?.(".studio-overlay, #satellite-menu").forEach((node) => {
-    pinNodeToVisualViewport(node, !node.hidden);
+    const open = !node.hidden;
+    pinNodeToVisualViewport(node, open);
+    pinOverlayTop(node, open);
   });
 }
 

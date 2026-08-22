@@ -1,4 +1,4 @@
-import { displayTitle, inspectVideoDownloads } from "./shorts-ui.mjs";
+import { displayTitle, frozenRemakeLabel, inspectVideoDownloads } from "./shorts-ui.mjs";
 
 export const INSPECT_WORLD_SLOT_IDS = [
   "site",
@@ -126,7 +126,7 @@ export function renderMaterialsPanel(job, prompts, { frozen = false } = {}) {
     ? inspectVideoDownloads(job).map((item) => `<a href="${escapeMaterialsHtml(item.href)}" download>${escapeMaterialsHtml(item.label)}</a>`).join("")
     : "";
   const regenClass = frozen ? "secondary-button inspect-regen is-paused" : "secondary-button inspect-regen";
-  const regenLabel = frozen ? "다시 만들기 · 멈춤" : "다시 만들기";
+  const regenLabel = frozenRemakeLabel(frozen);
   const regenTitle = frozen ? "지금은 그림을 안 만들어요" : "";
   return `<form class="inspect-form" novalidate onsubmit="return false"><div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2></div><label class="field-label" for="inspect-topic-${escapeMaterialsHtml(job.id)}">제목</label><input id="inspect-topic-${escapeMaterialsHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeMaterialsHtml(displayTitle(job.topic))}" minlength="4" enterkeyhint="done" autocomplete="off" spellcheck="false" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeMaterialsHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}${files ? `<div class="inspect-files">${files}</div>` : ""}<div class="inspect-actions"><button type="submit" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="${regenClass}" data-inspect-regen${frozen ? " inert" : ""}${regenTitle ? ` title="${regenTitle}"` : ""}>${regenLabel}</button>${frozen ? `<p class="inspect-frozen">지금은 그림을 안 만들어요</p>` : ""}</div></div></form>`;
 }

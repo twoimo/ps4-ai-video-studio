@@ -138,6 +138,10 @@ export function displayItemLabel(name, fallback = "항목") {
   return key;
 }
 
+export function frozenRemakeLabel(frozen = false) {
+  return frozen ? "지금은 못 만들어요" : "다시 만들기";
+}
+
 export function displayPipelineLabel(name) {
   const key = String(name || "").trim();
   if (key === "ps4-studio") return "보드";

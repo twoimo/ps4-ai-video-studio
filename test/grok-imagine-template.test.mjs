@@ -138,6 +138,8 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
   assert.match(js, /title\.hidden = true/);
   assert.match(page, /class="template-back"[^>]*aria-label="닫기"/);
+  assert.match(js, /raw === "template"/);
+  assert.match(js, /location\.replace\("\/template"\)/);
   assert.match(js, /raw === "watch" \|\| raw\.startsWith\("watch\/"\)/);
   assert.match(js, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
   assert.match(specJs, /<h2>잠긴 프롬프트<\/h2>/);
@@ -265,9 +267,13 @@ test("template Back is 44px, hides the locked title, and bounces #watch", async 
   assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
   assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
   assert.match(js, /title\.hidden = true/);
+  assert.match(js, /raw === "template"/);
+  assert.match(js, /location\.replace\("\/template"\)/);
   assert.match(js, /raw === "watch" \|\| raw\.startsWith\("watch\/"\)/);
   assert.match(js, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
   assert.match(css, /\.template-back\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/);
   assert.match(css, /\.template-studio\s*\{[^}]*var\(--vv-bottom,\s*0px\)/);
+  assert.match(satelliteBoot, /hash === "template"/);
+  assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
   assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
 });

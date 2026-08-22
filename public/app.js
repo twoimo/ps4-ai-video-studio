@@ -436,7 +436,7 @@ function jobCardsMarkup() {
 
 function emptyGridNote() {
   if (state.jobs.length) return "";
-  return `<p class="empty-note" id="grid-empty">쇼츠가 없습니다</p>`;
+  return `<p class="empty-note" id="grid-empty">아직 영상이 없어요</p>`;
 }
 
 function bindFeedScroll() {

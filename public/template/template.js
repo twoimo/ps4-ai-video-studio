@@ -5,6 +5,10 @@ const APP_TITLE = "PS4_JUSTDOIT";
 
 async function loadTemplatePage() {
   const raw = (location.hash || "").replace(/^#/, "");
+  if (raw === "template") {
+    location.replace("/template");
+    return;
+  }
   if (raw === "watch" || raw.startsWith("watch/")) {
     location.replace("/#" + (raw || "watch"));
     return;
