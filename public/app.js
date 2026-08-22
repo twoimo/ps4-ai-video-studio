@@ -1,11 +1,12 @@
-import { formatClock, isWatchableShort, shortDownloads, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { formatClock, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
+import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const APP_TITLE = "PS4_JUSTDOIT";
-const VIEWS = ["create", "detail", "template", "settings", "machine", "watch", "grid"];
+const VIEWS = ["create", "settings", "machine", "watch", "grid"];
 const state = {
   jobs: [],
   selectedJobId: null,
@@ -64,7 +65,6 @@ function selectedJob() {
 function hashForView(view) {
   if (view === "create") return "#create";
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
-  if (view === "template") return "#template";
   if (view === "settings") return "#settings";
   return "#shorts";
 }
@@ -121,26 +121,21 @@ function trapOverlay(selector) {
 function setView(view, options = {}) {
   const next = VIEWS.includes(view) ? view : "grid";
   const createOverlay = $("#create-overlay");
-  const shortOverlay = $("#short-overlay");
-  const templateOverlay = $("#template-overlay");
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
   if (next !== "watch") clearWatchSize(watchFeed);
   state.view = next;
   document.body.classList.toggle("watch-open", state.view === "watch");
-  document.body.classList.toggle("template-open", state.view === "template");
-  document.body.classList.toggle("overlay-open", ["create", "detail", "settings", "machine"].includes(state.view));
+  document.body.classList.toggle("overlay-open", ["create", "settings", "machine"].includes(state.view));
   if (createOverlay) createOverlay.hidden = state.view !== "create";
-  if (shortOverlay) shortOverlay.hidden = state.view !== "detail";
-  if (templateOverlay) templateOverlay.hidden = state.view !== "template";
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   const machineOverlay = $("#machine-overlay");
   if (machineOverlay) machineOverlay.hidden = state.view !== "machine";
   const menuOverlay = $("#menu-overlay");
   if (menuOverlay && next !== "grid") menuOverlay.hidden = true;
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
-  if (library) library.hidden = state.view === "watch" || state.view === "template";
+  if (library) library.hidden = state.view === "watch";
   const openingWatch = state.view === "watch";
   if (openingWatch) {
     document.querySelectorAll(".preview-wrap video, .shorts-grid video, audio").forEach((media) => {
@@ -169,22 +164,15 @@ function setView(view, options = {}) {
     void hydrateCreateSlots();
     void hydrateStudioSettings();
   }
-  if (state.view === "detail") trapOverlay("#short-overlay");
-  if (state.view === "template") trapOverlay("#template-overlay");
   if (state.view === "settings") trapOverlay("#settings-overlay");
   if (state.view === "machine") trapOverlay("#machine-overlay");
-  if (state.view === "template") void loadTemplateSurface();
   if (state.view === "settings") void hydrateStudioSettings();
   if (state.view === "machine") renderMachineSheet();
   syncDocumentTitle();
 }
 
 function syncDocumentTitle() {
-  if (state.view === "template") {
-    document.title = `템플릿 · ${APP_TITLE}`;
-    return;
-  }
-  if (state.view === "watch" || state.view === "detail") {
+  if (state.view === "watch") {
     const shortTitle = String(selectedJob()?.topic || "").trim();
     document.title = shortTitle ? `${shortTitle} · ${APP_TITLE}` : APP_TITLE;
     return;
@@ -199,7 +187,7 @@ function applyHash() {
     return;
   }
   if (hash === "template") {
-    setView("template", { skipHash: true });
+    location.replace("/template");
     return;
   }
   if (hash === "backlot" || hash.startsWith("backlot/")) {
@@ -221,9 +209,10 @@ function applyHash() {
     setView("grid", { skipHash: true });
     return;
   }
-  if (hash === "short") {
-    if (state.selectedJobId && state.jobs.some((job) => job.id === state.selectedJobId)) {
-      location.replace(`/backlot/p/${encodeURIComponent(state.selectedJobId)}`);
+  if (hash === "short" || hash.startsWith("short/")) {
+    const jobId = hash.startsWith("short/") ? decodeURIComponent(hash.slice("short/".length)) : state.selectedJobId;
+    if (jobId) {
+      openMaterials(jobId);
       return;
     }
   }
@@ -495,7 +484,6 @@ function renderShortCard(job) {
   const thumb = bust(shortThumbnail(job), job.updatedAt);
   const duration = status.key === "draft" ? "—" : formatClock(shortDurationSeconds(job));
   const highlight = job.id === state.highlightJobId ? " just-created" : "";
-  const selected = job.id === state.selectedJobId && state.view === "detail" ? " selected" : "";
   const progress = Number(job.progress || 0);
   const fallback = escapeHtml(status.label);
   const media = thumb
@@ -504,7 +492,7 @@ function renderShortCard(job) {
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<article class="short-card status-${status.key}${highlight}${selected}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.topic || "쇼츠")}" aria-pressed="${job.id === state.selectedJobId && (state.view === "detail" || state.view === "watch")}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
+  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.topic || "쇼츠")}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
 }
 
 function upsertJob(partial) {
@@ -628,18 +616,6 @@ function renderJobs() {
     renderWatchFeed();
     return;
   }
-  if (state.view === "detail") {
-    const selected = state.jobs.find((job) => job.id === state.selectedJobId);
-    if (!selected) {
-      state.selectedJobId = null;
-      setView("grid");
-      renderLiveFactory(null);
-      return;
-    }
-    renderJobDetail(selected);
-    renderLiveFactory(selected);
-    watchJobLive(selected);
-  }
   syncDocumentTitle();
 }
 
@@ -694,13 +670,8 @@ function applyLiveSnapshot(jobId, payload) {
     job.updatedAt = payload.job.updatedAt || job.updatedAt;
   }
   const selected = state.jobs.find((item) => item.id === jobId);
-  if (state.view === "detail" && selected && ["completed", "failed"].includes(selected.status)) {
-    renderJobDetail(selected);
-    renderLiveFactory(selected);
-  } else {
-    renderLiveFactory(selected);
-    patchDetailProgress(selected);
-  }
+  renderLiveFactory(selected);
+  patchDetailProgress(selected);
   patchGridCard(selected);
 }
 
@@ -793,143 +764,9 @@ async function loadLiveSnapshot(jobId) {
   }
 }
 
-function renderWorldSlotFields(slots = [], { namePrefix = "world-slot", editable = false } = {}) {
-  return slots.map((slot) => {
-    const canEdit = editable && slot.editable !== false && !slot.locked;
-    const value = slot.value || "";
-    const field = canEdit
-      ? `<textarea id="${escapeHtml(namePrefix)}-${escapeHtml(slot.id)}" name="${escapeHtml(slot.id)}" data-world-slot="${escapeHtml(slot.id)}" rows="2">${escapeHtml(value)}</textarea>`
-      : `<p class="slot-value">${escapeHtml(value || slot.placeholder || `{{${slot.id}}}`)}</p>`;
-    return `<label class="slot-card ${canEdit ? "editable" : "locked"}"><span><b>${escapeHtml(slot.label)}</b></span><small>${escapeHtml(slot.hint || "")}</small>${field}</label>`;
-  }).join("");
-}
-
 function renderShotPromptList(shots = []) {
   if (!shots.length) return "";
   return `<div class="shot-prompt-list">${shots.map((shot) => `<article class="shot-prompt"><b>${String(shot.index).padStart(2, "0")} · ${escapeHtml(shot.slotId || shot.role || "샷")}</b><pre>${escapeHtml(shot.prompt || "")}</pre></article>`).join("")}</div>`;
-}
-
-function renderLockTable(locks = []) {
-  if (!locks.length) return "";
-  return `<div class="lock-table">${locks.map((lock) => `<div class="lock-row"><b>${escapeHtml(lock.label)}</b> <code>${escapeHtml(lock.id || "")}</code><small>${escapeHtml(lock.rule)}</small></div>`).join("")}</div>`;
-}
-
-function specKv(label, value) {
-  return `<div class="spec-kv"><b>${escapeHtml(value)}</b><span>${escapeHtml(label)}</span></div>`;
-}
-
-function factoryClass(flag = "") {
-  if (flag === "yes") return "factory-yes";
-  if (flag === "optional") return "factory-optional";
-  return "factory-no";
-}
-
-function renderSpecTable(headers, rows) {
-  return `<table class="spec-table"><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-}
-
-async function loadTemplateSurface() {
-  const root = $("#template-root");
-  if (!root) return;
-  try {
-    if (!state.template || !state.template.tally) state.template = await api("/api/grok-imagine/template");
-    const spec = state.template;
-    const tally = spec.tally || {};
-    const title = $("#template-title");
-    if (title) title.textContent = spec.title || "잠긴 프롬프트";
-    const eraRows = Object.entries(tally.eras || spec.eras || {}).map(([key, value]) => [escapeHtml(key), escapeHtml(value)]);
-    const typeRows = (spec.types || []).map((type) => [
-      `<b>${escapeHtml(type.id)}</b>`,
-      escapeHtml(type.meaning || ""),
-      `<span class="${factoryClass(type.factory)}">${escapeHtml(type.factory || "")}</span>`,
-      escapeHtml(type.videos ?? ""),
-      escapeHtml(type.hits ?? "")
-    ]);
-    const skeleton = (spec.skeleton?.lines || []).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
-    const forbidden = (spec.skeleton?.forbidden || spec.skeletonForbidden || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-    const situation = (spec.situation || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-    const fails = (spec.hardFails || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-    const loop = (spec.loop || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-    const clip = spec.clipCountLock || {};
-    const captions = spec.captions || {};
-    const setups = tally.setups || {};
-    root.innerHTML = `
-      <header class="spec-section" style="border-top:0">
-        <h2>${escapeHtml(spec.title)}</h2>
-        <p class="spec-lede">${escapeHtml(spec.id)} · ${escapeHtml(spec.date)}. 슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다. 잠금·코퍼스·스켈레톤은 읽기 전용입니다.</p>
-      </header>
-      <section class="spec-section" id="spec-corpus">
-        <h3>코퍼스 ${escapeHtml(tally.N ?? 288)}</h3>
-        <p class="spec-lede">${escapeHtml(spec.eraRule || "ignore early_if + offtopic; spec is mature_explainer 253")}</p>
-        <div class="spec-kvs">
-          ${specKv("N", tally.N ?? 288)}
-          ${specKv("mature_explainer", tally.eras?.mature_explainer ?? "")}
-          ${specKv("offtopic", tally.eras?.offtopic ?? "")}
-          ${specKv("early_if", tally.eras?.early_if ?? "")}
-          ${specKv("same site", `${tally.site?.yes ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("real scale", `${tally.scale?.real ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("toy (they)", tally.scale?.toy ?? "")}
-          ${specKv("no bars", `${(tally[`${"letter"}box`] || {}).no ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("motion in-hold", `${tally.motion?.yes ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("setups median", setups.median ?? 13)}
-          ${specKv("setups mean", setups.mean ?? 13.89)}
-          ${specKv("setups mode", setups.mode ?? 13)}
-          ${specKv("setups range", `${setups.min ?? 5}–${setups.max ?? 29}`)}
-        </div>
-        ${renderSpecTable(["era", "count"], eraRows)}
-      </section>
-      <section class="spec-section" id="spec-types">
-        <h3>샷 타입 13</h3>
-        ${renderSpecTable(["type", "meaning", "factory", "videos", "hits"], typeRows)}
-      </section>
-      <section class="spec-section" id="spec-graphics">
-        <h3>그래픽 문법</h3>
-        <div class="spec-kvs">
-          ${specKv("red mixed", tally.reds?.mixed ?? "")}
-          ${specKv("numbers on the line", tally.nums?.yes ?? "")}
-          ${specKv("park/sand box", tally.park?.yes ?? "")}
-          ${specKv("lid aligned", tally.lid?.yes ?? "")}
-          ${specKv("captions", captions.rule ? "MarginV=450" : "Alignment=2")}
-        </div>
-        <p class="spec-lede">${escapeHtml(spec.graphicsGrammar?.inSceneLabels || "")}</p>
-        <p class="spec-lede">${escapeHtml(spec.graphicsGrammar?.dialogue || "")}</p>
-        <p class="spec-lede">${escapeHtml(captions.rule || "")}</p>
-      </section>
-      <section class="spec-section" id="spec-slots">
-        <h3>월드 슬롯 10</h3>
-        <p class="spec-lede">sourced_si와 avoid는 잠금입니다. 값은 초안 만들기에서만 편집합니다.</p>
-        <div class="slot-grid">${renderWorldSlotFields(spec.slots)}</div>
-      </section>
-      <section class="spec-section" id="spec-skeleton">
-        <h3>샷 스켈레톤</h3>
-        <ol class="spec-list">${skeleton}</ol>
-        <h3>FORBIDDEN</h3>
-        <ul class="spec-list">${forbidden}</ul>
-      </section>
-      <section class="spec-section" id="spec-locks">
-        <h3>FACTORY_LOCKS</h3>
-        ${renderLockTable(spec.locks)}
-      </section>
-      <section class="spec-section" id="spec-situation">
-        <h3>상황 체크리스트</h3>
-        <ol class="spec-list">${situation}</ol>
-        <h3>Hard fails</h3>
-        <ul class="spec-list">${fails}</ul>
-      </section>
-      <section class="spec-section" id="spec-loop">
-        <h3>Reference-first loop</h3>
-        <ol class="spec-list">${loop}</ol>
-        <p class="spec-lede">${escapeHtml(clip.note || "")} Factory stays ${escapeHtml(clip.factoryStays || "6 unique sources / 7 holds")}.</p>
-        <pre class="spec-pre">${escapeHtml((spec.styleSheet && JSON.stringify(spec.styleSheet, null, 2)) || "")}</pre>
-      </section>
-      <section class="spec-section" id="spec-documents">
-        <h3>문서</h3>
-        <pre class="spec-pre">${escapeHtml(spec.documents?.spec || spec.document || "")}</pre>
-        <pre class="spec-pre">${escapeHtml(spec.documents?.template || "")}</pre>
-      </section>`;
-  } catch (error) {
-    root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><pre>${escapeHtml(error.message)}</pre></div>`;
-  }
 }
 
 function collectWorldSlots() {
@@ -992,80 +829,15 @@ async function hydrateCreateSlots() {
   }
 }
 
-function renderJobDetail(job) {
-  const detail = $("#job-detail");
-  if (!job) return;
-  const status = shortStatus(job);
-  const running = ["queued", "running", "verifying"].includes(job.status);
-  const preview = shortPreview(job);
-  const still = currentStillUrl(job);
-  const previewMedia = preview.videoUrl
-    ? `<video controls playsinline preload="metadata" poster="${escapeHtml(preview.poster || still || "")}" src="${escapeHtml(preview.videoUrl)}"></video>`
-    : still
-      ? `<img class="preview-still" src="${escapeHtml(still)}" alt="" />`
-      : "";
-  const previewMarkup = previewMedia ? `<div class="preview-wrap">${previewMedia}</div>` : "";
-  const facts = (Array.isArray(job.facts) ? job.facts : []).map((fact) => String(fact).trim()).filter(Boolean);
-  const factsMarkup = `<label class="field-label" for="detail-facts">사실</label><textarea id="detail-facts" data-draft-facts rows="4">${escapeHtml(facts.join("\n"))}</textarea>${facts.length ? `<ul class="draft-facts">${facts.slice(0, 4).map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>` : ""}`;
-  const scriptText = String(job.scriptDraft || job.script?.oneLiner || "").trim();
-  const scriptMarkup = `<label class="field-label" for="detail-script">대본</label>${scriptText ? `<textarea id="detail-script" class="draft-script" data-draft-script rows="4">${escapeHtml(scriptText)}</textarea>` : `<p class="empty-note">대본 없음</p><textarea id="detail-script" class="draft-script" data-draft-script rows="4"></textarea>`}`;
-  const slotEntries = Object.entries(job.worldSlots || {}).filter(([, value]) => String(value || "").trim());
-  const slotsMarkup = slotEntries.length
-    ? `<label class="field-label">슬롯</label><dl class="draft-slots">${slotEntries.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><div class="slot-grid">${renderWorldSlotFields(slotEntries.map(([id, value]) => ({ id, label: id, value, editable: true })), { editable: true, namePrefix: "detail-slot" })}</div>`
-    : `<label class="field-label">슬롯</label><p class="empty-note">슬롯 없음</p><dl class="draft-slots"></dl>`;
-  const frozen = state.health?.imagine?.frozen !== false;
-  const saveDraft = `<button class="secondary-button" id="save-draft" type="button">저장</button>`;
-  const runDraft = status.key === "draft"
-    ? `<button class="primary-button" id="run-draft" type="button"${frozen ? " disabled" : ""}>공장 시작</button>${frozen ? `<p class="inspect-frozen">크레딧 402</p>` : ""}`
-    : "";
-  const localControls = job.provider === "local" && !["completed", "running", "verifying"].includes(job.status)
-    ? `<div class="upload-box"><label for="detail-upload"><span>클립을 올리세요</span><small>MP4, MOV, WebM</small></label><input id="detail-upload" type="file" accept="video/*" multiple /><button class="secondary-button" id="run-local" type="button">업로드한 클립으로 편집</button></div>`
-    : "";
-  const downloads = shortDownloads(job).map((item) => `<a class="artifact-link" href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}<b>↓</b></a>`).join("");
-  const warnings = (job.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
-  detail.innerHTML = `<div class="detail-head"><h2 id="short-detail-title">${escapeHtml(status.label)}</h2><span class="job-status ${status.key}"><i></i>${escapeHtml(status.label)}</span></div><label class="field-label" for="detail-topic">주제</label><input id="detail-topic" data-draft-topic value="${escapeHtml(job.topic || "")}" minlength="4" />${running ? `<div class="detail-progress"><div><span>${escapeHtml(currentStageText(job))}</span><b>${job.progress || 0}%</b></div><div class="progress-track"><i style="width:${job.progress || 0}%"></i></div></div>` : ""}${previewMarkup}${scriptMarkup}${slotsMarkup}${factsMarkup}${saveDraft}${runDraft}${localControls}${warnings ? `<div class="warning-box"><ul>${warnings}</ul></div>` : ""}${downloads ? `<div class="download-list artifact-list"><h3>내려받기</h3>${downloads}</div>` : ""}${job.status === "failed" ? `<div class="error-box"><b>실행 오류</b><pre>${escapeHtml(job.error || job.message || "알 수 없는 오류")}</pre><button class="secondary-button" id="retry-job" type="button">다시 실행</button></div>` : ""}`;
-  $("#detail-upload")?.addEventListener("change", uploadLocalClips);
-  $("#run-local")?.addEventListener("click", runSelectedJob);
-  $("#retry-job")?.addEventListener("click", runSelectedJob);
-  $("#run-draft")?.addEventListener("click", runSelectedJob);
-  $("#save-draft")?.addEventListener("click", () => { void saveDetailDraft(); });
-}
-
-async function uploadLocalClips(event) {
-  const files = [...event.target.files];
-  if (!files.length || !state.selectedJobId) return;
-  const form = new FormData();
-  files.forEach((file) => form.append("files", file));
-  try {
-    await api(`/api/jobs/${encodeURIComponent(state.selectedJobId)}/clips`, { method: "POST", body: form });
-    showToast(`${files.length}개 클립을 올렸습니다.`);
-    await refreshJobs();
-  } catch (error) { showToast(error.message, "error"); }
-}
-
-async function saveDetailDraft() {
-  if (!state.selectedJobId) return;
-  try {
-    const payload = await saveInspectDraft(state.selectedJobId, $("#job-detail"));
-    showToast("초안을 저장했습니다.");
-    if (payload.job) {
-      upsertJob(payload.job);
-      renderJobDetail(payload.job);
-    }
-  } catch (error) {
-    showToast(error.message, "error");
-  }
-}
-
 async function runSelectedJob() {
   if (!state.selectedJobId) return;
   if (state.health?.imagine?.frozen !== false) {
-    showToast("크레딧 402", "error");
+    showToast("크레딧 부족", "error");
     return;
   }
   try {
     await api(`/api/jobs/${encodeURIComponent(state.selectedJobId)}/run`, { method: "POST" });
-    showToast("편집을 시작했습니다.");
+    showToast("만들기를 시작했습니다.");
     await refreshJobs();
   } catch (error) { showToast(error.message, "error"); }
 }
@@ -1107,13 +879,7 @@ async function refreshJobs() {
   if (structural) renderJobs();
   else {
     state.jobs.forEach(patchGridCard);
-    const selected = state.jobs.find((job) => job.id === selectedId);
     if (state.view === "watch") renderWatchFeed();
-    if (state.view === "detail" && selected) {
-      patchDetailProgress(selected);
-      renderLiveFactory(selected);
-      watchJobLive(selected);
-    }
     syncDocumentTitle();
   }
   syncPollTimer();
@@ -1261,7 +1027,7 @@ async function saveBatchDrafts() {
 
 async function queueBatchJobs() {
   if (state.health?.imagine?.frozen !== false) {
-    showToast("크레딧 402", "error");
+    showToast("크레딧 부족", "error");
     return;
   }
   const topics = parseBatchTopics();
@@ -1288,10 +1054,9 @@ async function queueBatchJobs() {
 
 function openTemplate(event) {
   event?.preventDefault();
-  rememberOpener(event);
   closeMenu();
-  if (state.view === "watch") state.returnToWatch = true;
-  setView("template");
+  stopWatchFeed($("#watch-feed"));
+  location.assign("/template");
 }
 
 function openSettings(event) {
@@ -1534,7 +1299,7 @@ function closeMenu(event) {
   if (!overlay || overlay.hidden) return false;
   overlay.hidden = true;
   resetMenuCard();
-  if (!["create", "detail", "template", "settings", "machine"].includes(state.view)) {
+  if (!["create", "settings", "machine"].includes(state.view)) {
     document.body.classList.remove("overlay-open");
     restoreOpener();
   }
@@ -1594,7 +1359,6 @@ function closeOverlays(event) {
     restoreOpener();
     return;
   }
-  state.selectedJobId = state.view === "detail" ? null : state.selectedJobId;
   setView("grid");
   renderJobs();
   restoreOpener();
@@ -1639,12 +1403,9 @@ function bindEvents() {
   $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome);
-  $("#open-template")?.addEventListener("click", openTemplate);
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);
-  $("#close-short")?.addEventListener("click", closeOverlays);
-  $("#close-template")?.addEventListener("click", closeOverlays);
   $("#close-settings")?.addEventListener("click", closeOverlays);
   $("#close-machine")?.addEventListener("click", closeOverlays);
   $("#settings-form")?.addEventListener("submit", saveSettings);

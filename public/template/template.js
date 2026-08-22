@@ -1,0 +1,22 @@
+import { escapeSpecHtml, renderLockedSpec } from "../template-spec.mjs";
+
+const APP_TITLE = "PS4_JUSTDOIT";
+
+async function loadTemplatePage() {
+  const root = document.querySelector("#template-root");
+  const title = document.querySelector("#template-title");
+  if (!root) return;
+  try {
+    const response = await fetch("/api/grok-imagine/template");
+    const spec = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(spec.error || `요청 실패 (${response.status})`);
+    document.title = `템플릿 · ${APP_TITLE}`;
+    if (title) title.textContent = spec.title || "잠긴 프롬프트";
+    root.innerHTML = renderLockedSpec(spec);
+  } catch (error) {
+    document.title = `템플릿 · ${APP_TITLE}`;
+    root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><pre>${escapeSpecHtml(error.message)}</pre></div>`;
+  }
+}
+
+void loadTemplatePage();

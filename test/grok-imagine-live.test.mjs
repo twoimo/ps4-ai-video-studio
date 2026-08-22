@@ -151,9 +151,11 @@ test("running factory job emits ordered stage events including compose", async (
 test("studio keeps shorts grid, live factory, and template viewer", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   const app = await readFile(join(process.cwd(), "public", "app.js"), "utf8");
+  const page = await readFile(join(process.cwd(), "public", "template", "index.html"), "utf8");
   assert.match(html, /id="shorts-grid"/);
-  assert.match(html, /id="live-factory"/);
-  assert.match(html, /id="template-overlay"/);
+  assert.equal(html.includes("id=\"live-factory\""), false);
+  assert.equal(html.includes("id=\"template-overlay\""), false);
+  assert.match(page, /id="template-page"/);
   assert.equal(html.includes("id=\"channel-dna\""), false);
   assert.match(app, /EventSource\(`\/api\/jobs\/\$\{encodeURIComponent\(job\.id\)\}\/events\?sse=1`\)/);
   assert.match(app, /setInterval\(pollJobs, 900\)/);

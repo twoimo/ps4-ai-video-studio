@@ -87,19 +87,16 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.ok(createIndex > gridIndex);
   assert.equal(html.includes('id="jobs-list"'), false);
   assert.match(html, /id="create-tile"/);
-  assert.match(html, /id="template-overlay"/);
-  assert.match(html, /id="live-factory"/);
+  assert.equal(html.includes("id=\"template-overlay\""), false);
+  assert.equal(html.includes("id=\"short-overlay\""), false);
+  assert.equal(html.includes("id=\"live-factory\""), false);
   assert.match(html, /id="import-library"/);
-  assert.match(html, /id="open-template"/);
+  assert.match(html, /id="open-template"[^>]*href="\/template"/);
+  assert.match(html, /id="open-template-menu"[^>]*href="\/template"/);
   assert.match(html, /id="open-settings"/);
   assert.match(html, /대본 만들기/);
   assert.match(html, /id="settings-overlay"/);
-  assert.match(html, /class="studio-overlay feed-card" id="short-overlay"/);
-  assert.match(html, /class="draft-close"[^>]*id="close-short"[^>]*aria-label="닫기"/);
-  assert.match(html, /id="close-short"[^>]*>×</);
-  const shortOverlay = html.slice(html.indexOf('id="short-overlay"'), html.indexOf('id="toast"'));
-  assert.equal(shortOverlay.includes("overlay-chrome"), false);
-  assert.equal(shortOverlay.includes("← 라이브러리"), false);
+  assert.equal(html.includes("id=\"close-short\""), false);
   assert.match(html, /목소리 미리 듣기/);
   assert.equal(html.includes("완벽"), false);
   assert.match(html, /option value="grok-imagine" selected/);
@@ -159,9 +156,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /bindFeedScroll\(\)/);
   assert.match(app, /feedObserver\?\.disconnect/);
   assert.match(app, /thumb-stage/);
-  assert.match(app, /class="draft-script"/);
-  assert.match(app, /class="draft-slots"/);
-  assert.match(app, /id="run-draft"/);
+  assert.match(app, /function openMaterials/);
+  assert.match(app, /\/backlot\/p\//);
   assert.match(app, /draftOnly:\s*true/);
   assert.equal(app.includes("autoStart"), false);
   assert.equal(app.includes("function connectBrowser"), false);
@@ -193,7 +189,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /viewport-fit=cover/);
   assert.match(html, /class="studio-overlay feed-card" id="create-overlay"/);
   assert.match(html, /class="studio-overlay feed-card" id="settings-overlay"/);
-  assert.match(html, /class="template-studio" id="template-overlay"/);
+  assert.equal(html.includes("id=\"template-overlay\""), false);
   assert.match(html, /id="settings-bgm-songs"/);
   assert.equal(html.includes("gemini-browser"), false);
   assert.equal(html.includes("browser-start"), false);
@@ -302,7 +298,8 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /<svg class="library-gear"/);
   assert.match(home, /id="import-library">가져오기</);
   assert.match(home, /id="open-board"[^>]*href="\/backlot"/);
-  assert.match(home, /id="open-template">템플릿</);
+  assert.match(home, /id="open-template"[^>]*href="\/template"[^>]*>템플릿</);
+  assert.match(html, /id="open-template-menu"[^>]*href="\/template"[^>]*>템플릿</);
   assert.match(home, /id="open-settings">설정</);
   assert.match(home, /id="refresh-all">새로고침</);
   assert.equal(home.includes("이미 만든 편 가져오기"), false);
@@ -330,7 +327,6 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(home.includes('width="13.6"'), false);
   assert.equal(home.includes('height="19.6"'), false);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
-  assert.match(app, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
   assert.match(app, /document\.title = shortTitle \? `\$\{shortTitle\} · \$\{APP_TITLE\}` : APP_TITLE/);
   assert.match(app, /document\.title = APP_TITLE/);
   assert.equal(home.includes("class=\"sidebar\""), false);
@@ -431,12 +427,10 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /hash === "short"/);
-  assert.match(app, /hash === "short"[\s\S]*\/backlot\/p\//);
-  assert.match(app, /class="draft-facts"/);
-  assert.match(app, /\.slice\(0,\s*4\)/);
-  assert.match(app, /대본 없음/);
-  assert.match(app, /슬롯 없음/);
-  assert.match(app, /previewMarkup/);
+  assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
+  assert.match(app, /function openMaterials/);
+  assert.match(app, /hash === "short"/);
+  assert.match(app, /location\.replace\("\/template"\)/);
   assert.equal(app.includes("preview-unavailable\">${escapeHtml(status.label)}"), false);
   assert.equal(app.includes("아직 영상이 없습니다"), false);
   assert.equal(app.includes('hash === "generation"'), false);
@@ -514,7 +508,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes('class="watch-materials"'), false);
   assert.equal(app.includes("letterbox"), false);
   assert.match(app, /class="watch-close watch-back"/);
-  assert.match(app, /다시 실행/);
+  assert.match(app, /function openMaterials/);
   assert.match(app, /openJob/);
   assert.match(app, /function openDetail/);
   assert.match(app, /short-card-detail/);
@@ -632,7 +626,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(pipeline, /buildGrokImagineScript/);
   assert.match(server, /request\.method === "PATCH"/);
   assert.match(server, /suffix === "draft"/);
-  assert.match(server, /크레딧 402/);
+  assert.match(server, /크레딧 부족/);
+  assert.equal(server.includes("크레딧 402"), false);
+  assert.equal(app.includes("크레딧 402"), false);
+  assert.equal(html.includes("크레딧 402"), false);
   const panel = renderMaterialsPanel({
     id: "job-1",
     topic: "한강 갑문",
@@ -708,7 +705,10 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(html, /id="batch-topics"/);
   assert.match(html, /id="batch-draft"[^>]*>[\s\S]*초안만 저장/);
   assert.match(html, /id="batch-queue"[^>]*>[\s\S]*대기열에 넣고 생성/);
-  assert.match(html, /id="batch-frozen"[^>]*>크레딧 402</);
+  assert.match(html, /id="batch-frozen"[^>]*>크레딧 부족</);
+  assert.equal(html.includes("크레딧 402"), false);
+  assert.equal(app.includes("공장 시작"), false);
+  assert.match(app, /크레딧 부족/);
   assert.match(app, /createMode = "batch"/);
   assert.match(app, /title\.textContent = batch \? "양산" : "새 쇼츠"/);
   assert.match(app, /provider: "grok-imagine"/);

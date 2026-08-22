@@ -26,6 +26,7 @@ import { resolveGrokBinary } from "./grok-imagine-cli.mjs";
 import { inspectJobPrompts, previewFactoryPrompts, PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
 import { getLockedSpec } from "./grok-imagine-spec.mjs";
 import { backlotHealth, handleBacklot, handleBacklotApi } from "./backlot-server.mjs";
+import { handleTemplatePage } from "./template-page.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
 import { compareLibraryJobs, ensureLibraryEpisodes } from "./episode-import.mjs";
@@ -717,7 +718,7 @@ async function startJob(jobId) {
   const current = await readJob(jobId);
   if (current.provider === GROK_IMAGINE_PROVIDER) {
     if (imagineFrozen()) {
-      const error = new Error("크레딧 402");
+      const error = new Error("크레딧 부족");
       error.status = 409;
       throw error;
     }
@@ -1198,6 +1199,8 @@ const server = Bun.serve({
         const response = await handleApi(request, url);
         return response || errorResponse(new Error("API 경로를 찾지 못했습니다."), 404);
       }
+      const templatePage = await handleTemplatePage(request, url);
+      if (templatePage) return templatePage;
       const backlot = await handleBacklot(request, url);
       if (backlot) return backlot;
       return await serveStatic(url.pathname);

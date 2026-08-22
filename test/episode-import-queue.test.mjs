@@ -223,8 +223,7 @@ test("studio keeps import control and seed episode copy", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   const app = await readFile(join(process.cwd(), "public", "app.js"), "utf8");
   assert.match(html, /id="shorts-grid"/);
-  assert.match(html, /id="live-factory"/);
-  assert.match(html, /id="template-overlay"/);
+  assert.equal(html.includes("id=\"template-overlay\""), false);
   assert.match(html, /id="import-library"/);
   assert.match(html, /id="import-library">가져오기</);
   assert.equal(html.includes("playground-cistern"), false);
