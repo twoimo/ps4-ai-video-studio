@@ -1014,7 +1014,7 @@ function openMachine(event) {
 }
 
 function pipelineChipClass({ ready, blocked, paused }) {
-  if (paused) return " warn";
+  if (paused) return " pause";
   if (blocked) return " danger";
   if (!ready) return " warn";
   return " ok";
@@ -1025,10 +1025,11 @@ function renderChips(health = {}) {
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
   const frozen = health.imagine?.frozen !== false;
   const pictureReady = grok && !frozen;
+  const pausedTitle = "지금은 그림을 안 만들어요";
   const stages = [
     { label: "대본", ready: grok, blocked: false, title: grok ? "대본 · grok CLI 텍스트" : "대본을 쓸 수 없습니다" },
-    { label: "그림", ready: pictureReady, paused: frozen, title: pictureReady ? "그림 · Grok Imagine" : "지금은 그림을 안 만들어요" },
-    { label: "움직임", ready: pictureReady, paused: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : "지금은 다시 못 만들어요" },
+    { label: "그림", ready: pictureReady, paused: frozen, title: pictureReady ? "그림 · Grok Imagine" : pausedTitle },
+    { label: "움직임", ready: pictureReady, paused: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : pausedTitle },
     { label: "편집", ready: ffmpeg, blocked: false, title: ffmpeg ? "편집 · ffmpeg" : "편집을 할 수 없습니다" }
   ];
   return `<nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정">${stages.map((stage, index) => {
@@ -1053,7 +1054,6 @@ function renderStudioChrome() {
   const health = state.health || {};
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
   const chips = $("#studio-chips");
   if (chips) {
     chips.hidden = false;
@@ -1066,7 +1066,6 @@ function renderStudioChrome() {
     if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
     if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
     if (!grok) reasons.push("대본을 쓸 수 없습니다");
-    if (frozen) reasons.push("지금은 그림을 안 만들어요");
     banner.hidden = reasons.length === 0;
     banner.textContent = reasons.join(" · ");
   }
