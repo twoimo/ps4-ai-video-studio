@@ -726,7 +726,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /visualViewport/);
   assert.match(app, /--vv-bottom/);
   assert.equal(app.includes("event.submitter"), false);
-  assert.match(app, /event\?\.target\?\.querySelector\?\("#create-submit"\)/);
+  assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
   assert.match(html, /id="create-form"[^>]*onsubmit="return false"/);
   assert.match(html, /id="settings-form"[^>]*onsubmit="return false"/);
   assert.match(html, /곡을 불러오는 중/);
