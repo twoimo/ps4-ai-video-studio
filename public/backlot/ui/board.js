@@ -1,11 +1,11 @@
 // Backlot project board — renders BoardState and stays live via SSE.
 
 import {
-  STAGE_ICONS, bindBacklotLeave, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
-  getJSON, mediaURL, pauseBacklotMedia, subscribe, thumbURL, waveBars,
+  STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
+  getJSON, mediaURL, subscribe, thumbURL, waveBars,
 } from "/backlot/ui/lib.js";
 
-const rawProjectPath = (location.pathname.split("/p/")[1] || "").replace(/\/+$/, "");
+const rawProjectPath = location.pathname.split("/p/")[1] || "";
 const projectId = decodeURIComponent(rawProjectPath);
 const encodedProjectId = encodeURIComponent(projectId);
 const app = document.getElementById("app");
@@ -42,7 +42,6 @@ function renderThemeToggle() {
 }
 
 applyTheme(currentTheme);
-bindBacklotLeave();
 
 // ---------------------------------------------------------------------------
 // header slate
@@ -93,16 +92,10 @@ function renderSlate(s) {
   return el("header", { class: "slate" },
     el("div", { class: "clapper" }),
     el("div", {},
-      el("a", { class: "wordmark", href: "/backlot", style: "text-decoration:none", onclick: () => pauseBacklotMedia() }, "Backlot"),
+      el("a", { class: "wordmark", href: "/", style: "text-decoration:none" }, "Backlot"),
       el("h1", {}, s.title),
     ),
     ...chips,
-    el("a", {
-      class: "chip studio-return",
-      href: "/backlot",
-      style: "text-decoration:none",
-      onclick: () => pauseBacklotMedia(),
-    }, "Library"),
     el("div", { class: "spacer" }),
     renderThemeToggle(),
     liveEl,
@@ -980,26 +973,6 @@ function stateAt(s, T) {
   return view;
 }
 
-function captionedMasterPath(s) {
-  if (s.media?.captioned_master) return s.media.captioned_master;
-  const renders = s.media?.renders || [];
-  const named = renders.find((item) => /chat|caption/i.test(item.path || ""));
-  return named?.path || null;
-}
-
-function renderStudioMaster(s) {
-  const path = captionedMasterPath(s);
-  if (!path) return null;
-  return el("aside", { class: "studio-master", "aria-label": "captioned master" },
-    el("video", {
-      src: mediaURL(s.project_id, path),
-      controls: "",
-      playsinline: "",
-      muted: "",
-      preload: "metadata",
-    }));
-}
-
 function renderReplayBar(s) {
   const bounds = replayBounds(s);
   if (!bounds) return null;
@@ -1124,8 +1097,6 @@ function render() {
       if (section) app.append(section);
     }
   }
-  const master = renderStudioMaster(s);
-  if (master) app.append(master);
 }
 
 // Defensive normalization (F-02): the server contract guarantees these

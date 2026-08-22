@@ -1041,29 +1041,7 @@ body:not(.first) .approval-review { animation: none; }
   .approval-status { white-space: normal; }
 }
 
-/* Secondary captioned master after the living board.
-   Never a board column and never a 400 overlay card. */
-.studio-master {
-  margin-top: 28px;
-  width: min(220px, 42vw);
-  border: 1px solid var(--border);
-  background: var(--media-bg);
-  overflow: hidden;
-}
-.studio-master video {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 9 / 16;
-  object-fit: cover;
-}
-.studio-return {
-  text-decoration: none;
-  color: inherit;
-}
-
-/* Studio extra: materials after the original wrap.
-   Not a wrap.work column and not a board restyle. */
+/* Studio extra: materials after the original wrap. Does not change OM layout. */
 .materials {
   box-sizing: border-box;
   max-width: 1440px;
@@ -1121,9 +1099,3 @@ body:not(.first) .approval-review { animation: none; }
 .materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
 .materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
 .materials .materials-status[data-kind="error"], .materials .inspect-frozen { color: var(--red); }
-@media (max-width: 900px) {
-  .materials { max-width: none; width: 100%; padding: 0 18px 24px; }
-}
-@media (max-width: 520px) {
-  .materials { padding: 0 12px 24px; }
-}

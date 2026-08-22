@@ -120,7 +120,13 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(specJs, /id="spec-loop"/);
   assert.equal(app.includes('setView("template")'), false);
   assert.equal(app.includes('id="template-overlay"'), false);
-  assert.match(boardJs, /href: "\/backlot"/);
+  assert.match(boardJs, /from "\/backlot\/ui\/lib\.js"/);
+  assert.match(boardJs, /href: "\/"/);
+  assert.match(libraryJs, /from "\/backlot\/ui\/lib\.js"/);
+  assert.match(libraryJs, /href: `\/p\/\$\{p\.project_id\}/);
+  assert.doesNotMatch(boardJs, /bindBacklotLeave|pauseBacklotMedia|studio-master|studio-return/);
+  assert.doesNotMatch(libJs, /bindBacklotLeave|pauseBacklotMedia/);
+  assert.doesNotMatch(library, /backlot-close|PS4_JUSTDOIT|viewport-fit/);
   assert.match(css, /\.wrap\s*\{\s*max-width:\s*1440px/);
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.match(css, /@media \(max-width: 520px\)/);
@@ -128,6 +134,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /\.wrap\.work/);
   assert.doesNotMatch(css, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
   assert.doesNotMatch(css, /@media \(max-width: 720px\)/);
+  assert.match(css, /Studio extra: materials after the original wrap/);
+  assert.ok(css.indexOf(".wrap { max-width: 1440px") < css.indexOf("Studio extra: materials"), "materials CSS is appended after OM");
   assert.doesNotMatch(css, /max-width:\s*440px/);
   assert.doesNotMatch(css, /max-width:\s*400px/);
   assert.doesNotMatch(board, /목록/);
