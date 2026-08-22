@@ -203,7 +203,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /@import url\('\.\/studio-chrome\.css'\)/);
   assert.match(css, /--rows:\s*1/);
   assert.match(css, /--chrome:\s*calc\(52px \+ env\(safe-area-inset-top, 0px\)\)/);
-  assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /--thumb-h:\s*calc\(\(var\(--vv-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
   assert.equal(css.includes("round(up"), false);
   assert.match(css, /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/);
@@ -243,10 +243,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /behavior:\s*"instant"/);
   assert.match(chrome, /export function syncOverlayLock/);
   assert.match(chrome, /--vv-height/);
-  assert.match(chrome, /node\.style\.left/);
-  assert.match(chrome, /node\.style\.width/);
-  assert.match(chrome, /vv\.offsetLeft/);
-  assert.match(chrome, /vv\.width/);
+  assert.match(chrome, /node\.style\.left = `\$\{Math\.round\(vv\.offsetLeft \|\| 0\)\}px`/);
+  assert.match(chrome, /node\.style\.width = `\$\{Math\.round\(vv\.width\)\}px`/);
+  assert.match(chrome, /\.studio-overlay, #satellite-menu/);
   assert.match(chrome, /scrollTop/);
   assert.equal(chrome.includes("scrollIntoView"), false);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
@@ -591,7 +590,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-slide\s*\{[^}]*contain:\s*size layout/);
   assert.equal(/\.watch-slide\s*\{[^}]*isolation:\s*isolate/.test(css), false);
   assert.equal(/\.watch-slide\s*\{[^}]*height:\s*100dvh/.test(css), false);
-  assert.match(css, /--watch-col:\s*min\(100%,\s*calc\(100dvh \* 9 \/ 16\)\)/);
+  assert.match(css, /--watch-col:\s*min\(100%,\s*calc\(var\(--vv-height,\s*100dvh\) \* 9 \/ 16\)\)/);
   assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*100%/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100%/);
   assert.match(css, /\.watch-slide\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
@@ -988,6 +987,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /createMode === "batch"/);
   assert.match(app, /querySelector\?\.\("#batch-topics"\)/);
   assert.match(app, /querySelector\?\.\("#topic"\)/);
+  assert.match(app, /matchMedia\?\.\("\(pointer: coarse\)"\)/);
+  assert.match(app, /if \(!coarse\)/);
   assert.match(app, /active && root\.contains\(active\)/);
   assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
   assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\{ preventScroll: true \}\)/);
@@ -1080,6 +1081,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome h1\s*\{[^}]*display:\s*none/);
   assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
   assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
   assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
   assert.match(app, /function bindEvents\(\) \{\s*bindStudioPipe\(document, openMachine\);/);
   assert.ok(app.indexOf("bindEvents();") < app.indexOf("void warnIfFactoryToolsMissing()"), "chips bind before health");

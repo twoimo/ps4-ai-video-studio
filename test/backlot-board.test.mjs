@@ -232,6 +232,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-width:\s*44px/);
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /\.materials textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
   assert.match(css, /\.materials\s*\{[^}]*var\(--vv-bottom/);
   assert.match(css, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);

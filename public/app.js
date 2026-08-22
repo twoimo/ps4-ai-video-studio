@@ -187,11 +187,20 @@ function overlayStartFocus(root) {
   if (root.id === "create-overlay") {
     const active = document.activeElement;
     if (active && root.contains(active) && active !== root && !active.classList?.contains("draft-close")) return;
-    const batch = state.createMode === "batch";
-    const target = batch ? root.querySelector?.("#batch-topics") : root.querySelector?.("#topic");
-    if (target && target.closest("[hidden]") == null && typeof target.focus === "function") {
-      target.focus({ preventScroll: true });
-      scrollFocusIntoPanel(target);
+    const coarse = Boolean(globalThis.matchMedia?.("(pointer: coarse)")?.matches);
+    if (!coarse) {
+      const batch = state.createMode === "batch";
+      const target = batch ? root.querySelector?.("#batch-topics") : root.querySelector?.("#topic");
+      if (target && target.closest("[hidden]") == null && typeof target.focus === "function") {
+        target.focus({ preventScroll: true });
+        scrollFocusIntoPanel(target);
+        return;
+      }
+    }
+    const panel = root.querySelector?.(".overlay-panel");
+    if (coarse && panel && typeof panel.focus === "function") {
+      if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
+      panel.focus({ preventScroll: true });
       return;
     }
   }

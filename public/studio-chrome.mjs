@@ -74,7 +74,7 @@ export function pinNodeToVisualViewport(node, open) {
 }
 
 export function pinOverlaysToVisualViewport(root = document) {
-  root.querySelectorAll?.(".studio-overlay").forEach((node) => {
+  root.querySelectorAll?.(".studio-overlay, #satellite-menu").forEach((node) => {
     pinNodeToVisualViewport(node, !node.hidden);
   });
 }
