@@ -292,8 +292,9 @@ function setView(view, options = {}) {
     const nextHash = hashForView(state.view);
     if (location.hash !== nextHash) {
       skipStaleHashChange();
+      const createSwap = prev === "create" && next === "create";
       if (prev === "grid" && next !== "grid") history.pushState({ studioView: next }, "", nextHash);
-      else history.replaceState(null, "", nextHash);
+      else history.replaceState(createSwap ? history.state : null, "", nextHash);
     }
   }
   if (state.view === "create") {
@@ -1242,10 +1243,28 @@ function syncPollTimer() {
 
 function keepPaintedGrid(error) {
   if (!isAbortError(error)) return false;
-  return Boolean(
-    state.jobs.length
-    || document.querySelector("#shorts-grid .short-card, #shorts-grid .short-skeleton")
-  ) || !state.jobsLoaded;
+  const grid = document.querySelector("#shorts-grid");
+  const painted = [...(grid?.children || [])].some((node) => {
+    if (node.classList?.contains("is-skeleton")) return false;
+    return node.classList?.contains("short-card") || node.id === "create-tile" || node.id === "grid-empty";
+  });
+  return Boolean(state.jobs.length || painted) || !state.jobsLoaded;
+}
+
+function failJobsLoad(error) {
+  if (isAbortError(error)) {
+    keepPaintedGrid(error);
+    return;
+  }
+  state.jobsLoaded = true;
+  renderJobs();
+  const text = friendlyJobError(error) || "불러오지 못했습니다.";
+  const banner = $("#feed-banner");
+  if (banner) {
+    banner.hidden = false;
+    banner.textContent = text;
+  }
+  showToast(text, "error");
 }
 
 let jobsRefresh = null;
@@ -1407,8 +1426,13 @@ function syncCreateMode() {
 function openCreate(event) {
   event?.preventDefault();
   rememberOpener(event);
+  const swap = state.view === "create";
   state.createMode = "single";
-  setView("create");
+  setView("create", { skipHash: swap });
+  if (swap && location.hash !== "#create") {
+    skipStaleHashChange();
+    history.replaceState(history.state, "", "#create");
+  }
   void hydrateCreateSlots();
 }
 
@@ -1416,8 +1440,13 @@ function openBatch(event) {
   event?.preventDefault();
   rememberOpener(event);
   closeMenu({ navigate: true });
+  const swap = state.view === "create";
   state.createMode = "batch";
-  setView("create");
+  setView("create", { skipHash: swap });
+  if (swap && location.hash !== "#batch") {
+    skipStaleHashChange();
+    history.replaceState(history.state, "", "#batch");
+  }
   void hydrateCreateSlots();
 }
 
@@ -2073,8 +2102,7 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
-    if (isAbortError(error)) return;
-    showToast(error, "error");
+    failJobsLoad(error);
   }
 }
 

@@ -453,7 +453,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
   assert.match(libraryJs, /function failLibrary/);
-  assert.match(libraryJs, /querySelector\("\.lib-card"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\\\.is-skeleton\)"\)/);
   assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
   assert.match(boardJs, /function failBoard/);
@@ -654,7 +654,7 @@ test("library empty Korean, fail clears skeletons, and hero uses an auto 9:16 bo
   const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
   assert.match(library, /아직 보드가 없습니다/);
   assert.doesNotMatch(library, /No projects yet/);
-  assert.match(libraryJs, /querySelector\("\.lib-card"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\\\.is-skeleton\)"\)/);
   assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
   assert.match(ui, /key === "ps4-studio"\) return "보드"/);
@@ -695,4 +695,27 @@ test("template spec JSON still carries N=288, slots, locks, and live_action do-n
   const live = spec.types.find((type) => type.id === "live_action");
   assert.equal(live.factory, "do-not-clone");
   assert.equal(JSON.stringify(spec).includes("쇼츠 공장"), false);
+});
+
+test("library swallows long-press, materials holds IME toast, and board keep ignores skeletons", async () => {
+  const root = process.cwd();
+  const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  const materials = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
+  const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  assert.match(libraryJs, /function armClickSwallow/);
+  assert.match(libraryJs, /armClickSwallow\(card\)/);
+  assert.match(libraryJs, /keepPaintedGrid\(grid\)/);
+  assert.match(boardJs, /keepPaintedGrid\(app\)/);
+  assert.match(ui, /export function keepPaintedGrid/);
+  assert.match(ui, /classList\?\.contains\("is-skeleton"\)/);
+  assert.match(materials, /toast\.held/);
+  assert.match(materials, /function flushHeldToast/);
+  assert.match(materials, /keyCode === 229/);
+  assert.match(materials, /isComposing/);
+  assert.match(materials, /ime-open/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
 });

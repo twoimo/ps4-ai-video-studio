@@ -1,4 +1,4 @@
-import { displayPipelineLabel, displayStageLabel, displayTitle, friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
+import { displayPipelineLabel, displayStageLabel, displayTitle, friendlyJobError, keepPaintedGrid, projectsFromListPayload } from "../../shorts-ui.mjs";
 import { el, fmtAgo, getJSON, readStoredTheme, writeStoredTheme, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
@@ -32,10 +32,18 @@ function initLibrary() {
   applyTheme(currentTheme);
   document.getElementById("liveBadge")?.before(renderThemeToggle());
   grid?.addEventListener("contextmenu", (event) => {
-    if (!event.target?.closest?.(".lib-card")) return;
+    const card = event.target?.closest?.(".lib-card");
+    if (!card) return;
     event.preventDefault();
     event.stopPropagation();
+    armClickSwallow(card);
   });
+  grid?.addEventListener("click", (event) => {
+    const card = event.target?.closest?.(".lib-card");
+    if (!card?.dataset?.clickSwallow) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
   render().catch(failLibrary);
   if (!new URLSearchParams(location.search).has("static")) {
     subscribe("/api/library/events", () => render().catch(failLibrary));
@@ -52,6 +60,18 @@ const RAIL_LABELS = {
   assets: "그림 고치기",
   edit: "편집"
 };
+
+function armClickSwallow(node) {
+  if (!node) return;
+  node.dataset.clickSwallow = "1";
+  const swallow = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    node.removeEventListener("click", swallow, true);
+    delete node.dataset.clickSwallow;
+  };
+  node.addEventListener("click", swallow, true);
+}
 
 function stageStatusKo(status) {
   const labels = {
@@ -129,7 +149,7 @@ function failLibrary(error) {
   const count = document.getElementById("count");
   const empty = document.getElementById("empty");
   const grid = document.getElementById("grid");
-  if (grid?.querySelector(".lib-card")) return;
+  if (keepPaintedGrid(grid) && grid?.querySelector(".lib-card:not(.is-skeleton)")) return;
   if (count) count.textContent = "불러오지 못함";
   if (grid) grid.innerHTML = "";
   if (empty) {

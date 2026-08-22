@@ -803,6 +803,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /class="watch-sound"/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?top:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?z-index:\s*7/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
   assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
   assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-line-clamp:\s*2/);
@@ -1188,7 +1190,9 @@ test("watch title blocks Android long-press callout and close does not double op
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
   assert.match(css, /\.watch-meta\s*\{[^}]*-webkit-touch-callout:\s*none/);
   assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-touch-callout:\s*none/);
-  assert.match(feed, /closest\?\.\("\.watch-meta, \.watch-meta h2, \.watch-slide-chrome"\)/);
+  assert.match(feed, /addEventListener\("contextmenu"/);
+  assert.match(feed, /event\.preventDefault\?\.\(\)/);
+  assert.doesNotMatch(feed, /closest\?\.\("\.watch-meta, \.watch-meta h2, \.watch-slide-chrome"\)/);
   assert.match(app, /function skipStaleHashChange/);
   assert.match(app, /ignoreNextHashChange/);
   assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);

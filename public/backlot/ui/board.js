@@ -1,6 +1,6 @@
 // Backlot project board — renders BoardState and stays live via SSE.
 
-import { displayItemLabel, displayPipelineLabel, displayStageLabel, displayTitle } from "../../shorts-ui.mjs";
+import { displayItemLabel, displayPipelineLabel, displayStageLabel, displayTitle, keepPaintedGrid } from "../../shorts-ui.mjs";
 import {
   STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
   getJSON, mediaURL, projectIdFromPath, readStoredTheme, writeStoredTheme, subscribe, thumbURL, waveBars,
@@ -1186,7 +1186,7 @@ async function refresh() {
 
 function failBoard() {
   if (!app) return;
-  if (state || app.querySelector(".slate, .rail, .main-col")) return;
+  if (keepPaintedGrid(app) && (state || app.querySelector(".slate, .rail, .main-col"))) return;
   app.innerHTML = "";
   app.append(el("div", { class: "empty", style: "margin-top:80px" },
     el("div", { class: "big" }, "프로젝트를 찾을 수 없습니다")));

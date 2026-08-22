@@ -27,8 +27,27 @@ function status(text, kind = "") {
   note.dataset.kind = kind;
 }
 
+function imeOpen() {
+  return document.documentElement?.classList?.contains("ime-open");
+}
+
 function toast(text, kind = "") {
+  if (imeOpen()) {
+    toast.held = { text, kind };
+    return;
+  }
   status(text, kind);
+}
+
+function flushHeldToast() {
+  if (imeOpen() || !toast.held) return;
+  const next = toast.held;
+  toast.held = null;
+  status(next.text, next.kind);
+}
+
+function compositionEnter(event) {
+  return Boolean(event?.isComposing || event?.keyCode === 229 || event?.which === 229);
 }
 
 function promptsForPanel(job, prompts) {
@@ -88,6 +107,14 @@ function bindMaterials(frozen) {
     event.preventDefault();
     toast("영상 주제를 4자 이상 입력하세요.", "error");
   });
+  root.querySelector("[data-draft-topic], .inspect-topic")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    if (!compositionEnter(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  globalThis.visualViewport?.addEventListener("resize", flushHeldToast);
+  globalThis.visualViewport?.addEventListener("scroll", flushHeldToast);
   const save = async (event) => {
     event?.preventDefault?.();
     const topic = root.querySelector("[data-draft-topic], .inspect-topic");

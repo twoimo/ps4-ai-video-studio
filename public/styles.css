@@ -272,6 +272,10 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
 .artifact-link b { margin-left: auto; font-weight: 400; }
 
 body.template-page { display: block; overflow: auto; }
+body.template-page .library-board-toggle[href="/backlot"],
+body.template-page .library-board-toggle[href="/template"] {
+  display: none;
+}
 .template-studio {
   display: block;
   position: relative;
@@ -339,7 +343,7 @@ body.template-page { display: block; overflow: auto; }
 
 #watch-feed,
 #watch-feed.watch-feed,
-.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; overscroll-behavior: none; container-type: size; }
+.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; overscroll-behavior: none; container-type: size; -webkit-touch-callout: none; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
 body.watch-open #watch-feed,
@@ -400,8 +404,9 @@ body.watch-open .watch-feed { display: block; }
   position: absolute;
   left: auto;
   right: 0;
+  top: auto;
   bottom: max(68px, env(safe-area-inset-bottom));
-  z-index: 8;
+  z-index: 7;
   min-width: 44px;
   min-height: 44px;
   padding: 0;
@@ -460,7 +465,9 @@ body.watch-open .watch-feed { display: block; }
   #watch-feed .watch-column .watch-sound {
     left: auto;
     right: 0;
+    top: auto;
     bottom: max(68px, env(safe-area-inset-bottom));
+    z-index: 7;
   }
 }
 .watch-meta { min-width: 0; -webkit-touch-callout: none; user-select: none; }

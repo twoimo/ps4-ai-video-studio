@@ -142,6 +142,21 @@ export function frozenRemakeLabel(frozen = false) {
   return frozen ? "지금은 못 만들어요" : "다시 만들기";
 }
 
+export function healthTextKo(text, fallback = "단계") {
+  const raw = String(text || "").trim();
+  if (!raw) return fallback;
+  const parts = raw.split(/\s*[·•|,]\s*/).map((part) => part.trim()).filter(Boolean);
+  const korean = parts.filter((part) => /[가-힣]/.test(part) && !/[A-Za-z]/.test(part));
+  if (korean.length) return korean.join(" · ");
+  if (/[가-힣]/.test(raw) && !/[A-Za-z]/.test(raw)) return raw;
+  return fallback;
+}
+
+export function keepPaintedGrid(root) {
+  if (!root) return false;
+  return [...(root.children || [])].some((node) => !node.classList?.contains("is-skeleton"));
+}
+
 export function displayPipelineLabel(name) {
   const key = String(name || "").trim();
   if (key === "ps4-studio") return "보드";

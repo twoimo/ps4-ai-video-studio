@@ -1,3 +1,5 @@
+import { healthTextKo } from "./shorts-ui.mjs";
+
 export function escapePipeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
@@ -48,7 +50,7 @@ export function renderMachineSheetHtml(health = {}) {
   const stages = pipelineStages(health);
   return `<h2 id="machine-title">사양</h2><p>${stages.map((stage) => {
     const status = stage.ready ? "준비" : stage.paused ? PIPE_PAUSED : stage.title;
-    return `${escapePipeHtml(stage.label)} ${escapePipeHtml(status)}`;
+    return `${escapePipeHtml(healthTextKo(stage.label))} ${escapePipeHtml(healthTextKo(status))}`;
   }).join(" · ")}</p>`;
 }
 

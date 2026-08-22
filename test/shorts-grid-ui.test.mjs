@@ -849,6 +849,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(html, /class="watch-sound"[^>]*hidden/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?top:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?z-index:\s*7/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
   assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
   assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-line-clamp:\s*2/);
@@ -1354,7 +1356,9 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /resetMenuCard\(\)/);
   assert.equal(html.includes(">Back<"), false);
   assert.equal(html.includes(">Back</"), false);
-  assert.match(html, /id="menu-batch"[^>]*href="#batch"[^>]*>양산</);
+  assert.match(html, /id="menu-batch">양산</);
+  assert.match(html, /<button type="button" id="menu-batch">양산</);
+  assert.doesNotMatch(html, /id="menu-batch"[^>]*href="#batch"/);
   assert.match(html, /id="batch-topics"/);
   assert.match(html, /id="topic"[^>]*enterkeyhint="done"/);
   assert.match(html, /id="topic"[^>]*autocomplete="off"/);
@@ -1644,4 +1648,28 @@ test("leftover UI 쇼츠 becomes 영상 and batch Back ignores stale hash", asyn
   assert.match(app, /try \{ source\.close\(\)/);
   assert.match(app, /sameLive && shortCardUnchanged/);
   assert.doesNotMatch(app, /\$\("#home-brand"\)\?\.addEventListener\("click", openHome\);\s*bindWatchFeed/);
+});
+
+test("failJobsLoad paints create+empty, batch is a button, and health sheet stays Korean", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const ui = await readFile(join(publicDir, "shorts-ui.mjs"), "utf8");
+  const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
+  assert.match(app, /function failJobsLoad/);
+  assert.match(app, /state\.jobsLoaded = true/);
+  assert.match(app, /failJobsLoad\(error\)/);
+  assert.match(app, /is-skeleton/);
+  assert.match(html, /short-skeleton is-skeleton/);
+  assert.match(html, /<button type="button" id="menu-batch">양산</);
+  assert.doesNotMatch(html, /id="menu-batch"[^>]*href="#batch"/);
+  assert.match(app, /const swap = state\.view === "create"/);
+  assert.match(app, /setView\("create", \{ skipHash: swap \}\)/);
+  assert.match(app, /const createSwap = prev === "create" && next === "create"/);
+  assert.match(ui, /export function healthTextKo/);
+  assert.match(pipe, /healthTextKo\(stage\.label\)/);
+  assert.match(pipe, /healthTextKo\(status\)/);
+  assert.match(css, /body\.template-page \.library-board-toggle\[href="\/backlot"\]/);
+  assert.match(css, /body\.template-page \.library-board-toggle\[href="\/template"\]/);
+  assert.equal(html.includes("쇼츠"), false);
 });
