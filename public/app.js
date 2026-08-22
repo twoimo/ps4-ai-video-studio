@@ -401,6 +401,17 @@ function createTileMarkup() {
   return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
 }
 
+function bindCreateTile() {
+  const tile = $("#create-tile");
+  if (!tile || tile.dataset.bound === "1") return;
+  tile.dataset.bound = "1";
+  tile.addEventListener("click", openCreate);
+  tile.addEventListener("contextmenu", (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+  });
+}
+
 function jobCardsMarkup() {
   return state.jobs.map(renderShortCard).join("");
 }
@@ -684,8 +695,20 @@ function canDeleteJob(job) {
   return job && ["draft", "failed", "queued"].includes(job.status);
 }
 
-let deletePushed = false;
+let studioLayer = "";
 let deleteSwallowUntil = 0;
+
+function pushStudioLayer(layer) {
+  if (!layer || studioLayer === layer) return;
+  history.pushState({ studioLayer: layer }, "", location.href);
+  studioLayer = layer;
+}
+
+function clearStudioLayer(options = {}) {
+  if (!studioLayer) return;
+  studioLayer = "";
+  if (!options.fromPop) history.back();
+}
 
 function deleteClickSwallowed(event) {
   if (Date.now() >= deleteSwallowUntil) return false;
@@ -705,9 +728,7 @@ function closeDeleteConfirm(options = {}) {
   }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
-  const shouldBack = deletePushed;
-  deletePushed = false;
-  if (shouldBack && !options.fromPop) history.back();
+  if (studioLayer === "confirm") clearStudioLayer(options);
   return true;
 }
 
@@ -723,10 +744,7 @@ function askDeleteJob(job) {
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
   deleteSwallowUntil = Date.now() + 420;
-  if (!deletePushed) {
-    history.pushState({ deleteConfirm: 1 }, "", location.href);
-    deletePushed = true;
-  }
+  pushStudioLayer("confirm");
   pinOverlaysToVisualViewport();
   syncOverlayLock();
   trapOverlay("#delete-overlay");
@@ -772,6 +790,7 @@ function bindShortCard(card) {
   };
   const fireDelete = () => {
     if (fired || moved) return;
+    if (!canDeleteJob(state.jobs.find((item) => item.id === jobId))) return;
     fired = true;
     swallowClick = true;
     swallowUntil = Date.now() + 420;
@@ -781,6 +800,7 @@ function bindShortCard(card) {
   const startHold = (event) => {
     if (event?.button != null && event.button !== 0) return;
     if (event?.target?.closest?.(".short-card-detail")) return;
+    if (!canDeleteJob(state.jobs.find((item) => item.id === jobId))) return;
     fired = false;
     moved = false;
     swallowClick = false;
@@ -829,6 +849,7 @@ function bindShortCard(card) {
   card.addEventListener("contextmenu", (event) => {
     event?.preventDefault?.();
     if (event?.target?.closest?.(".short-card-detail")) return;
+    if (!canDeleteJob(state.jobs.find((item) => item.id === jobId))) return;
     fireDelete();
   });
 }
@@ -855,7 +876,7 @@ function renderJobs() {
   const grid = $("#shorts-grid");
   if (grid && state.jobsLoaded) {
     grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}${emptyGridNote()}<div class="feed-sentinel"></div>`;
-    $("#create-tile")?.addEventListener("click", openCreate);
+    bindCreateTile();
     $$(".short-card[data-job-id]").forEach(bindShortCard);
     bindFeedScroll();
     sizeShortsGrid();
@@ -1626,8 +1647,6 @@ function resetMenuCard() {
   if (result) result.hidden = true;
 }
 
-let menuPushed = false;
-
 function closeMenu(event, options = {}) {
   event?.preventDefault?.();
   const overlay = $("#menu-overlay");
@@ -1640,9 +1659,7 @@ function closeMenu(event, options = {}) {
   }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
-  const shouldBack = menuPushed;
-  menuPushed = false;
-  if (shouldBack && !options.fromPop) history.back();
+  if (studioLayer === "menu") clearStudioLayer(options);
   return true;
 }
 
@@ -1658,10 +1675,7 @@ function openMenu(event) {
   resetMenuCard();
   overlay.hidden = false;
   document.body.classList.add("overlay-open");
-  if (!menuPushed) {
-    history.pushState({ studioMenu: 1 }, "", location.href);
-    menuPushed = true;
-  }
+  pushStudioLayer("menu");
   pinOverlaysToVisualViewport();
   syncOverlayLock();
   trapOverlay("#menu-overlay");
@@ -1771,7 +1785,7 @@ function bindEvents() {
   });
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
-  $("#create-tile")?.addEventListener("click", openCreate);
+  bindCreateTile();
   $("#menu-create")?.addEventListener("click", (event) => {
     closeMenu();
     if (state.view === "watch") state.returnToWatch = true;
@@ -1816,13 +1830,12 @@ function bindEvents() {
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
   window.addEventListener("popstate", () => {
-    if (deletePushed) {
+    if (studioLayer === "confirm") {
       closeDeleteConfirm({ fromPop: true });
       return;
     }
-    if (menuPushed) {
+    if (studioLayer === "menu") {
       closeMenu(null, { fromPop: true });
-      return;
     }
   });
   window.addEventListener("keydown", (event) => {
