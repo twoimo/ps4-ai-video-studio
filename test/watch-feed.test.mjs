@@ -19,7 +19,7 @@ import {
   wrapWatchFeed
 } from "../public/watch-feed.mjs";
 
-function fakeVideo(time = 4) {
+function fakeVideo(time = 4, options = {}) {
   return {
     paused: false,
     muted: true,
@@ -41,9 +41,14 @@ function fakeVideo(time = 4) {
       return name === "src" ? this.src : null;
     },
     removeAttribute() {},
+    setAttribute() {},
     addEventListener() {},
     play() {
       this.playCalls += 1;
+      if (options.rejectUnmuted && !this.muted) {
+        this.paused = true;
+        return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
+      }
       this.paused = false;
       return Promise.resolve();
     },
@@ -281,13 +286,70 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   assert.equal(video.playCalls, 3);
 });
 
-test("playWatchFeed never assigns muted true", async () => {
+test("playWatchFeed never starts muted and only mutes after play reject", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
-  assert.equal(feed.includes("muted = true"), false);
+  const playFn = feed.slice(feed.indexOf("function playWithMuteFallback"), feed.indexOf("function revealAndPlay"));
+  const mutedFn = feed.slice(feed.indexOf("function playMutedThenUnmute"), feed.indexOf("function playWithMuteFallback"));
   assert.equal(app.includes("muted = true"), false);
   assert.equal(feed.includes("muted=true"), false);
+  assert.equal(feed.includes("탭해서 재생"), false);
   assert.match(feed, /video\.muted = false/);
+  assert.match(playFn, /video\.muted = false/);
+  assert.ok(playFn.indexOf("video.play()") < playFn.indexOf("playMutedThenUnmute"));
+  assert.match(mutedFn, /video\.muted = true/);
+  assert.match(mutedFn, /video\.play\(\)/);
+  assert.match(feed, /pointerup/);
+});
+
+test("playWatchFeed muted-fallback keeps video playing after unmute fail", async () => {
+  let muted = true;
+  let playCalls = 0;
+  const video = {
+    paused: true,
+    volume: 1,
+    preload: "none",
+    src: "",
+    poster: "",
+    currentTime: 0,
+    parentElement: null,
+    dataset: {},
+    readyState: 0,
+    style: { visibility: "", opacity: "" },
+    get muted() { return muted; },
+    set muted(value) {
+      if (value === false && playCalls >= 2) throw new Error("unmute blocked");
+      muted = value;
+    },
+    closest() { return null; },
+    getAttribute() { return null; },
+    removeAttribute() {},
+    setAttribute() {},
+    addEventListener() {},
+    play() {
+      playCalls += 1;
+      this.playCalls = playCalls;
+      if (!muted && playCalls === 1) {
+        this.paused = true;
+        return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
+      }
+      this.paused = false;
+      return Promise.resolve();
+    },
+    pause() { this.paused = true; }
+  };
+  await playWatchFeed(video);
+  assert.equal(playCalls, 2);
+  assert.equal(video.muted, true);
+  assert.equal(video.paused, false);
+});
+
+test("playWatchFeed same-turn muted play after unmuted reject", async () => {
+  const video = fakeVideo(0, { rejectUnmuted: true });
+  await playWatchFeed(video);
+  assert.equal(video.playCalls, 2);
+  assert.equal(video.paused, false);
+  assert.equal(video.muted, false);
 });
 
 test("createWatchPlayer builds one video with createElement", () => {

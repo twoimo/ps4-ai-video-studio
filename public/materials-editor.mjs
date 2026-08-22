@@ -35,6 +35,45 @@ export function hiddenInspectFields(job, prompts) {
   return `<textarea hidden class="inspect-facts" data-draft-facts>${escapeMaterialsHtml(facts)}</textarea>${slots}${shots}`;
 }
 
+function captionLine(value) {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object") {
+    return String(value.caption || value.narration || value.text || value.line || "").trim();
+  }
+  return "";
+}
+
+function captionLinesFromValue(value) {
+  if (value == null || typeof value === "boolean" || typeof value === "number") return [];
+  if (typeof value === "string") {
+    return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+  if (Array.isArray(value)) return value.map(captionLine).filter(Boolean);
+  if (typeof value === "object") {
+    if (Array.isArray(value.lines)) return captionLinesFromValue(value.lines);
+    if (Array.isArray(value.segments)) return value.segments.map(captionLine).filter(Boolean);
+    if (typeof value.text === "string") return captionLinesFromValue(value.text);
+    if (typeof value.scriptDraft === "string") return captionLinesFromValue(value.scriptDraft);
+  }
+  return [];
+}
+
+export function fallbackCaptionPrompts(job = {}) {
+  const captions = [
+    job.lines,
+    job.captions,
+    job.script?.lines,
+    job.script,
+    job.scriptDraft
+  ].reduce((found, candidate) => (found.length ? found : captionLinesFromValue(candidate)), []);
+  return {
+    shots: captions.map((caption, offset) => ({
+      index: offset + 1,
+      caption
+    }))
+  };
+}
+
 export function renderInspectCaptions(shots = []) {
   return shots.map((shot, offset) => {
     const index = Number(shot.index || offset + 1);
@@ -77,5 +116,6 @@ export function collectInspectPayload(root) {
 export function renderMaterialsPanel(job, prompts, { frozen = false } = {}) {
   const shots = prompts?.shots || [];
   const files = inspectVideoDownloads(job).map((item) => `<a href="${escapeMaterialsHtml(item.href)}" download>${escapeMaterialsHtml(item.label)}</a>`).join("");
-  return `<div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2></div><label class="field-label" for="inspect-topic-${escapeMaterialsHtml(job.id)}">제목</label><input id="inspect-topic-${escapeMaterialsHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeMaterialsHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeMaterialsHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}${files ? `<div class="inspect-files">${files}</div>` : ""}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>다시 만들기</button>${frozen ? `<p class="inspect-frozen">지금은 다시 못 만들어요</p>` : ""}</div></div>`;
+  const regenLabel = frozen ? "지금은 다시 못 만들어요" : "다시 만들기";
+  return `<div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2></div><label class="field-label" for="inspect-topic-${escapeMaterialsHtml(job.id)}">제목</label><input id="inspect-topic-${escapeMaterialsHtml(job.id)}" class="inspect-topic" data-draft-topic value="${escapeMaterialsHtml(job.topic || "")}" minlength="4" /><label class="field-label">대본</label><textarea class="inspect-script" data-draft-script rows="4">${escapeMaterialsHtml(job.scriptDraft || "")}</textarea><label class="field-label">자막</label>${renderInspectCaptions(shots)}${hiddenInspectFields(job, prompts)}${files ? `<div class="inspect-files">${files}</div>` : ""}<div class="inspect-actions"><button type="button" class="primary-button inspect-save" data-inspect-save>저장</button><button type="button" class="secondary-button inspect-regen" data-inspect-regen${frozen ? " disabled" : ""}>${regenLabel}</button>${frozen ? `<p class="inspect-frozen">지금은 그림을 안 만들어요</p>` : ""}</div></div>`;
 }

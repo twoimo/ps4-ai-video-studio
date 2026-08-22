@@ -210,11 +210,13 @@ function applyHash() {
     return;
   }
   if (hash === "short" || hash.startsWith("short/")) {
-    const jobId = hash.startsWith("short/") ? decodeURIComponent(hash.slice("short/".length)) : state.selectedJobId;
+    const jobId = hash.startsWith("short/") ? decodeURIComponent(hash.slice("short/".length)) : "";
     if (jobId) {
       openMaterials(jobId);
       return;
     }
+    location.replace("/backlot");
+    return;
   }
   if (!hash || hash === "shorts") {
     setView("grid", { skipHash: true });
@@ -1011,7 +1013,8 @@ function openMachine(event) {
   setView("machine");
 }
 
-function pipelineChipClass({ ready, blocked }) {
+function pipelineChipClass({ ready, blocked, paused }) {
+  if (paused) return " warn";
   if (blocked) return " danger";
   if (!ready) return " warn";
   return " ok";
@@ -1024,8 +1027,8 @@ function renderChips(health = {}) {
   const pictureReady = grok && !frozen;
   const stages = [
     { label: "대본", ready: grok, blocked: false, title: grok ? "대본 · grok CLI 텍스트" : "대본을 쓸 수 없습니다" },
-    { label: "그림", ready: pictureReady, blocked: frozen, title: pictureReady ? "그림 · Grok Imagine" : "그림을 만들 수 없습니다" },
-    { label: "움직임", ready: pictureReady, blocked: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : "움직임을 만들 수 없습니다" },
+    { label: "그림", ready: pictureReady, paused: frozen, title: pictureReady ? "그림 · Grok Imagine" : "지금은 그림을 안 만들어요" },
+    { label: "움직임", ready: pictureReady, paused: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : "지금은 다시 못 만들어요" },
     { label: "편집", ready: ffmpeg, blocked: false, title: ffmpeg ? "편집 · ffmpeg" : "편집을 할 수 없습니다" }
   ];
   return `<nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정">${stages.map((stage, index) => {
@@ -1041,14 +1044,16 @@ function renderMachineSheet() {
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
   const frozen = health.imagine?.frozen !== false;
-  const picture = grok && !frozen ? "준비" : "없음";
-  root.innerHTML = `<h2 id="machine-title">사양</h2><p>대본 ${grok ? "준비" : "없음"} · 그림 ${picture} · 움직임 ${picture} · 편집 ${ffmpeg ? "준비" : "없음"}</p>`;
+  const picture = grok && !frozen ? "준비" : frozen ? "지금은 그림을 안 만들어요" : "없음";
+  const motion = grok && !frozen ? "준비" : frozen ? "지금은 다시 못 만들어요" : "없음";
+  root.innerHTML = `<h2 id="machine-title">사양</h2><p>대본 ${grok ? "준비" : "없음"} · 그림 ${picture} · 움직임 ${motion} · 편집 ${ffmpeg ? "준비" : "없음"}</p>`;
 }
 
 function renderStudioChrome() {
   const health = state.health || {};
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
+  const frozen = health.imagine?.frozen !== false;
   const chips = $("#studio-chips");
   if (chips) {
     chips.hidden = false;
@@ -1061,6 +1066,7 @@ function renderStudioChrome() {
     if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
     if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
     if (!grok) reasons.push("대본을 쓸 수 없습니다");
+    if (frozen) reasons.push("지금은 그림을 안 만들어요");
     banner.hidden = reasons.length === 0;
     banner.textContent = reasons.join(" · ");
   }

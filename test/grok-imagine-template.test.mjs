@@ -148,14 +148,25 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(html.includes("크레딧 402"), false);
   assert.equal(app.includes("크레딧 402"), false);
 
+  const pageSrc = await readFile(join(process.cwd(), "src", "template-page.mjs"), "utf8");
+  assert.match(pageSrc, /request\.method !== "GET" && request.method !== "HEAD"/);
+  assert.match(pageSrc, /text\/html; charset=utf-8/);
+
   const response = await handleTemplatePage(new Request("http://studio.local/template"), new URL("http://studio.local/template"));
   assert.ok(response);
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
   const served = await response.text();
   assert.match(served, /id="template-page"/);
   assert.match(served, /src="\/template\/template\.js\?v=/);
   assert.doesNotMatch(served, /id="template-overlay"/);
   assert.doesNotMatch(served, /role="dialog"/);
+
+  const head = await handleTemplatePage(new Request("http://studio.local/template", { method: "HEAD" }), new URL("http://studio.local/template"));
+  assert.ok(head);
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(await head.text(), "");
 });
 
 test("locked spec API payload has the 288 corpus and every factory lock", () => {

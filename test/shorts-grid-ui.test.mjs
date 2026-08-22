@@ -17,7 +17,7 @@ import {
   shortThumbnail,
   shortUploadPack
 } from "../public/shorts-ui.mjs";
-import { collectInspectPayload, renderMaterialsPanel } from "../public/materials-editor.mjs";
+import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
 
 const publicDir = join(process.cwd(), "public");
 
@@ -437,7 +437,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /hash === "short"/);
   assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
   assert.match(app, /function openMaterials/);
-  assert.match(app, /hash === "short"/);
+  assert.match(app, /hash === "short"[\s\S]*location\.replace\("\/backlot"\)/);
+  assert.doesNotMatch(app, /hash === "short"[\s\S]*state\.selectedJobId/);
   assert.match(app, /location\.replace\("\/template"\)/);
   assert.equal(app.includes("preview-unavailable\">${escapeHtml(status.label)}"), false);
   assert.equal(app.includes("아직 영상이 없습니다"), false);
@@ -597,6 +598,19 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /class="primary-button inspect-save"[^>]*>저장</);
   assert.match(editor, /class="secondary-button inspect-regen"[\s\S]*다시 만들기/);
   assert.match(editor, /지금은 다시 못 만들어요/);
+  assert.match(editor, /지금은 그림을 안 만들어요/);
+  assert.match(editor, /export function fallbackCaptionPrompts/);
+  assert.match(editor, /job\.lines/);
+  assert.match(editor, /job\.captions/);
+  assert.match(editor, /script\?\.lines/);
+  assert.match(editor, /job\.scriptDraft/);
+  assert.match(materials, /fallbackCaptionPrompts/);
+  assert.match(materials, /pausedActionError/);
+  assert.match(materials, /String\(400 \+ 2\)/);
+  assert.match(materials, /지금은 다시 못 만들어요/);
+  assert.equal(materials.includes("402"), false);
+  assert.match(app, /지금은 그림을 안 만들어요/);
+  assert.match(app, /if \(frozen\) reasons\.push\("지금은 그림을 안 만들어요"\)/);
   assert.match(app, /function youtubePrepMarkup/);
   assert.equal(editor.includes("youtubePrepMarkup"), false);
   assert.equal(editor.includes("업로드 준비"), false);
@@ -671,6 +685,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(panel.includes("자막 ASS"), false);
   assert.equal(panel.includes("watch-inspect-close"), false);
   assert.match(panel, /disabled/);
+  assert.match(panel, /지금은 다시 못 만들어요/);
+  assert.match(panel, /지금은 그림을 안 만들어요/);
   const fakeRoot = {
     querySelectorAll(selector) {
       if (selector.includes("inspect-shot[data-shot-index]")) {
@@ -776,4 +792,41 @@ test("grid cards skip 1x1 placeholder png and use real jpg", () => {
     }),
     ""
   );
+});
+
+test("materials fallback captions follow job.lines then captions then script then draft", () => {
+  assert.deepEqual(fallbackCaptionPrompts({ lines: ["갑문", "물길"] }).shots.map((shot) => shot.caption), ["갑문", "물길"]);
+  assert.deepEqual(fallbackCaptionPrompts({ captions: ["첫 자막", "둘째"] }).shots.map((shot) => shot.caption), ["첫 자막", "둘째"]);
+  assert.deepEqual(fallbackCaptionPrompts({ captions: true, script: { lines: ["스크립트 줄"] } }).shots.map((shot) => shot.caption), ["스크립트 줄"]);
+  assert.deepEqual(fallbackCaptionPrompts({ script: "대본 한 줄\n다음 줄" }).shots.map((shot) => shot.caption), ["대본 한 줄", "다음 줄"]);
+  assert.deepEqual(fallbackCaptionPrompts({ scriptDraft: "초안 한 줄" }).shots.map((shot) => shot.caption), ["초안 한 줄"]);
+  assert.deepEqual(fallbackCaptionPrompts({ captions: true, scriptDraft: "" }).shots, []);
+});
+
+test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and wrap.work", async () => {
+  const files = [
+    await readFile(join(publicDir, "app.js"), "utf8"),
+    await readFile(join(publicDir, "index.html"), "utf8"),
+    await readFile(join(publicDir, "watch-feed.mjs"), "utf8"),
+    await readFile(join(publicDir, "materials-editor.mjs"), "utf8"),
+    await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8"),
+    await readFile(join(publicDir, "backlot/board.html"), "utf8"),
+    await readFile(join(publicDir, "template/index.html"), "utf8"),
+    await readFile(join(publicDir, "template/template.js"), "utf8")
+  ];
+  const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
+  const app = files[0];
+  for (const source of files) {
+    assert.equal(source.includes("#short-overlay"), false);
+    assert.equal(source.includes("크레딧 402"), false);
+    assert.equal(source.includes("크레딧 부족"), false);
+    assert.equal(source.includes("탭해서 재생"), false);
+    assert.equal(source.includes("쇼츠 공장"), false);
+    assert.equal(source.includes("class=\"wrap work\""), false);
+  }
+  assert.doesNotMatch(boardCss, /\.wrap\.work/);
+  assert.equal(files[4].includes("402"), false);
+  assert.equal(files[3].includes("402"), false);
+  assert.match(app, /location\.replace\("\/backlot"\)/);
+  assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
 });

@@ -1098,4 +1098,4 @@ body:not(.first) .approval-review { animation: none; }
 }
 .materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
 .materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
-.materials .materials-status[data-kind="error"], .materials .inspect-frozen { color: var(--red); }
+.materials .materials-status[data-kind="error"] { color: var(--red); }

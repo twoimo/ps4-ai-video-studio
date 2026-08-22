@@ -204,27 +204,61 @@ function revealWatchVideo(video) {
   return video;
 }
 
-function revealAndPlay(video, jobId) {
+function playMutedThenUnmute(video) {
+  video.muted = true;
+  if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
+  let mutedPlay;
+  try {
+    mutedPlay = video.play();
+  } catch {
+    return;
+  }
+  const afterMuted = () => {
+    revealWatchVideo(video);
+    try {
+      video.muted = false;
+      if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+      if (video.paused) {
+        video.muted = true;
+        video.play?.();
+      }
+    } catch {
+      video.muted = true;
+    }
+    return video;
+  };
+  if (mutedPlay && typeof mutedPlay.then === "function") {
+    return mutedPlay.then(afterMuted).catch(() => {});
+  }
+  afterMuted();
+  return mutedPlay;
+}
+
+function playWithMuteFallback(video, jobId) {
   if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
   revealWatchVideo(video);
-  const play = video.play();
+  video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  let play;
+  try {
+    play = video.play();
+  } catch {
+    return playMutedThenUnmute(video);
+  }
   if (play && typeof play.then === "function") {
-    play.then(() => revealWatchVideo(video)).catch(() => {});
+    return play.then(() => revealWatchVideo(video)).catch(() => playMutedThenUnmute(video));
   }
   return play;
 }
 
+function revealAndPlay(video, jobId) {
+  return playWithMuteFallback(video, jobId);
+}
+
 export function playWatchFeed(target) {
   if (target && typeof target.play === "function" && typeof target.querySelector !== "function") {
-    target.muted = false;
-    if (typeof target.removeAttribute === "function") target.removeAttribute("muted");
     attachWatchVideo(target);
-    revealWatchVideo(target);
-    const play = target.play();
-    if (play && typeof play.then === "function") {
-      play.then(() => revealWatchVideo(target)).catch(() => {});
-    }
-    return play;
+    return playWithMuteFallback(target);
   }
   const root = target;
   const slides = watchSlides(root);
@@ -259,11 +293,7 @@ export function playWatchFeed(target) {
   if (src && video.getAttribute?.("src") !== src) video.src = src;
   if (video.dataset) video.dataset.jobId = jobId || "";
   if ((video.readyState || 0) >= 2) revealWatchVideo(video);
-  const play = video.play();
-  if (play && typeof play.then === "function") {
-    play.then(() => revealWatchVideo(video)).catch(() => {});
-  }
-  return play;
+  return playWithMuteFallback(video, jobId);
 }
 
 export function clearWatchSize(root) {
