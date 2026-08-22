@@ -194,6 +194,13 @@ export function createWatchPlayer(root) {
   return ensureWatchPlayer(root);
 }
 
+export function pauseWatchFeed(root) {
+  pauseLeftoverMedia(root);
+  const video = watchPlayerVideo(root);
+  if (!video) return;
+  try { video.pause(); } catch { /* ignore leftover playback */ }
+}
+
 export function stopWatchFeed(root) {
   bumpWatchEpoch(root);
   pauseLeftoverMedia(root);

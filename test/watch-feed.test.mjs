@@ -10,6 +10,7 @@ import {
   getWatchIndex,
   goWatchIndex,
   pageHeight,
+  pauseWatchFeed,
   playWatchFeed,
   playWatchMedia,
   selectedWatchSlide,
@@ -156,6 +157,21 @@ function fakePager({ slides = [], height = 640, video = null } = {}) {
   };
   return root;
 }
+
+test("pauseWatchFeed pauses the player and does not remove it", () => {
+  const video = fakeVideo(4);
+  const root = {
+    querySelector(selector) {
+      return selector === ".watch-player video" || selector === "video" ? video : null;
+    },
+    querySelectorAll() { return [video]; }
+  };
+  pauseWatchFeed(root);
+  assert.equal(video.pauseCalls, 1);
+  assert.equal(video.paused, true);
+  assert.equal(video.currentTime, 4);
+  assert.equal(video.removeCalls || 0, 0);
+});
 
 test("stopWatchFeed pauses every video and removes the node", () => {
   const videos = [fakeVideo(8), fakeVideo(2.5)];
@@ -698,7 +714,9 @@ test("watch-feed module and app wire the transform pager", async () => {
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
   const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
   const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
+  assert.match(feed, /export function pauseWatchFeed\(root\)/);
   assert.match(feed, /export function stopWatchFeed\(root\)/);
+  assert.match(app, /visibilitychange[\s\S]*pauseWatchFeed/);
   assert.match(feed, /bumpWatchEpoch\(root\)/);
   assert.match(feed, /isStaleWatch/);
   assert.match(feed, /video\.pause\(\)/);

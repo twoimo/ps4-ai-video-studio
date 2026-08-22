@@ -115,7 +115,9 @@ export function collectInspectPayload(root) {
 
 export function renderMaterialsPanel(job, prompts, { frozen = false } = {}) {
   const shots = prompts?.shots || [];
-  const files = inspectVideoDownloads(job).map((item) => `<a href="${escapeMaterialsHtml(item.href)}" download>${escapeMaterialsHtml(item.label)}</a>`).join("");
+  const files = shots.length
+    ? inspectVideoDownloads(job).map((item) => `<a href="${escapeMaterialsHtml(item.href)}" download>${escapeMaterialsHtml(item.label)}</a>`).join("")
+    : "";
   const regenClass = frozen ? "secondary-button inspect-regen is-paused" : "secondary-button inspect-regen";
   const regenLabel = frozen ? "다시 만들기 · 멈춤" : "다시 만들기";
   const regenTitle = frozen ? "지금은 그림을 안 만들어요" : "";

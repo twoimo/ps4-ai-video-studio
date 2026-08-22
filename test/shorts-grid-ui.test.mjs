@@ -670,6 +670,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /export function renderMaterialsPanel/);
   assert.match(editor, /export function collectInspectPayload/);
   assert.match(editor, /inspectVideoDownloads\(job\)/);
+  assert.match(editor, /shots\.length/);
   assert.match(editor, /class="inspect-files"/);
   assert.match(editor, /class="inspect-topic"/);
   assert.match(editor, /class="inspect-facts"/);
@@ -756,6 +757,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
   assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\)/);
   assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
+  assert.match(html, /id="close-create"[^>]*tabindex="-1"/);
   assert.match(html, /id="settings-overlay"[\s\S]*class="draft-close"[\s\S]*id="settings-tts-provider"/);
   assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\);[\s\S]*?return;/);
   assert.match(html, /id="machine-overlay"[\s\S]*class="overlay-panel machine-overlay-panel"[^>]*tabindex="-1"/);
@@ -867,7 +869,17 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(panel, /hidden class="inspect-facts"/);
   assert.match(panel, /hidden class="inspect-shot"/);
   assert.match(panel, /inspect-files/);
+  assert.ok(panel.indexOf(">자막<") < panel.indexOf("inspect-files"), "downloads sit under captions");
   assert.match(panel, /마스터/);
+  const noCaptions = renderMaterialsPanel({
+    id: "job-2",
+    topic: "한강 갑문",
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/job-2/artifacts/master.mp4" }
+    ]
+  }, { shots: [] });
+  assert.equal(noCaptions.includes("inspect-files"), false);
+  assert.equal(noCaptions.includes("마스터"), false);
   assert.match(panel, /채팅용/);
   assert.equal(panel.includes("자막 ASS"), false);
   assert.equal(panel.includes("watch-inspect-close"), false);

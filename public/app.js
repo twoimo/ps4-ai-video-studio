@@ -3,7 +3,7 @@ import { collectInspectPayload } from "./materials-editor.mjs";
 import { machineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
-import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
+import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -1530,7 +1530,7 @@ function bindEvents() {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      stopWatchFeed($("#watch-feed"));
+      pauseWatchFeed($("#watch-feed"));
     }
   });
   window.addEventListener("pagehide", () => {
