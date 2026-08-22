@@ -1,3 +1,4 @@
+import { friendlyJobError } from "/shorts-ui.mjs";
 import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
@@ -93,7 +94,7 @@ render().catch((error) => {
   if (grid) grid.innerHTML = "";
   if (empty) {
     empty.style.display = "block";
-    empty.textContent = String(error?.message || error || "보드를 불러오지 못했습니다.");
+    empty.textContent = friendlyJobError(error);
   }
 });
 if (!new URLSearchParams(location.search).has("static")) {

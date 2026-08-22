@@ -1,4 +1,5 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
+import { friendlyJobError, stripUiPaths } from "/shorts-ui.mjs";
 import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);
@@ -38,7 +39,7 @@ function pausedActionError(error) {
   if (code === 400 + 2 || text.includes(creditMark) || text.includes("크레딧")) {
     return "지금은 다시 못 만들어요.";
   }
-  return text;
+  return friendlyJobError(error);
 }
 
 async function saveMaterials() {
@@ -48,14 +49,19 @@ async function saveMaterials() {
     error.status = 400;
     throw error;
   }
-  const payload = await fetch(`/api/jobs/${encodeURIComponent(projectId)}`, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
-  });
+  let payload;
+  try {
+    payload = await fetch(`/api/jobs/${encodeURIComponent(projectId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
   const data = await payload.json().catch(() => ({}));
   if (!payload.ok) {
-    const error = new Error(data.error || "초안을 저장하지 못했습니다.");
+    const error = new Error(friendlyJobError(data.error || "초안을 저장하지 못했습니다."));
     error.status = payload.status;
     throw error;
   }
@@ -90,10 +96,15 @@ function bindMaterials(frozen) {
       }
       if (button) button.disabled = true;
       await saveMaterials();
-      const response = await fetch(`/api/jobs/${encodeURIComponent(projectId)}/run`, { method: "POST" });
+      let response;
+      try {
+        response = await fetch(`/api/jobs/${encodeURIComponent(projectId)}/run`, { method: "POST" });
+      } catch (error) {
+        throw new Error(friendlyJobError(error));
+      }
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(data.error || "대기열에 넣지 못했습니다.");
+        const error = new Error(friendlyJobError(data.error || "대기열에 넣지 못했습니다."));
         error.status = response.status;
         throw error;
       }
@@ -130,5 +141,5 @@ async function mountMaterials() {
 mountMaterials().catch((error) => {
   if (!root) return;
   root.hidden = false;
-  root.innerHTML = `<div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2></div><p class="materials-status" data-kind="error">${String(error.message || error)}</p></div>`;
+  root.innerHTML = `<div class="inspect-stack"><div class="inspect-stack-head"><h2>재료</h2></div><p class="materials-status" data-kind="error">${stripUiPaths(friendlyJobError(error))}</p></div>`;
 });

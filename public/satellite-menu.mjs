@@ -1,4 +1,4 @@
-import { importBroughtCopy } from "./shorts-ui.mjs";
+import { friendlyJobError, importBroughtCopy } from "./shorts-ui.mjs";
 
 function syncOverlayOpen(root = document) {
   const overlay = root.querySelector?.("#satellite-menu");
@@ -34,10 +34,15 @@ export async function importSatelliteLibrary(root = document, request = fetch) {
   const overlay = root.querySelector?.("#satellite-menu");
   if (overlay) overlay.hidden = false;
   syncOverlayOpen(root);
-  const response = await request("/api/library/import", { method: "POST" });
+  let response;
+  try {
+    response = await request("/api/library/import", { method: "POST" });
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(payload.error || "가져오지 못했습니다.");
+    const error = new Error(friendlyJobError(payload.error || "가져오지 못했습니다."));
     error.status = response.status;
     throw error;
   }
@@ -73,7 +78,7 @@ export function bindSatelliteMenu(root = document, request = fetch) {
       syncOverlayOpen(root);
       if (actions) actions.hidden = true;
       if (result) result.hidden = false;
-      if (summary) summary.textContent = error.message || "가져오지 못했습니다.";
+      if (summary) summary.textContent = friendlyJobError(error);
     }
   };
   root.querySelector?.("#satellite-import")?.addEventListener("click", run);

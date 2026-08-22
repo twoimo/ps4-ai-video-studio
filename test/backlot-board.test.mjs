@@ -215,8 +215,14 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(libJs.includes("${res.status} ${url}"), false);
   assert.equal(libJs.includes("404"), false);
   assert.match(boardJs, /if \(st\.status === "failed"\) return "실패"/);
+  assert.match(boardJs, /프로젝트를 찾을 수 없습니다/);
+  assert.equal(boardJs.includes("PROJECT NOT FOUND"), false);
+  assert.equal(boardJs.includes("String(err)"), false);
+  assert.equal(boardJs.includes("Failed to fetch"), false);
   assert.equal(boardJs.includes("st.error"), false);
   assert.equal(boardJs.includes("ENOENT"), false);
+  assert.match(libJs, /friendlyJobError/);
+  assert.equal(libJs.includes("Failed to fetch"), false);
   assert.match(libJs, /\$\{Math\.round\(diff \/ 60\)\}분 전/);
   assert.match(libraryJs, /"◈ 확인 필요"/);
   assert.match(libraryJs, /liveCount \? `\$\{liveCount\} 진행` : "대기"/);

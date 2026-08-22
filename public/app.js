@@ -46,7 +46,12 @@ function syncToggleLabels() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const creditMark = String(400 + 2);
@@ -1099,7 +1104,7 @@ function openBatch(event) {
 function parseBatchTopics() {
   const lines = ($("#batch-topics")?.value || "").split(/\r?\n/).map((line) => line.trim());
   const leftover = lines.filter((line) => line && line.length < 4);
-  if (leftover.length) throw new Error("주제를 한 줄에 하나씩 4자 이상 입력하세요.");
+  if (leftover.length) throw new Error("짧은 줄은 4자 이상 입력하세요.");
   return lines.filter(Boolean);
 }
 

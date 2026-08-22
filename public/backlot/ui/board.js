@@ -1138,11 +1138,10 @@ async function refresh() {
   render();
 }
 
-refresh().catch((err) => {
+refresh().catch(() => {
   app.innerHTML = "";
   app.append(el("div", { class: "empty", style: "margin-top:80px" },
-    el("div", { class: "big" }, "PROJECT NOT FOUND"),
-    el("div", {}, String(err))));
+    el("div", { class: "big" }, "프로젝트를 찾을 수 없습니다")));
 });
 // ?static=1 disables the live feed (screenshots, static exports).
 if (!new URLSearchParams(location.search).has("static")) {

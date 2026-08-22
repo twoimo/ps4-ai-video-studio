@@ -79,6 +79,8 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(friendlyJobError("404 /api/jobs/x"), "찾지 못했습니다.");
   assert.equal(friendlyJobError("영상 주제를 4자 이상 입력하세요."), "영상 주제를 4자 이상 입력하세요.");
   assert.equal(friendlyJobError("ECONNREFUSED"), "요청에 실패했습니다.");
+  assert.equal(friendlyJobError("Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(friendlyJobError("unknown project: demo"), "프로젝트를 찾을 수 없습니다.");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -763,6 +765,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /job\.scriptDraft/);
   assert.match(materials, /fallbackCaptionPrompts/);
   assert.match(materials, /pausedActionError/);
+  assert.match(materials, /friendlyJobError/);
+  assert.match(materials, /stripUiPaths/);
+  assert.match(materials, /method: "PATCH"/);
+  assert.match(materials, /friendlyJobError\(data\.error \|\| "초안을 저장하지 못했습니다\."\)/);
+  assert.equal(materials.includes("Failed to fetch"), false);
   assert.match(materials, /String\(400 \+ 2\)/);
   assert.match(materials, /지금은 다시 못 만들어요/);
   assert.equal(materials.includes("402"), false);
@@ -1036,9 +1043,11 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /function parseBatchTopics/);
   assert.match(app, /leftover\.length/);
   assert.match(app, /line && line\.length < 4/);
+  assert.match(app, /짧은 줄은 4자 이상 입력하세요/);
   assert.match(app, /function batchTopicsOrFocus/);
   assert.match(app, /friendlyJobError/);
   assert.match(app, /stripUiPaths/);
+  assert.equal(app.includes("Failed to fetch"), false);
   assert.equal(app.includes("요청 실패 (${response.status})"), false);
   assert.match(app, /\/run/);
   assert.match(app, /업로드 준비/);
@@ -1150,6 +1159,7 @@ test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and 
     assert.equal(source.includes("탭해서 재생"), false);
     assert.equal(source.includes("쇼츠 공장"), false);
     assert.equal(source.includes("class=\"wrap work\""), false);
+    assert.equal(source.includes("Failed to fetch"), false);
   }
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.equal(files[3].includes("402"), false);

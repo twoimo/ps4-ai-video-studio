@@ -1,3 +1,4 @@
+import { friendlyJobError } from "../shorts-ui.mjs";
 import { escapeSpecHtml, renderLockedSpec } from "../template-spec.mjs";
 
 const APP_TITLE = "PS4_JUSTDOIT";
@@ -9,14 +10,14 @@ async function loadTemplatePage() {
   try {
     const response = await fetch("/api/grok-imagine/template");
     const spec = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(spec.error || `요청 실패 (${response.status})`);
+    if (!response.ok) throw new Error(friendlyJobError(spec.error || "템플릿을 불러오지 못했습니다"));
     document.title = `템플릿 · ${APP_TITLE}`;
     if (title) title.textContent = "잠긴 프롬프트";
     root.innerHTML = renderLockedSpec(spec);
   } catch (error) {
     document.title = `템플릿 · ${APP_TITLE}`;
     if (title) title.textContent = "템플릿을 불러오지 못했습니다";
-    root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><pre>${escapeSpecHtml(error.message)}</pre></div>`;
+    root.innerHTML = `<div class="error-box"><b>템플릿을 불러오지 못했습니다</b><p>${escapeSpecHtml(friendlyJobError(error))}</p></div>`;
   }
 }
 
