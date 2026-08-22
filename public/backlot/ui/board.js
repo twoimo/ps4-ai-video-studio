@@ -1063,7 +1063,7 @@ function tickReplay() {
 // ---------------------------------------------------------------------------
 
 function render() {
-  if (!state) return;
+  if (!app || !state) return;
   const s = replay ? stateAt(state, replay.t) : state;
   document.title = displayTitle(s.title, "보드");
   document.body.classList.toggle("first", firstPaint);
@@ -1151,17 +1151,22 @@ async function refresh() {
 }
 
 function failBoard() {
+  if (!app) return;
   if (state || app.querySelector(".slate, .rail, .main-col")) return;
   app.innerHTML = "";
   app.append(el("div", { class: "empty", style: "margin-top:80px" },
     el("div", { class: "big" }, "프로젝트를 찾을 수 없습니다")));
 }
 
-refresh().catch(failBoard);
-// ?static=1 disables the live feed (screenshots, static exports).
-if (!new URLSearchParams(location.search).has("static")) {
-  subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(failBoard));
+function initBoard() {
+  if (!app) return;
+  refresh().catch(failBoard);
+  // ?static=1 disables the live feed (screenshots, static exports).
+  if (!new URLSearchParams(location.search).has("static")) {
+    subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(failBoard));
+  }
 }
+initBoard();
 
 function pauseBoardVideos() {
   document.querySelectorAll("video").forEach((video) => {

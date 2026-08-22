@@ -50,6 +50,7 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, options);
   } catch (error) {
+    if (error?.name === "AbortError") throw error;
     throw new Error(friendlyJobError(stripErrorPrefix(error)));
   }
   let text;
@@ -926,7 +927,7 @@ async function refreshCreatePreview() {
     return;
   }
   const topic = $("#topic")?.value || "";
-  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const facts = fieldLines("#facts");
   const worldSlots = collectWorldSlots();
   if (topic.trim().length < 4 && !facts.length) {
     const preview = $("#create-prompt-preview");
@@ -996,6 +997,7 @@ async function pollJobs() {
   try {
     await refreshJobs();
   } catch (error) {
+    if (keepPaintedGrid(error)) return;
     enqueueToast(error, "error");
   }
 }
@@ -1006,8 +1008,28 @@ function syncPollTimer() {
   if (active) state.poll = window.setInterval(pollJobs, 900);
 }
 
+function keepPaintedGrid(error) {
+  if (error?.name !== "AbortError") return false;
+  return Boolean(
+    state.jobs.length
+    || document.querySelector("#shorts-grid .short-card, #shorts-grid .short-skeleton")
+  ) || !state.jobsLoaded;
+}
+
+let jobsRefresh = null;
+
 async function refreshJobs() {
-  const payload = await api("/api/jobs");
+  jobsRefresh?.abort();
+  const controller = new AbortController();
+  jobsRefresh = controller;
+  let payload;
+  try {
+    payload = await api("/api/jobs", { signal: controller.signal });
+  } catch (error) {
+    if (keepPaintedGrid(error) || error?.name === "AbortError") return;
+    throw error;
+  }
+  if (controller.signal.aborted) return;
   if (!Array.isArray(payload?.jobs) && !Array.isArray(payload)) {
     throw new Error("불러오지 못했습니다.");
   }
@@ -1052,14 +1074,14 @@ async function createProduction(event) {
     showToast("영상 주제를 4자 이상 입력하세요.", "error");
     return;
   }
-  const provider = $("#provider").value;
-  const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
-  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const provider = $("#provider")?.value || "grok-imagine";
+  const sources = fieldLines("#sources").map((url) => ({ title: url, url }));
+  const facts = fieldLines("#facts");
   const worldSlots = collectWorldSlots();
   const scriptDraft = $("#script-draft")?.value.trim() || "";
   const ttsProvider = $("#create-tts-provider")?.value || "edge";
   const ttsVoice = $("#create-tts-voice")?.value || "";
-  const body = { topic, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked, draftOnly: true };
+  const body = { topic, format: $("#format")?.value || "vertical", clipCount: Number($("#clip-count")?.value || 7), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions")?.checked !== false, voiceover: provider === "grok-imagine" ? false : $("#voiceover")?.checked === true, draftOnly: true };
   if (ttsVoice) {
     void api("/api/settings", {
       method: "PUT",
@@ -1164,8 +1186,12 @@ function openBatch(event) {
   void hydrateCreateSlots();
 }
 
+function fieldLines(selector) {
+  return ($(selector)?.value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
 function parseBatchTopics() {
-  const lines = ($("#batch-topics")?.value || "").split(/\r?\n/).map((line) => line.trim());
+  const lines = fieldLines("#batch-topics");
   const leftover = lines.filter((line) => line && line.length < 4);
   if (leftover.length) throw new Error("짧은 줄은 4자 이상 입력하세요.");
   return lines.filter(Boolean);
@@ -1188,7 +1214,7 @@ function batchTopicsOrFocus() {
 }
 
 function batchJobBody(topic) {
-  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const facts = fieldLines("#facts");
   return { topic, facts, provider: "grok-imagine", draftOnly: true, captions: true, voiceover: false };
 }
 
@@ -1439,7 +1465,7 @@ async function draftScriptFromTopic() {
     errorBox.textContent = "";
   }
   try {
-    const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+    const facts = fieldLines("#facts");
     const payload = await api("/api/script/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1701,6 +1727,7 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
+    if (keepPaintedGrid(error)) return;
     showToast(error, "error");
   }
 }

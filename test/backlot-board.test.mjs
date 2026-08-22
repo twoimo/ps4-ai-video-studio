@@ -349,8 +349,12 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
   assert.match(boardJs, /function failBoard/);
+  assert.match(boardJs, /function initBoard/);
+  assert.match(boardJs, /if \(!app\) return/);
   assert.match(boardJs, /if \(state \|\| app\.querySelector\("\.slate, \.rail, \.main-col"\)\) return/);
   assert.match(boardJs, /refresh\(\)\.catch\(failBoard\)/);
+  assert.match(libraryJs, /function initLibrary/);
+  assert.match(libraryJs, /if \(!app\) return/);
   assert.equal(boardJs.includes("String(err)"), false);
   assert.match(libraryJs, /empty\.textContent = friendlyJobError\(error\)/);
   assert.equal(libraryJs.includes("보드를 불러오지 못했습니다"), false);

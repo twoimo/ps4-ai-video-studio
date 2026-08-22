@@ -633,7 +633,16 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /showImportResult\(\{ error:/);
   assert.doesNotMatch(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
   assert.match(app, /\$\("#create-form"\)\?\.addEventListener\("submit"/);
+  assert.match(app, /function fieldLines/);
+  assert.match(app, /fieldLines\("#sources"\)/);
+  assert.match(app, /fieldLines\("#facts"\)/);
+  assert.match(app, /\$\("#provider"\)\?\.value/);
+  assert.match(app, /function keepPaintedGrid/);
+  assert.match(app, /error\?\.name === "AbortError"/);
+  assert.match(app, /new AbortController/);
   assert.equal(app.includes("error.message"), false);
+  assert.equal(app.includes("$(\"#sources\").value"), false);
+  assert.equal(app.includes("$(\"#provider\").value"), false);
   assert.match(app, /if \(state\.view === "watch"\) \{\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
   assert.match(app, /isWatchableShort\(job\)\) \{\s*setView\("watch"/);
   assert.match(app, /ArrowDown/);
@@ -1125,6 +1134,7 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
     /if \(!Array\.isArray\(payload\?\.jobs\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
   );
   const initFn = app.slice(app.indexOf("async function init"), app.lastIndexOf("init();"));
+  assert.match(initFn, /if \(keepPaintedGrid\(error\)\) return/);
   assert.match(initFn, /showToast\(error, "error"\)/);
   assert.equal(initFn.includes("state.jobs = []"), false);
   assert.equal(initFn.includes("renderJobs()"), false);

@@ -2,6 +2,7 @@ import { displayTitle, friendlyJobError, projectsFromListPayload } from "../../s
 import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
+const app = document.getElementById("app") || grid;
 const THEME_KEY = "backlot.theme";
 let currentTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
 
@@ -27,8 +28,15 @@ function renderThemeToggle() {
   }, el("span", { class: "theme-toggle-icon", "aria-hidden": "true" }, currentTheme === "light" ? "☾" : "☀"));
 }
 
-applyTheme(currentTheme);
-document.getElementById("liveBadge").before(renderThemeToggle());
+function initLibrary() {
+  if (!app) return;
+  applyTheme(currentTheme);
+  document.getElementById("liveBadge")?.before(renderThemeToggle());
+  render().catch(failLibrary);
+  if (!new URLSearchParams(location.search).has("static")) {
+    subscribe("/api/library/events", () => render().catch(failLibrary));
+  }
+}
 
 function miniRail(states) {
   const rail = el("div", { class: "mini-rail" });
@@ -103,7 +111,4 @@ function failLibrary(error) {
   }
 }
 
-render().catch(failLibrary);
-if (!new URLSearchParams(location.search).has("static")) {
-  subscribe("/api/library/events", () => render().catch(failLibrary));
-}
+initLibrary();
