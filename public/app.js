@@ -2102,6 +2102,7 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
+    if (isAbortError(error)) return;
     failJobsLoad(error);
   }
 }

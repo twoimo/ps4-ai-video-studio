@@ -229,8 +229,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
   assert.equal(css.includes("grid-template-rows: repeat(var(--n)"), false);
   assert.match(css, /minmax\(min\(100%,\s*var\(--col\)\)/);
-  assert.match(html, /class="short-card short-skeleton"/);
-  assert.equal((html.match(/class="short-card short-skeleton"/g) || []).length, 8);
+  assert.match(html, /class="short-card short-skeleton is-skeleton"/);
+  assert.equal((html.match(/class="short-card short-skeleton is-skeleton"/g) || []).length, 8);
   assert.match(app, /jobsLoaded/);
   assert.match(app, /from "\.\/studio-pipe\.mjs"/);
   assert.match(app, /from "\.\/studio-chrome\.mjs"/);
@@ -1410,7 +1410,7 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   );
   const initFn = app.slice(app.indexOf("async function init"), app.lastIndexOf("init();"));
   assert.match(initFn, /if \(isAbortError\(error\)\) return/);
-  assert.match(initFn, /showToast\(error, "error"\)/);
+  assert.match(initFn, /failJobsLoad\(error\)/);
   assert.equal(initFn.includes("state.jobs = []"), false);
   assert.equal(initFn.includes("renderJobs()"), false);
   assert.match(app, /shortCardUnchanged\(prev, job\)/);

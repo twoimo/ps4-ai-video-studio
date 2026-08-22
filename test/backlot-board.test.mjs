@@ -90,7 +90,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /id="materials"/);
   assert.match(board, /aria-label="재료"/);
   assert.doesNotMatch(board, /<aside[^>]*id="materials"[^>]*hidden/);
-  assert.match(board, /id="materials"[^>]*>\s*<div class="lib-skeleton"/);
+  assert.match(board, /id="materials"[^>]*>\s*<div class="lib-skeleton is-skeleton"/);
   assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
   assert.ok(board.indexOf('class="wrap" id="app"') < board.indexOf('id="materials"'), "materials follows the original wrap");
   assert.doesNotMatch(board, /id="app"[^>]*hidden/);
@@ -362,7 +362,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /id="satellite-import-close">닫기</);
   assert.match(library, /id="satellite-import-summary"/);
   assert.match(board, /id="satellite-import-ok">확인</);
-  assert.match(board, /class="lib-skeleton"/);
+  assert.match(board, /class="lib-skeleton is-skeleton"/);
   assert.match(board, /id="materials"/);
   assert.doesNotMatch(css, /max-width:\s*440px/);
   assert.doesNotMatch(css, /max-width:\s*400px/);
@@ -453,7 +453,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
   assert.match(libraryJs, /function failLibrary/);
-  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\\\.is-skeleton\)"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\.is-skeleton\)"\)/);
   assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
   assert.match(boardJs, /function failBoard/);
@@ -654,7 +654,7 @@ test("library empty Korean, fail clears skeletons, and hero uses an auto 9:16 bo
   const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
   assert.match(library, /아직 보드가 없습니다/);
   assert.doesNotMatch(library, /No projects yet/);
-  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\\\.is-skeleton\)"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\.is-skeleton\)"\)/);
   assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
   assert.match(ui, /key === "ps4-studio"\) return "보드"/);

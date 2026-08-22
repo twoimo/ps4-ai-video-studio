@@ -1186,7 +1186,8 @@ async function refresh() {
 
 function failBoard() {
   if (!app) return;
-  if (keepPaintedGrid(app) && (state || app.querySelector(".slate, .rail, .main-col"))) return;
+  if (state || app.querySelector(".slate, .rail, .main-col")) return;
+  if (keepPaintedGrid(app)) return;
   app.innerHTML = "";
   app.append(el("div", { class: "empty", style: "margin-top:80px" },
     el("div", { class: "big" }, "프로젝트를 찾을 수 없습니다")));
