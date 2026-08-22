@@ -700,9 +700,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)[\s\S]*right:\s*auto/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-right\)\)/);
-  const baseWatch = css.slice(0, css.indexOf("@media (max-width: 860px)"));
-  assert.match(baseWatch, /\.watch-close[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
-  assert.match(baseWatch, /\.watch-menu[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /\.watch-back \{[^}]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /#watch-feed \.watch-menu,\s*\.watch-menu \{[\s\S]*?top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
   assert.match(css, /\.confirm-actions\s*\{[^}]*flex-wrap:\s*wrap/);
   assert.match(css, /input:-webkit-autofill[\s\S]*-webkit-text-fill-color:\s*var\(--text\)/);
   assert.match(css, /input:-webkit-autofill[\s\S]*var\(--surface\)/);
