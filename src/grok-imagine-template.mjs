@@ -269,7 +269,8 @@ export function inspectScriptPrompts(script, { source = "script" } = {}) {
       index: segment.index,
       slotId: segment.slotId,
       role: segment.role,
-      type: segment.role,
+      type: segment.type || segment.role,
+      arc: segment.arc || null,
       camera: segment.camera,
       tool: segment.tool,
       label: segment.label || "",
@@ -277,7 +278,7 @@ export function inspectScriptPrompts(script, { source = "script" } = {}) {
       aspect: "9:16",
       prompt: segment.visualPrompt || "",
       animatePrompt: segment.animatePrompt || "",
-      caption: segment.caption || ""
+      caption: segment.caption || segment.narration || ""
     }))
   };
 }

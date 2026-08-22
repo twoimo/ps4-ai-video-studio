@@ -42,6 +42,29 @@ export const HOLD_SLOT_TEMPLATE = {
   holdOf: "hook-wide"
 };
 
+export const FACTORY_NARRATION_ARC = [
+  { arc: "hook", type: "hook_photoreal" },
+  { arc: "setup", type: "massing_studio" },
+  { arc: "build", type: "cutaway_object" },
+  { arc: "build", type: "mechanism_arrows" },
+  { arc: "build", type: "cutaway_site" },
+  { arc: "climax", type: "context_clay" },
+  { arc: "landing", type: "payoff_photoreal" }
+];
+
+export const SHOT_TYPE_PRIORITY = [
+  "cutaway_object",
+  "hook_photoreal",
+  "massing_studio",
+  "mechanism_arrows",
+  "cutaway_site",
+  "context_clay",
+  "payoff_photoreal",
+  "spec_elevation"
+];
+
+const POWER_WORDS = /모래상자|저수조|물탱크|대피공간|놀이터|콘크리트|빗물|뚜껑|지붕|면적|모래|톤|갑문|수로|문비|볼트|대피|저류|우수/;
+
 export function normalizeFacts(input) {
   if (Array.isArray(input)) return input.map((item) => String(item || "").replace(/\s+/g, " ").trim()).filter(Boolean);
   return String(input || "").split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -148,10 +171,60 @@ function factLabel(fact, index) {
   return words.slice(0, 6).join(" ");
 }
 
+export function manySitesIn(topic = "", facts = []) {
+  const text = [topic, ...normalizeFacts(facts)].join(" ");
+  const places = text.match(/[가-힣]{2,}(?:특별시|광역시|시|군|구|동|읍|면|강|항|역|공원|단지|지구)/g) || [];
+  return new Set(places).size >= 3;
+}
+
+export function wantsCompareSplit(facts = []) {
+  return normalizeFacts(facts).some((fact) => /비교|아니라|대신|한쪽|다른쪽|vs\.?/i.test(fact));
+}
+
+export function powerWordLabel(line, legalQuantities = []) {
+  const numberized = numberizeCaptionText(line, legalQuantities);
+  const si = extractLegalQuantities([numberized])[0];
+  if (si?.display) return si.display;
+  const power = numberized.match(POWER_WORDS);
+  if (power) return power[0];
+  const words = numberized.replace(/[^\p{L}\p{N}㎡°]+/gu, " ").trim().split(/\s+/).filter((word) => word.length >= 2);
+  return words.at(-1) || words[0] || "";
+}
+
+function narrationTypeForShot(index, { areaAllowed = false, hasAreaFact = false, manySites = false, compare = false } = {}) {
+  const beat = FACTORY_NARRATION_ARC[index] || FACTORY_NARRATION_ARC.at(-1);
+  if (index === 4 && hasAreaFact && areaAllowed) return { ...beat, type: "spec_elevation" };
+  if (index === 4 && manySites && !hasAreaFact) return { ...beat, type: "map_3d" };
+  if (index === 3 && compare) return { ...beat, type: "compare_split" };
+  return beat;
+}
+
+function matchFactForLine(line, facts = []) {
+  const compact = String(line || "").replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  const hit = normalizeFacts(facts).find((fact) => {
+    const head = fact.slice(0, 8);
+    const lineHead = compact.replace(SCRIPT_CLOSER, "").slice(0, 8);
+    return (head && compact.includes(head)) || (lineHead && fact.includes(lineHead));
+  });
+  return hit || "";
+}
+
+export function normalizeFactoryDraftLines(draft = "", count = FACTORY_CLIP_COUNT) {
+  const lines = splitScriptDraftLines(draft);
+  const closerAt = lines.findIndex((line) => line.includes(SCRIPT_CLOSER));
+  const body = (closerAt >= 0 ? lines.slice(0, closerAt) : lines.filter((line) => !line.includes(SCRIPT_CLOSER)))
+    .slice(0, Math.max(0, count - 1));
+  while (body.length < count - 1) body.push("");
+  return [...body.slice(0, count - 1), SCRIPT_CLOSER];
+}
+
 export function buildShotList({ topic, facts = [], sources = [] }) {
   const nouns = topicNouns(topic);
   const legalQuantities = extractLegalQuantities(facts);
   const slots = topicAgnosticSlots(nouns);
+  const manySites = manySitesIn(topic, facts);
+  const compare = wantsCompareSplit(facts);
   const factPool = facts.map((fact, index) => ({
     fact,
     index,
@@ -165,11 +238,19 @@ export function buildShotList({ topic, facts = [], sources = [] }) {
     const chosen = areaFact || plainFact;
     if (chosen) chosen.used = true;
     const assignedFact = chosen?.fact || "";
-    const label = assignedFact ? factLabel(assignedFact, chosen?.index ?? index) : "";
+    const label = assignedFact ? powerWordLabel(assignedFact, legalQuantities) || factLabel(assignedFact, chosen?.index ?? index) : "";
+    const beat = narrationTypeForShot(index, {
+      areaAllowed: Boolean(slot.areaAllowed),
+      hasAreaFact: Boolean(areaFact),
+      manySites,
+      compare
+    });
     return {
       index: index + 1,
       slotId: slot.id,
       role: slot.role,
+      type: beat.type,
+      arc: beat.arc,
       unique: true,
       hold: false,
       areaAllowed: Boolean(slot.areaAllowed),
@@ -182,10 +263,13 @@ export function buildShotList({ topic, facts = [], sources = [] }) {
       editFrom: index === 0 ? null : "hook-lock"
     };
   });
+  const landing = FACTORY_NARRATION_ARC[FACTORY_CLIP_COUNT - 1];
   const hold = {
     index: FACTORY_CLIP_COUNT,
     slotId: HOLD_SLOT_TEMPLATE.id,
     role: HOLD_SLOT_TEMPLATE.role,
+    type: landing.type,
+    arc: landing.arc,
     unique: false,
     hold: true,
     holdOf: HOLD_SLOT_TEMPLATE.holdOf,
@@ -219,7 +303,7 @@ export function splitScriptDraftLines(draft = "") {
     .filter(Boolean);
 }
 
-export function applyNarrationDraft(segments = [], draft = "", legalQuantities = []) {
+export function applyNarrationDraft(segments = [], draft = "", legalQuantities = [], facts = []) {
   if (!String(draft || "").trim()) return segments;
   const text = String(draft).replace(/\s+/g, " ").trim();
   if (!String(draft).includes(SCRIPT_CLOSER)) {
@@ -227,14 +311,16 @@ export function applyNarrationDraft(segments = [], draft = "", legalQuantities =
   }
   const inventedDraft = inventedSiIn(text, legalQuantities);
   if (inventedDraft.length) throw new Error(`대본에 출처에 없는 SI가 있습니다: ${inventedDraft.join(", ")}`);
-  const lines = splitScriptDraftLines(draft);
+  const lines = normalizeFactoryDraftLines(draft, segments.length || FACTORY_CLIP_COUNT);
   return segments.map((segment, index) => {
-    let line = lines[index] || segment.narration || segment.caption || "";
-    if (index === segments.length - 1 && !lines[index]) line = SCRIPT_CLOSER;
-    const invented = inventedSiIn(line, legalQuantities);
+    const last = index === segments.length - 1;
+    const raw = last ? SCRIPT_CLOSER : (lines[index] || segment.narration || segment.caption || "");
+    const invented = inventedSiIn(raw, legalQuantities);
     if (invented.length) throw new Error(`대본에 출처에 없는 SI가 있습니다: ${invented.join(", ")}`);
-    const caption = numberizeCaptionText(line, legalQuantities);
-    return { ...segment, narration: caption, caption };
+    const caption = numberizeCaptionText(raw, legalQuantities);
+    const fact = last ? (segment.fact || "") : (matchFactForLine(caption, facts) || segment.fact || "");
+    const label = last ? "" : (caption ? powerWordLabel(caption, legalQuantities) || segment.label : segment.label);
+    return { ...segment, narration: caption, caption, fact, label };
   });
 }
 
@@ -298,7 +384,10 @@ export function buildGrokImagineScript(job) {
   const shotList = buildShotList({ topic: job.topic, facts, sources });
   const legalQuantities = shotList.legalQuantities;
   const nouns = topicNouns(job.topic);
-  const worldSlotOverrides = sanitizeWorldSlotOverrides(job.worldSlots || job.worldSlotOverrides);
+  const worldSlotOverrides = sanitizeWorldSlotOverrides({
+    ...proposeWorldSlotsFromFacts(job.topic, facts),
+    ...(job.worldSlots || job.worldSlotOverrides || {})
+  });
   const worldSlots = fillWorldSlots({ nouns, legalQuantities, worldSlots: worldSlotOverrides });
   const inventedSlots = inventedSiIn(Object.values(worldSlots).join("\n"), legalQuantities);
   if (inventedSlots.length) {
@@ -319,16 +408,18 @@ export function buildGrokImagineScript(job) {
       worldSlots
     };
   });
-  const narrated = job.scriptDraft ? applyNarrationDraft(segments, job.scriptDraft, legalQuantities) : segments;
+  const narrated = job.scriptDraft ? applyNarrationDraft(segments, job.scriptDraft, legalQuantities, facts) : segments;
   const invented = inventedSiIn(narrated.map((segment) => `${segment.visualPrompt} ${segment.caption}`).join("\n"), legalQuantities);
   if (invented.length) {
     throw new Error(`슬롯·샷 목록에 출처에 없는 SI가 들어 있습니다: ${invented.join(", ")}`);
   }
   return {
-    title: job.topic,
+    title: titleFromTopic(job.topic),
+    topic: job.topic,
     hook: narrated[0]?.narration || job.topic,
     narration: narrated.map((segment) => segment.narration).join(" "),
-    scriptDraft: job.scriptDraft || "",
+    scriptDraft: job.scriptDraft || narrated.map((segment) => segment.caption).filter(Boolean).join("\n"),
+    closer: SCRIPT_CLOSER,
     sources,
     facts,
     legalQuantities,
@@ -344,6 +435,53 @@ export function buildGrokImagineScript(job) {
     holdCount: 1,
     targetDurationSec: FACTORY_CLIP_COUNT * SHOT_DURATION_SEC,
     segments: narrated
+  };
+}
+
+export function titleFromTopic(topic) {
+  const clean = String(topic || "").replace(/\s+/g, " ").trim();
+  return clean ? `신비한 건축사전 · ${clean}` : "신비한 건축사전";
+}
+
+export function proposeWorldSlotsFromFacts(topic, facts = []) {
+  const nouns = topicNouns(topic);
+  const joined = normalizeFacts(facts).join(" ");
+  const power = joined.match(POWER_WORDS);
+  const material = joined.match(/콘크리트|모래|철근|볼트|문비|뚜껑|금속/);
+  const hidden = joined.match(/저수조|물탱크|대피공간|수로|갑실|저류|우수|문비|지붕/);
+  const next = {};
+  if (nouns.length) {
+    next.site = `empty real Korean ${nouns.join(" / ")} site, one location, documentary civic scale`;
+  }
+  if (power) next.everyday_thing = `one ${power[0]} already on the same site — not a person`;
+  if (hidden) next.hidden_thing = `the hidden ${hidden[0]} layer of this site — not a person`;
+  if (material) next.materials = material[0];
+  return next;
+}
+
+export function publicScriptView(script) {
+  if (!script) return null;
+  return {
+    title: script.title || titleFromTopic(script.topic),
+    topic: script.topic || "",
+    facts: script.facts || [],
+    worldSlots: script.worldSlots || {},
+    closer: SCRIPT_CLOSER,
+    clipCount: script.clipCount || FACTORY_CLIP_COUNT,
+    uniqueCount: script.uniqueCount || FACTORY_UNIQUE_COUNT,
+    segments: (script.segments || []).map((segment, index) => ({
+      index: Number.isInteger(segment.index) ? segment.index : index + 1,
+      role: segment.role,
+      type: segment.type || segment.role,
+      arc: segment.arc || null,
+      camera: segment.camera,
+      fact: segment.fact || "",
+      label: segment.label || "",
+      narration: segment.narration || segment.caption || "",
+      caption: segment.caption || segment.narration || "",
+      durationHint: segment.durationHint || segment.durationSec || SHOT_DURATION_SEC,
+      tool: segment.tool
+    }))
   };
 }
 

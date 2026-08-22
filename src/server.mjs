@@ -24,7 +24,8 @@ import { evaluateJob, runQualityLoop, saveCommitteeReview } from "./quality.mjs"
 import { ytDlpInfo } from "./yt-dlp.mjs";
 import { resolveGrokBinary } from "./grok-imagine-cli.mjs";
 import { inspectJobPrompts, previewFactoryPrompts, PROVIDER_ID as GROK_IMAGINE_PROVIDER } from "./grok-imagine-factory.mjs";
-import { getLockedTemplate } from "./grok-imagine-template.mjs";
+import { getLockedSpec } from "./grok-imagine-spec.mjs";
+import { backlotHealth, handleBacklot, handleBacklotApi } from "./backlot-server.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
 import { compareLibraryJobs, ensureLibraryEpisodes } from "./episode-import.mjs";
@@ -747,12 +748,15 @@ async function health() {
     factoryQueue: grokQueue.snapshot(),
     imagine: {
       frozen: process.env.PS4_IMAGINE_FROZEN !== "0"
-    }
+    },
+    backlot: backlotHealth()
   };
 }
 
 async function handleApi(request, url) {
   const path = url.pathname;
+  const backlot = await handleBacklotApi(request, url);
+  if (backlot) return backlot;
   if ((path === "/api/openapi.json" || path === "/api/docs.json") && request.method === "GET") return json(studioOpenApi());
   if (path === "/api/docs" && request.method === "GET") {
     return new Response(studioDocsHtml(), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
@@ -828,7 +832,8 @@ async function handleApi(request, url) {
     const start = (page - 1) * limit;
     return json({ total: videos.length, page, limit, videos: videos.slice(start, start + limit) });
   }
-  if (path === "/api/grok-imagine/template" && request.method === "GET") return json(getLockedTemplate());
+  if (path === "/api/grok-imagine/template" && request.method === "GET") return json(getLockedSpec());
+  if (path === "/api/grok-imagine/spec" && request.method === "GET") return json(getLockedSpec());
   if (path === "/api/grok-imagine/template/preview" && request.method === "POST") {
     try {
       const body = await readJson(request);
@@ -1193,6 +1198,8 @@ const server = Bun.serve({
         const response = await handleApi(request, url);
         return response || errorResponse(new Error("API 경로를 찾지 못했습니다."), 404);
       }
+      const backlot = await handleBacklot(request, url);
+      if (backlot) return backlot;
       return await serveStatic(url.pathname);
     } catch (error) {
       console.error(error);

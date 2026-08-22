@@ -13,7 +13,7 @@
     "dev": "bun --watch src/server.mjs",
     "start": "bun src/server.mjs",
     "cli": "node cli/studio.mjs",
-    "test": "node --test test/grok-imagine-factory.test.mjs test/shorts-grid-ui.test.mjs test/watch-feed.test.mjs test/grok-imagine-template.test.mjs test/grok-imagine-live.test.mjs test/episode-import-queue.test.mjs test/mpt-studio-layer.test.mjs"
+    "test": "node --test test/grok-imagine-factory.test.mjs test/shorts-grid-ui.test.mjs test/watch-feed.test.mjs test/grok-imagine-template.test.mjs test/grok-imagine-live.test.mjs test/episode-import-queue.test.mjs test/mpt-studio-layer.test.mjs test/backlot-board.test.mjs test/studio-script.test.mjs"
   },
   "bin": {
     "ps4-studio": "./cli/studio.mjs"

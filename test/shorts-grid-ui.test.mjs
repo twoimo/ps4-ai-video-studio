@@ -17,6 +17,7 @@ import {
   shortThumbnail,
   shortUploadPack
 } from "../public/shorts-ui.mjs";
+import { collectInspectPayload, renderMaterialsPanel } from "../public/materials-editor.mjs";
 
 const publicDir = join(process.cwd(), "public");
 
@@ -168,10 +169,20 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /method: "DELETE"/);
   assert.match(app, /contextmenu/);
   assert.match(app, /#studio-chips/);
+  assert.match(app, /function renderChips/);
+  assert.match(app, /만드는 과정/);
+  assert.match(app, /label: "대본"/);
+  assert.match(app, /label: "그림"/);
+  assert.match(app, /label: "움직임"/);
+  assert.match(app, /label: "편집"/);
+  assert.match(app, /크레딧 부족/);
+  assert.equal(app.includes(">grok</button>"), false);
+  assert.equal(app.includes(">ffmpeg</button>"), false);
+  assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
   assert.match(app, /health\.imagine\?\.frozen/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
-  assert.match(app, /closeOpenWatchInspect\(\)/);
+  assert.equal(app.includes("closeOpenWatchInspect"), false);
   assert.match(app, /pagehide/);
   assert.match(app, /aria-valuenow/);
   assert.match(app, /createWatchPlayer/);
@@ -182,7 +193,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /viewport-fit=cover/);
   assert.match(html, /class="studio-overlay feed-card" id="create-overlay"/);
   assert.match(html, /class="studio-overlay feed-card" id="settings-overlay"/);
-  assert.match(html, /class="studio-overlay feed-card" id="template-overlay"/);
+  assert.match(html, /class="template-studio" id="template-overlay"/);
   assert.match(html, /id="settings-bgm-songs"/);
   assert.equal(html.includes("gemini-browser"), false);
   assert.equal(html.includes("browser-start"), false);
@@ -203,7 +214,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /min-height:\s*44px/);
   assert.match(css, /safe-area-inset-top/);
   assert.match(css, /\.live-stages\s*\{/);
-  assert.match(css, /\.inspect-files\s*\{/);
+  assert.equal(css.includes("watch-inspect"), false);
+  assert.equal(css.includes(".inspect-files"), false);
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
@@ -289,6 +301,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /class="library-gear"/);
   assert.match(home, /<svg class="library-gear"/);
   assert.match(home, /id="import-library">가져오기</);
+  assert.match(home, /id="open-board"[^>]*href="\/backlot"/);
   assert.match(home, /id="open-template">템플릿</);
   assert.match(home, /id="open-settings">설정</);
   assert.match(home, /id="refresh-all">새로고침</);
@@ -345,8 +358,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   const feed = await readFile(join(publicDir, "watch-feed.mjs"), "utf8");
   const watch = html.slice(html.indexOf('id="watch-feed"'), html.indexOf('id="shorts"'));
   assert.match(watch, /class="watch-column"/);
-  assert.match(watch, /<\/div>\s*<button type="button" class="watch-inspect-dismiss"/);
-  assert.match(watch, /class="watch-inspect-dismiss"[\s\S]*class="watch-inspect"/);
+  assert.equal(watch.includes("watch-inspect"), false);
+  assert.equal(watch.includes("inspect-dismiss"), false);
+  assert.equal(watch.includes("inspect-open"), false);
   assert.equal(watch.includes("position:absolute; right:0"), false);
   assert.equal(html.includes("watch-scroller"), false);
   assert.match(html, /id="shorts-grid"/);
@@ -370,7 +384,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-player\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.watch-player video\s*\{[^}]*object-fit:\s*cover/);
   assert.match(css, /\.watch-slide \.watch-poster\s*\{[^}]*object-fit:\s*cover/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*height:\s*100%/);
+  assert.equal(css.includes(".watch-inspect"), false);
   assert.match(css, /body\.watch-open\s*\{[^}]*display:\s*block/);
   assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.watch-back\s*\{[^}]*position:\s*absolute/);
@@ -395,8 +409,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-menu[\s\S]*display:\s*none/.test(css), false);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)[\s\S]*right:\s*auto/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-right\)\)/);
-  assert.match(css, /\.watch-inspect-dismiss/);
-  assert.match(css, /\.watch-feed\.inspect-open \.watch-inspect/);
+  assert.equal(css.includes("watch-inspect-dismiss"), false);
+  assert.equal(css.includes("inspect-open"), false);
   assert.equal(css.includes(".watch-mute"), false);
   assert.equal(css.includes(".watch-actions"), false);
   assert.equal(css.includes(".watch-sheet"), false);
@@ -411,13 +425,13 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /#shorts/);
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
-  assert.match(app, /setView\("detail"\)/);
+  assert.equal(app.includes('setView("detail")'), false);
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
   assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /hash === "short"/);
-  assert.match(app, /hash === "short"[\s\S]*setView\("detail"/);
+  assert.match(app, /hash === "short"[\s\S]*\/backlot\/p\//);
   assert.match(app, /class="draft-facts"/);
   assert.match(app, /\.slice\(0,\s*4\)/);
   assert.match(app, /대본 없음/);
@@ -435,8 +449,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("toggleWatchSurface"), false);
   assert.equal(app.includes('state.view === "watch" ? "라이브러리" : "보기"'), false);
   assert.match(app, /function openHome/);
-  assert.match(app, /if \(state\.view === "watch"\) \{\s*if \(closeOpenWatchInspect\(\)\) return;\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
-  assert.match(app, /isWatchableShort\(job\)\) setView\("watch"/);
+  assert.match(app, /if \(state\.view === "watch"\) \{\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
+  assert.match(app, /isWatchableShort\(job\)\) \{\s*setView\("watch"/);
   assert.match(app, /ArrowDown/);
   assert.match(app, /ArrowUp/);
   assert.match(app, /stepWatchFeed\(feed, 1/);
@@ -472,7 +486,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /function watchFeedMarkup/);
   assert.match(app, /from "\.\/watch-feed\.mjs"/);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
-  assert.match(app, /bindWatchFeed\(\$\("#watch-feed"\), openHome\)/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
   assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*playWatchFeed/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*stopWatchFeed/);
@@ -486,11 +500,16 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
-  assert.match(html, /class="watch-inspect-dismiss"/);
-  assert.match(app, /watch-inspect-dismiss/);
-  assert.match(app, /function toggleWatchInspect/);
-  assert.match(app, /classList\.toggle\("inspect-open"/);
-  assert.match(app, /closeOpenWatchInspect\(\)/);
+  assert.equal(html.includes("watch-inspect"), false);
+  assert.equal(html.includes("inspect-dismiss"), false);
+  assert.equal(app.includes("function toggleWatchInspect"), false);
+  assert.equal(app.includes("closeOpenWatchInspect"), false);
+  assert.equal(app.includes("closeWatchInspect"), false);
+  assert.equal(app.includes("inspect-open"), false);
+  assert.equal(app.includes("hydrateWatchInspect"), false);
+  assert.equal(app.includes("function renderWatchInspectPanel"), false);
+  assert.match(app, /function openMaterials/);
+  assert.match(app, /\/backlot\/p\//);
   assert.equal(app.includes("scrollIntoView"), false);
   assert.equal(app.includes('class="watch-materials"'), false);
   assert.equal(app.includes("letterbox"), false);
@@ -499,7 +518,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /openJob/);
   assert.match(app, /function openDetail/);
   assert.match(app, /short-card-detail/);
-  assert.match(app, />상세</);
+  assert.match(app, />재료</);
   assert.equal(watchSlide.includes("watch-actions"), false);
   assert.equal(watchSlide.includes("watch-mute"), false);
   assert.equal(watchSlide.includes("watch-detail"), false);
@@ -532,70 +551,151 @@ test("completed short lists master chat parts and ASS downloads", () => {
 
 test("watch inspector saves drafts and freezes regen", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const editor = await readFile(join(publicDir, "materials-editor.mjs"), "utf8");
+  const materials = await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8");
+  const board = await readFile(join(publicDir, "backlot/board.html"), "utf8");
+  const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
-  assert.match(html, /class="watch-inspect"/);
-  assert.match(app, /\$\("#watch-inspect"\)/);
-  assert.match(app, /hydrateWatchInspect/);
-  assert.match(app, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/prompts/);
+  assert.equal(html.includes("watch-inspect"), false);
+  assert.equal(html.includes("id=\"watch-inspect\""), false);
+  assert.equal(html.includes("inspect-dismiss"), false);
+  const menu = html.slice(html.indexOf('id="menu-actions"'), html.indexOf('id="menu-import-result"'));
+  assert.match(menu, /id="open-board-menu"[^>]*href="\/backlot"/);
+  assert.equal(menu.includes("재료"), false);
+  assert.equal(menu.includes("watch-inspect"), false);
+  assert.equal(app.includes("hydrateWatchInspect"), false);
+  assert.equal(app.includes("function renderWatchInspectPanel"), false);
+  assert.equal(app.includes("function toggleWatchInspect"), false);
+  assert.match(app, /function openMaterials/);
+  assert.match(app, /location\.assign\(materialsUrl/);
+  assert.match(app, /\/backlot\/p\//);
+  assert.match(app, /stopWatchFeed\(\$\("#watch-feed"\)\)/);
   assert.match(app, /method: "PATCH"/);
-  const inspectFn = app.slice(app.indexOf("function renderWatchInspectPanel"), app.indexOf("async function saveInspectDraft"));
-  assert.match(app, /function renderWatchInspectPanel/);
-  assert.match(app, /inspectVideoDownloads\(job\)/);
-  assert.match(app, /class="inspect-files"/);
-  assert.match(app, /class="inspect-topic"/);
-  assert.match(app, /class="inspect-facts"/);
-  assert.match(app, /class="inspect-script"/);
-  assert.match(app, /class="inspect-shot-caption"/);
-  assert.match(app, /class="inspect-shot-prompt"/);
-  assert.match(app, /class="inspect-shot-animate"/);
-  assert.match(app, /data-world-slot/);
-  assert.match(app, /function collectInspectPayload/);
-  assert.match(app, /class="inspect-stack"/);
-  assert.match(app, /class="inspect-caption"/);
-  assert.match(app, />제목</);
-  assert.match(app, />대본</);
-  assert.match(app, />자막</);
-  assert.match(inspectFn, /inspect-files/);
-  assert.equal(inspectFn.includes("자막 ASS"), false);
-  assert.equal(inspectFn.includes("captions.ass"), false);
-  assert.match(app, /class="primary-button inspect-save"[^>]*>저장</);
-  assert.match(app, /class="secondary-button inspect-regen"[\s\S]*다시 만들기/);
-  assert.match(app, /지금은 다시 못 만들어요/);
+  assert.match(editor, /export function renderMaterialsPanel/);
+  assert.match(editor, /export function collectInspectPayload/);
+  assert.match(editor, /inspectVideoDownloads\(job\)/);
+  assert.match(editor, /class="inspect-files"/);
+  assert.match(editor, /class="inspect-topic"/);
+  assert.match(editor, /class="inspect-facts"/);
+  assert.match(editor, /class="inspect-script"/);
+  assert.match(editor, /class="inspect-shot-caption"/);
+  assert.match(editor, /class="inspect-shot-prompt"/);
+  assert.match(editor, /class="inspect-shot-animate"/);
+  assert.match(editor, /data-world-slot/);
+  assert.match(editor, /class="inspect-stack"/);
+  assert.match(editor, /class="inspect-caption"/);
+  assert.match(editor, />제목</);
+  assert.match(editor, />대본</);
+  assert.match(editor, />자막</);
+  assert.equal(editor.includes("자막 ASS"), false);
+  assert.equal(editor.includes("captions.ass"), false);
+  assert.match(editor, /class="primary-button inspect-save"[^>]*>저장</);
+  assert.match(editor, /class="secondary-button inspect-regen"[\s\S]*다시 만들기/);
+  assert.match(editor, /지금은 다시 못 만들어요/);
   assert.match(app, /function youtubePrepMarkup/);
-  assert.equal(inspectFn.includes("youtubePrepMarkup"), false);
-  assert.equal(inspectFn.includes("업로드 준비"), false);
-  assert.equal(inspectFn.includes("받은 파일"), false);
-  assert.equal(inspectFn.includes("그림 설명"), false);
-  assert.equal(inspectFn.includes("같은 장소 분위기"), false);
-  assert.equal(inspectFn.includes("이 영상은 이렇게 만들었어요"), false);
+  assert.equal(editor.includes("youtubePrepMarkup"), false);
+  assert.equal(editor.includes("업로드 준비"), false);
+  assert.equal(editor.includes("받은 파일"), false);
+  assert.equal(editor.includes("그림 설명"), false);
+  assert.equal(editor.includes("같은 장소 분위기"), false);
+  assert.equal(editor.includes("이 영상은 이렇게 만들었어요"), false);
+  assert.equal(editor.includes("watch-inspect-close"), false);
   assert.equal(app.includes("hook_photoreal"), false);
-  assert.match(css, /\.inspect-stack\s*\{[^}]*gap/);
-  assert.match(css, /\.inspect-caption\s*\{[^}]*grid-template-columns:\s*1\.5rem/);
-  assert.match(css, /\.inspect-files\s*\{/);
+  assert.equal(editor.includes("hook_photoreal"), false);
+  assert.match(board, /id="materials"/);
+  assert.match(board, /aria-label="재료"/);
+  assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
+  assert.match(materials, /renderMaterialsPanel/);
+  assert.match(materials, /collectInspectPayload/);
+  assert.match(materials, /method: "PATCH"/);
+  assert.match(materials, /\/run/);
+  assert.match(materials, /크레딧 부족/);
+  assert.match(boardCss, /\.wrap\.work\s*\{/);
+  assert.match(boardCss, /@media \(max-width: 720px\)[\s\S]*\.wrap\.work \{ display: block; \}/);
+  assert.doesNotMatch(boardCss, /max-width:\s*440px/);
+  assert.doesNotMatch(boardCss, /max-width:\s*400px/);
+  assert.match(boardCss, /\.materials \.inspect-stack\s*\{[^}]*gap/);
+  assert.match(boardCss, /\.materials \.inspect-caption\s*\{[^}]*grid-template-columns:\s*1\.5rem/);
+  assert.match(boardCss, /\.materials \.inspect-files\s*\{/);
   assert.match(app, /health\?\.imagine\?\.frozen !== false/);
-  assert.match(app, /\/api\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/run/);
-  assert.match(app, /class="watch-inspect-close"[^>]*aria-label="닫기">×</);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*height:\s*100%/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*position:\s*fixed/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*visibility:\s*hidden/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*pointer-events:\s*none/);
-  assert.match(css, /\.watch-inspect \.inspect-stack[\s\S]*min\(440px,\s*calc\(100vw - 32px\)\)/);
-  assert.match(css, /\.watch-inspect-close\s*\{[^}]*width:\s*44px/);
-  assert.match(css, /\.watch-inspect-close\s*\{[^}]*height:\s*44px/);
+  assert.equal(app.includes("class=\"watch-inspect-close\""), false);
+  assert.equal(css.includes("watch-inspect"), false);
+  assert.equal(css.includes("inspect-open"), false);
+  assert.equal(css.includes("watch-inspect-dismiss"), false);
+  assert.equal(css.includes("watch-inspect-close"), false);
   assert.equal(css.includes("translateX(100%)"), false);
-  assert.equal(/\.watch-inspect\s*\{[^}]*360px/.test(css), false);
-  assert.equal(/\.watch-inspect\s*\{[^}]*right:\s*0/.test(css), false);
-  assert.match(css, /\.watch-feed\.inspect-open \.watch-inspect-dismiss\s*\{[^}]*display:\s*block/);
   assert.equal(css.includes("40dvh"), false);
   assert.match(pipeline, /export async function saveJobDraft/);
   assert.match(pipeline, /buildGrokImagineScript/);
   assert.match(server, /request\.method === "PATCH"/);
   assert.match(server, /suffix === "draft"/);
   assert.match(server, /크레딧 402/);
+  const panel = renderMaterialsPanel({
+    id: "job-1",
+    topic: "한강 갑문",
+    scriptDraft: "이렇게 설계된 겁니다.",
+    facts: ["숨긴 사실"],
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/job-1/artifacts/master.mp4" },
+      { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/job-1/artifacts/parts/part-01.mp4" },
+      { name: "parts/part-02.mp4", kind: "part", url: "/api/jobs/job-1/artifacts/parts/part-02.mp4" }
+    ]
+  }, {
+    shots: [{ index: 1, caption: "첫 줄", prompt: "hidden prompt", animatePrompt: "hidden move" }]
+  }, { frozen: true });
+  assert.match(panel, />제목</);
+  assert.match(panel, /value="한강 갑문"/);
+  assert.match(panel, />대본</);
+  assert.match(panel, />자막</);
+  assert.match(panel, /hidden class="inspect-facts"/);
+  assert.match(panel, /hidden class="inspect-shot"/);
+  assert.match(panel, /inspect-files/);
+  assert.match(panel, /마스터/);
+  assert.match(panel, /채팅용/);
+  assert.equal(panel.includes("자막 ASS"), false);
+  assert.equal(panel.includes("watch-inspect-close"), false);
+  assert.match(panel, /disabled/);
+  const fakeRoot = {
+    querySelectorAll(selector) {
+      if (selector.includes("inspect-shot[data-shot-index]")) {
+        return [{
+          dataset: { shotIndex: "1" },
+          querySelector(sel) {
+            if (sel.includes("shot-prompt")) return { value: "hidden prompt" };
+            if (sel.includes("shot-animate")) return { value: "hidden move" };
+            return null;
+          }
+        }];
+      }
+      if (selector.includes("inspect-caption")) {
+        return [{
+          dataset: { shotIndex: "1" },
+          closest() { return { dataset: { shotIndex: "1" } }; },
+          value: "첫 줄"
+        }];
+      }
+      if (selector.includes("data-world-slot")) return [];
+      return [];
+    },
+    querySelector(selector) {
+      if (selector.includes("draft-topic") || selector.includes("inspect-topic")) return { value: "한강 갑문" };
+      if (selector.includes("draft-facts") || selector.includes("inspect-facts")) return { value: "숨긴 사실" };
+      if (selector.includes("draft-script") || selector.includes("inspect-script")) return { value: "이렇게 설계된 겁니다." };
+      return null;
+    }
+  };
+  assert.deepEqual(collectInspectPayload(fakeRoot), {
+    topic: "한강 갑문",
+    facts: ["숨긴 사실"],
+    scriptDraft: "이렇게 설계된 겁니다.",
+    worldSlots: {},
+    shotOverrides: {
+      1: { index: 1, prompt: "hidden prompt", animatePrompt: "hidden move", caption: "첫 줄" }
+    }
+  });
 });
 
 test("양산 batch and upload pack stay draft-only unless unfrozen", async () => {

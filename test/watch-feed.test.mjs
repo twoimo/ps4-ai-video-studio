@@ -465,7 +465,7 @@ test("pointer tap under 10px snaps back and does not change index", () => {
   assert.equal(paused.pauseCalls, 1);
 });
 
-test("hamburger chromeHit toggles inspect and never swallows", () => {
+test("hamburger chromeHit does not open inspect and never swallows", () => {
   const slides = [{ dataset: { jobId: "a" } }];
   const tokens = new Set();
   const root = fakePager({ slides, height: 640 });
@@ -484,7 +484,7 @@ test("hamburger chromeHit toggles inspect and never swallows", () => {
   down({ clientX: 10, clientY: 20, target: menu });
   up({ clientX: 10, clientY: 20, target: menu });
   click({ target: menu, preventDefault() {}, stopPropagation() {} });
-  assert.equal(tokens.has("inspect-open"), true);
+  assert.equal(tokens.has("inspect-open"), false);
   assert.equal(getWatchIndex(root), 0);
 });
 
@@ -549,12 +549,11 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*margin-inline:\s*auto/);
   assert.match(css, /#watch-feed \.watch-menu/);
-  assert.match(css, /#watch-feed \.watch-inspect/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*position:\s*fixed/);
-  assert.match(css, /\.watch-inspect\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /\.watch-inspect \.inspect-stack[\s\S]*min\(440px,\s*calc\(100vw - 32px\)\)/);
+  assert.equal(css.includes("watch-inspect"), false);
+  assert.equal(css.includes("inspect-open"), false);
+  assert.equal(html.includes("watch-inspect"), false);
+  assert.equal(html.includes("inspect-dismiss"), false);
   assert.equal(css.includes("translateX(100%)"), false);
-  assert.match(html, /<\/div>\s*<button type="button" class="watch-inspect-dismiss"/);
   assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
   assert.match(css, /\.watch-close[\s\S]*left:\s*12px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
@@ -626,7 +625,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.equal(watchSlide.includes("<video"), false);
   assert.equal(watchSlide.includes("watch-dl"), false);
   assert.equal(app.includes('class="watch-dl"'), false);
-  assert.match(app, /if \(closeOpenWatchInspect\(\)\) return;/);
+  assert.equal(app.includes("closeOpenWatchInspect"), false);
+  assert.equal(app.includes("closeWatchInspect"), false);
   assert.equal(feed.includes("setTimeout"), false);
   assert.equal(feed.includes('window.addEventListener("resize"'), false);
   assert.equal(feed.includes("}, 80);"), false);
@@ -642,7 +642,9 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /export function pageHeight/);
   assert.match(feed, /root\.clientHeight/);
   assert.match(feed, /video\.play\(\)/);
-  assert.match(feed, /function toggleInspect/);
+  assert.equal(feed.includes("function toggleInspect"), false);
+  assert.equal(feed.includes("inspect-open"), false);
+  assert.equal(feed.includes("watch-inspect"), false);
   assert.match(feed, /chromeHit/);
   assert.match(app, /clearWatchSize\(watchFeed\)/);
   assert.match(app, /sizeWatchFeed\(watchFeed\)/);
@@ -663,7 +665,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /data-loop="head"/);
   assert.match(app, /data-loop="tail"/);
   assert.match(app, /function watchFeedMarkup/);
-  assert.match(app, /\$\("#watch-inspect"\)/);
+  assert.match(app, /function openMaterials/);
+  assert.match(app, /\/backlot\/p\//);
   assert.match(html, /id="watch-track"/);
   assert.equal(html.includes('id="watch-player"'), false);
   assert.match(feed, /pointerdown/);
@@ -691,7 +694,7 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(css, /\.watch-slide\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
   assert.match(css, /\.watch-slide\s*\{[^}]*margin-inline:\s*auto/);
   assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-menu[\s\S]*display:\s*none/.test(css), false);
-  assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-inspect-dismiss[\s\S]*display:\s*none/.test(css), false);
+  assert.equal(css.includes("watch-inspect-dismiss"), false);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(feed, /swallowClick/);
   assert.match(feed, /movement < 10/);
