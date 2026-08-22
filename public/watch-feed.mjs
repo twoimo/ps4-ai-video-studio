@@ -205,10 +205,39 @@ export function createWatchPlayer(root) {
   return ensureWatchPlayer(root);
 }
 
+function exitWatchPictureInPicture(video) {
+  const doc = globalThis.document;
+  if (video && doc?.pictureInPictureElement === video) {
+    try { doc.exitPictureInPicture?.(); } catch { /* ignore leftover PiP */ }
+  }
+  if (!video) return;
+  video.playsInline = true;
+  if (typeof video.setAttribute === "function") {
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+  }
+}
+
+function bindWatchPictureInPicture(root, onBack) {
+  const video = root ? watchPlayers.get(root) || root.querySelector?.("video") : null;
+  if (!video || video.dataset?.pipBound === "1") return;
+  if (video.dataset) video.dataset.pipBound = "1";
+  video.addEventListener?.("enterpictureinpicture", () => {
+    exitWatchPictureInPicture(video);
+    stopWatchFeed(root);
+    onBack?.();
+  });
+  video.addEventListener?.("leavepictureinpicture", () => {
+    if (globalThis.document?.body?.classList?.contains("watch-open")) return;
+    try { video.pause(); } catch { /* ignore leftover PiP */ }
+  });
+}
+
 export function pauseWatchFeed(root) {
   pauseLeftoverMedia(root);
   const video = watchPlayerVideo(root);
   if (!video) return;
+  exitWatchPictureInPicture(video);
   try { video.pause(); } catch { /* ignore leftover playback */ }
 }
 
@@ -232,6 +261,7 @@ export function stopWatchFeed(root) {
     }
   }
   for (const video of videos) {
+    exitWatchPictureInPicture(video);
     video.pause();
     video.currentTime = 0;
     if (typeof video.removeAttribute === "function") video.removeAttribute("src");
@@ -556,6 +586,7 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   if (root.dataset) root.dataset.watchBound = "1";
   ensureWatchColumn(root);
   createWatchPlayer(root);
+  bindWatchPictureInPicture(root, onBack);
   bindWatchResize(root);
   bindWatchFlip(root);
   const track = watchTrack(root);

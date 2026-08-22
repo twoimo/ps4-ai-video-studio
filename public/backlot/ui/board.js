@@ -737,7 +737,7 @@ function sceneCard(s, card) {
       v.quality_score != null ? `q ${v.quality_score}` : null].filter(Boolean).join(" · ");
     if (v.type === "video") {
       thumb = el("div", { class: "thumb approved" },
-        el("video", { src: mediaURL(s.project_id, v.path), muted: "", preload: "metadata", playsinline: "" }),
+        el("video", { src: mediaURL(s.project_id, v.path), muted: "", preload: "metadata", playsinline: "", disablepictureinpicture: "" }),
         el("span", { class: "play" }, "▶"),
         badge ? el("span", { class: "badge" }, badge) : null);
       thumb.onclick = () => {
@@ -870,7 +870,8 @@ function renderRenders(s) {
   // preload="metadata" gives the element its intrinsic aspect ratio (and a
   // poster frame) before playback — without it a portrait 9:16 render sits
   // in a letterboxed 100%-wide black box that reads as landscape.
-  const video = el("video", { src, controls: "", preload: "metadata" });
+  const video = el("video", { src, controls: "", preload: "metadata", playsinline: "", disablepictureinpicture: "" });
+  video.disablePictureInPicture = true;
   // Click the frame to start playback (controls handle pause/scrub) — the
   // big player was inert to a click on the picture itself.
   video.addEventListener("click", () => { if (video.paused) video.play().catch(() => {}); });
@@ -1222,3 +1223,9 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) pauseBoardVideos();
 });
 window.addEventListener("pagehide", pauseBoardVideos);
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  if (modal) modal.dataset.fromPop = "1";
+  closeModal();
+  pauseBoardVideos();
+});

@@ -222,7 +222,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border-radius:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*-webkit-touch-callout:\s*none/);
-  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*24/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*46/);
   assert.match(css, /\.watch-feed\s*\{[^}]*container-type:\s*size/);
   assert.match(css, /100cqh/);
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
@@ -725,7 +725,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /hash === "machine"[\s\S]*setView\("machine"/);
   assert.match(app, /function resumeWatchIfVisible/);
   assert.match(app, /addEventListener\("pageshow", resumeWatchIfVisible\)/);
-  assert.match(app, /addEventListener\("pageshow", \(\) => \{ pageHiding = false; \}\)/);
+  assert.match(app, /pageHiding = false;\s*if \(event\.persisted\) void refreshJobs\(\)/);
   assert.match(app, /addEventListener\("studio-open-machine", openMachine\)/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
@@ -776,6 +776,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /settingsWrite\?\.abort\(\)/);
   assert.match(app, /signal: controller.signal/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = settingsSaveFailMessage\(error\);\s*if \(!text\) return;\s*showToast\(text, "error"\)/);
+  assert.match(app, /async function persistSettings\(\{ toast = false, keepalive = false \} = \{\}\)/);
+  assert.match(app, /void persistSettings\(\{ keepalive: true \}\)/);
   assert.match(app, /async function draftScriptFromTopic/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = friendlyJobError\(error\);/);
   assert.match(app, /if \(errorBox && text\) \{\s*errorBox\.hidden = false;/);
@@ -1552,4 +1554,19 @@ test("Android Back closes leftover create settings machine then applies hash aft
   assert.match(chrome, /export function leaveSatelliteIfNeeded/);
   assert.match(chrome, /export function armSatelliteHistory/);
   assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
+});
+
+test("empty grid first create upserts then renders and pagehide persists settings", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
+  assert.match(app, /function upsertJob\(partial\) \{[\s\S]*renderJobs\(\);[\s\S]*renderJobs\(\);/);
+  assert.match(app, /if \(event\.persisted\) void refreshJobs\(\)/);
+  assert.match(app, /keepalive/);
+  assert.match(app, /settingsSaveFailMessage\(error\)/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*z-index:\s*40/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*46/);
+  assert.match(css, /\.library-menu\s*\{[^}]*z-index:\s*2/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*z-index:\s*40/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
 });

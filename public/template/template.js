@@ -1,4 +1,4 @@
-import { friendlyJobError, parseJsonText } from "../shorts-ui.mjs";
+import { friendlyJobError, parseJsonText, throwMappedFetchError } from "../shorts-ui.mjs";
 import { escapeSpecHtml, renderLockedSpec } from "../template-spec.mjs";
 
 const APP_TITLE = "PS4_JUSTDOIT";
@@ -13,7 +13,12 @@ async function loadTemplatePage() {
   const title = document.querySelector("#template-title");
   if (!root) return;
   try {
-    const response = await fetch("/api/grok-imagine/template");
+    let response;
+    try {
+      response = await fetch("/api/grok-imagine/template");
+    } catch (error) {
+      throwMappedFetchError(error);
+    }
     const spec = parseJsonText(await response.text());
     if (!response.ok) throw new Error(friendlyJobError(spec.error || "템플릿을 불러오지 못했습니다"));
     document.title = `템플릿 · ${APP_TITLE}`;

@@ -42,7 +42,7 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
 #satellite-menu {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 40;
   display: grid;
   place-items: center;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) max(env(safe-area-inset-bottom), var(--vv-bottom, 0px)) env(safe-area-inset-left);

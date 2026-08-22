@@ -593,6 +593,24 @@ test("library long-press blocks contextmenu and the board rail stays visible", a
   assert.match(chrome, /export function leaveSatelliteIfNeeded/);
 });
 
+test("board bfcache closes the modal, disables PiP, and blocks pull-to-refresh", async () => {
+  const root = process.cwd();
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  assert.match(boardJs, /disablepictureinpicture/);
+  assert.match(boardJs, /video\.disablePictureInPicture = true/);
+  assert.match(boardJs, /addEventListener\("pageshow"/);
+  assert.match(boardJs, /if \(!event\.persisted\) return/);
+  assert.match(boardJs, /closeModal\(\)/);
+  assert.match(boardJs, /pauseBoardVideos\(\)/);
+  assert.match(css, /z-index:\s*1;/);
+  assert.doesNotMatch(css, /z-index:\s*90/);
+  assert.match(css, /html, body \{\s*overscroll-behavior-y:\s*none/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {
   const spec = getLockedSpec();
   assert.equal(spec.tally.N, 288);

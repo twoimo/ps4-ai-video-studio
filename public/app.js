@@ -688,9 +688,11 @@ function upsertJob(partial) {
   const index = state.jobs.findIndex((item) => item.id === partial.id);
   if (index >= 0) {
     state.jobs[index] = { ...state.jobs[index], ...partial };
+    renderJobs();
     return state.jobs[index];
   }
   state.jobs.unshift(partial);
+  renderJobs();
   return state.jobs[0];
 }
 
@@ -1572,17 +1574,18 @@ function settingsPayload() {
 
 let settingsWrite = null;
 
-async function persistSettings({ toast = false } = {}) {
-  settingsWrite?.abort();
-  const controller = new AbortController();
-  settingsWrite = controller;
+async function persistSettings({ toast = false, keepalive = false } = {}) {
+  if (!keepalive) settingsWrite?.abort();
+  const controller = keepalive ? null : new AbortController();
+  if (controller) settingsWrite = controller;
   const seq = ++state.settingsSeq;
   try {
     const payload = await api("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(settingsPayload()),
-      signal: controller.signal
+      keepalive,
+      ...(controller ? { signal: controller.signal } : {})
     });
     if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;
@@ -1977,11 +1980,15 @@ function bindEvents() {
     resumeWatchIfVisible();
   });
   window.addEventListener("pageshow", resumeWatchIfVisible);
-  window.addEventListener("pageshow", () => { pageHiding = false; });
+  window.addEventListener("pageshow", (event) => {
+    pageHiding = false;
+    if (event.persisted) void refreshJobs().catch(() => {});
+  });
   window.addEventListener("pagehide", () => {
     pageHiding = true;
     replaceClearStudioLayer();
     stopWatchFeed($("#watch-feed"));
+    void persistSettings({ keepalive: true });
   });
   window.addEventListener("studio-open-machine", openMachine);
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });

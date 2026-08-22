@@ -1116,3 +1116,17 @@ test("public files have no tap-to-play copy and no credit 402 copy", async () =>
     assert.equal(source.includes("크레딧 402"), false, path);
   }
 });
+
+test("watch PiP leftover exits on pause and stop and kicks back on enter", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(feed, /function exitWatchPictureInPicture/);
+  assert.match(feed, /document\.exitPictureInPicture/);
+  assert.match(feed, /enterpictureinpicture/);
+  assert.match(feed, /leavepictureinpicture/);
+  assert.match(feed, /exitWatchPictureInPicture\(video\);\s*try \{ video\.pause\(\)/);
+  assert.match(feed, /exitWatchPictureInPicture\(video\);\s*video\.pause\(\)/);
+  assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(\)/);
+  assert.match(feed, /classList\?\.contains\("watch-open"\)\) return;\s*try \{ video\.pause\(\)/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+});

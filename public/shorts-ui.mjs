@@ -90,7 +90,7 @@ export function displayTitle(...values) {
   return "";
 }
 
-const LATIN_LABEL = /^[A-Za-z][A-Za-z0-9 _./:-]*$/;
+const LATIN_LABEL = /^[A-Za-z][A-Za-z0-9_ ./:-]*$/;
 
 export const STAGE_LABELS = {
   script: "대본",
