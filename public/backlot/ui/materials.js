@@ -1,5 +1,5 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
-import { friendlyJobError, parseJsonText, stripUiPaths } from "../../shorts-ui.mjs";
+import { friendlyJobError, parseJsonText, stripUiPaths, throwMappedFetchError } from "../../shorts-ui.mjs";
 import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);
@@ -57,13 +57,13 @@ async function saveMaterials() {
       body: JSON.stringify(body)
     });
   } catch (error) {
-    throw new Error(friendlyJobError(error));
+    throwMappedFetchError(error);
   }
   let data;
   try {
     data = parseJsonText(await payload.text());
   } catch (error) {
-    throw new Error(friendlyJobError(error));
+    throwMappedFetchError(error);
   }
   if (!payload.ok) {
     const error = new Error(friendlyJobError(data.error || "초안을 저장하지 못했습니다."));
@@ -105,13 +105,13 @@ function bindMaterials(frozen) {
       try {
         response = await fetch(`/api/jobs/${encodeURIComponent(projectId)}/run`, { method: "POST" });
       } catch (error) {
-        throw new Error(friendlyJobError(error));
+        throwMappedFetchError(error);
       }
       let data;
       try {
         data = parseJsonText(await response.text());
       } catch (error) {
-        throw new Error(friendlyJobError(error));
+        throwMappedFetchError(error);
       }
       if (!response.ok) {
         const error = new Error(friendlyJobError(data.error || "대기열에 넣지 못했습니다."));

@@ -55,8 +55,8 @@ async function api(path, options = {}) {
   let text;
   try {
     text = await response.text();
-  } catch {
-    throw new Error(friendlyJobError("불러오지 못했습니다."));
+  } catch (error) {
+    throwMappedFetchError(error);
   }
   let payload;
   try {
@@ -997,7 +997,10 @@ async function pollJobs() {
   try {
     await refreshJobs();
   } catch (error) {
-    if (isAbortError(error)) return;
+    if (isAbortError(error)) {
+      keepPaintedGrid(error);
+      return;
+    }
     enqueueToast(error, "error");
   }
 }
@@ -1189,8 +1192,9 @@ function openBatch(event) {
   void hydrateCreateSlots();
 }
 
-function fieldLines(selector) {
-  return ($(selector)?.value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+function fieldLines(source) {
+  const node = typeof source === "string" ? $(source) : source;
+  return String(node?.value ?? "").split(/\r?\n/).map((line) => String(line || "").trim()).filter(Boolean);
 }
 
 function parseBatchTopics() {
@@ -1370,13 +1374,19 @@ function settingsPayload() {
   };
 }
 
+let settingsWrite = null;
+
 async function persistSettings({ toast = false } = {}) {
+  settingsWrite?.abort();
+  const controller = new AbortController();
+  settingsWrite = controller;
   const seq = ++state.settingsSeq;
   try {
     const payload = await api("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(settingsPayload())
+      body: JSON.stringify(settingsPayload()),
+      signal: controller.signal
     });
     if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;

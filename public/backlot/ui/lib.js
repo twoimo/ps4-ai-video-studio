@@ -36,8 +36,8 @@ export async function getJSON(url) {
   let text;
   try {
     text = await res.text();
-  } catch {
-    throw new Error(friendlyJobError("불러오지 못했습니다."));
+  } catch (error) {
+    throwMappedFetchError(error);
   }
   try {
     return parseJsonText(text);

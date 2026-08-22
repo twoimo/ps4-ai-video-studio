@@ -1,4 +1,4 @@
-import { friendlyJobError, importBroughtCopy, parseJsonText } from "./shorts-ui.mjs";
+import { friendlyJobError, importBroughtCopy, parseJsonText, throwMappedFetchError } from "./shorts-ui.mjs";
 
 function syncOverlayOpen(root = document) {
   const overlay = root.querySelector?.("#satellite-menu");
@@ -38,13 +38,13 @@ export async function importSatelliteLibrary(root = document, request = fetch) {
   try {
     response = await request("/api/library/import", { method: "POST" });
   } catch (error) {
-    throw new Error(friendlyJobError(error));
+    throwMappedFetchError(error);
   }
   let payload;
   try {
     payload = parseJsonText(await response.text());
   } catch (error) {
-    throw new Error(friendlyJobError(error));
+    throwMappedFetchError(error);
   }
   if (!response.ok) {
     const error = new Error(friendlyJobError(payload.error || "가져오지 못했습니다."));

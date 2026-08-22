@@ -642,13 +642,16 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.doesNotMatch(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
   assert.match(app, /\$\("#create-form"\)\?\.addEventListener\("submit"/);
   assert.match(app, /function fieldLines/);
+  assert.match(app, /node\?\.value \?\? ""/);
   assert.match(app, /fieldLines\("#sources"\)/);
   assert.match(app, /fieldLines\("#facts"\)/);
   assert.match(app, /\$\("#provider"\)\?\.value/);
   assert.match(app, /function keepPaintedGrid/);
   assert.match(app, /throwMappedFetchError\(error\)/);
   assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;/);
-  assert.match(app, /if \(isAbortError\(error\)\) return;\s*enqueueToast\(error, "error"\)/);
+  assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;\s*\}\s*enqueueToast\(error, "error"\)/);
+  assert.match(app, /settingsWrite\?\.abort\(\)/);
+  assert.match(app, /signal: controller.signal/);
   assert.match(app, /if \(isAbortError\(error\)\) return;\s*showToast\(settingsSaveFailMessage\(error\), "error"\)/);
   assert.match(app, /\$\("#script-draft"\)\?\.value\?\.trim\(\)/);
   assert.match(app, /\$\("#topic"\)\?\.value\?\.trim\(\)/);
@@ -846,6 +849,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /method: "PATCH"/);
   assert.match(materials, /friendlyJobError\(data\.error \|\| "초안을 저장하지 못했습니다\."\)/);
   assert.match(materials, /parseJsonText\(await payload\.text\(\)\)/);
+  assert.match(materials, /throwMappedFetchError\(error\)/);
   assert.equal(materials.includes(".json().catch(() => ({}))"), false);
   assert.equal(materials.includes("Failed to fetch"), false);
   assert.match(materials, /String\(400 \+ 2\)/);

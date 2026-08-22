@@ -282,6 +282,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(satellite.includes("가져옴 ${imported}"), false);
   assert.equal(satellite.includes("시드 ${seeded}"), false);
   assert.equal(satellite.includes("경로 ${roots}"), false);
+  assert.match(satellite, /throwMappedFetchError\(error\)/);
   assert.match(satellite, /await request\("\/api\/library\/import", \{ method: "POST" \}[\s\S]*resetSatelliteMenu\(root\);\s*showSatelliteImportResult/);
   assert.match(library, /id="satellite-import-result"/);
   assert.match(board, /id="satellite-import-result"/);
