@@ -230,6 +230,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /export function pinNodeToVisualViewport/);
   assert.match(chrome, /export function scrollFocusIntoPanel/);
   assert.match(chrome, /export function rescrollFocusedField/);
+  assert.match(chrome, /overlayLockY/);
+  assert.match(chrome, /export function restoreOverlayLockY/);
+  assert.match(chrome, /export function syncOverlayLock/);
+  assert.match(chrome, /--vv-height/);
   assert.match(chrome, /node\.style\.left/);
   assert.match(chrome, /node\.style\.width/);
   assert.match(chrome, /vv\.offsetLeft/);
@@ -399,7 +403,7 @@ test("library and overlays fill the viewport instead of a phone column", async (
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   assert.match(css, /html,\s*body\s*\{[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.match(css, /\.library\s*\{[^}]*width:\s*100%/);
-  assert.match(css, /\.library\s*\{[^}]*height:\s*100dvh/);
+  assert.match(css, /\.library\s*\{[^}]*height:\s*var\(--vv-height,\s*100dvh\)/);
   assert.match(css, /\.library\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/);
   assert.match(css, /\.library\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /\.watch-feed\s*\{[^}]*position:\s*fixed/);
@@ -974,6 +978,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /function pinWatchToVisualViewport/);
   assert.match(app, /pinOverlaysToVisualViewport/);
   assert.match(app, /rescrollFocusedField\(document\)/);
+  assert.match(app, /syncOverlayLock/);
+  assert.match(app, /--vv-height/);
   assert.match(app, /scrollFocusIntoPanel/);
   assert.match(app, /preventScroll:\s*true/);
   assert.match(app, /function sizeShortsGrid/);
@@ -1022,6 +1028,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="batch-field" hidden/);
   assert.match(html, /id="batch-actions" hidden/);
   assert.match(css, /--vv-bottom/);
+  assert.match(css, /--vv-height:\s*100dvh/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
   assert.doesNotMatch(css, /#watch-feed[\s\S]{0,180}bottom:\s*var\(--vv-bottom/);
   assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
   assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);

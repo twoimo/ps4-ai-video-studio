@@ -316,6 +316,9 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   assert.match(playFn, /playing/);
   assert.match(feed, /setAttribute\("playsinline"/);
   assert.match(feed, /setAttribute\("webkit-playsinline"/);
+  assert.match(feed, /setAttribute\("controlslist", "nodownload"\)/);
+  assert.match(feed, /controlsList = "nodownload"/);
+  assert.match(feed, /addEventListener\("contextmenu"/);
   const video = fakeVideo(1);
   const slides = [
     { dataset: { src: "/a.mp4", jobId: "a", poster: "/a.jpg" } },
@@ -846,6 +849,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.equal(feed.includes("pinWatchToVisualViewport"), false);
   assert.equal(feed.includes("pinOverlaysToVisualViewport"), false);
   assert.equal(feed.includes("scrollFocusIntoPanel"), false);
+  assert.equal(feed.includes("overlayLockY"), false);
+  assert.equal(feed.includes("visualViewport"), false);
   assert.equal(feed.includes("visualViewport"), false);
   assert.equal(/addEventListener\("resize", \(\) => \{[\s\S]*sizeWatchFeed/.test(app), false);
   assert.match(feed, /setProperty\("--watch-h"/);

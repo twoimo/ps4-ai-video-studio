@@ -141,12 +141,20 @@ function attachWatchVideo(video) {
   if (typeof video.setAttribute === "function") {
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
+    video.setAttribute("controlslist", "nodownload");
   }
   video.playsInline = true;
+  video.controlsList = "nodownload";
   video.loop = true;
   video.preload = "auto";
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  if (typeof video.addEventListener === "function" && video.dataset && !video.dataset.watchContext) {
+    video.dataset.watchContext = "1";
+    video.addEventListener("contextmenu", (event) => {
+      event.preventDefault?.();
+    });
+  }
   return video;
 }
 

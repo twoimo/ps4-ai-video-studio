@@ -290,6 +290,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satellite, /export function resetSatelliteMenu/);
   assert.match(satellite, /classList\?\.toggle\("overlay-open"/);
   assert.match(satellite, /pinOverlaysToVisualViewport\(root\)/);
+  assert.match(satellite, /syncOverlayLock/);
   assert.equal(satellite.includes("scrollIntoView"), false);
   assert.match(satellite, /\/api\/library\/import/);
   assert.match(satellite, /method: "POST"/);

@@ -1,7 +1,7 @@
 import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
-import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel } from "./studio-chrome.mjs";
+import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -219,6 +219,7 @@ function setView(view, options = {}) {
   state.view = next;
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "settings", "machine"].includes(state.view));
+  syncOverlayLock();
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   const machineOverlay = $("#machine-overlay");
@@ -236,6 +237,7 @@ function setView(view, options = {}) {
   if (leavingWatch && next === "grid") {
     if (menuOverlay) menuOverlay.hidden = true;
     document.body.classList.remove("overlay-open");
+    syncOverlayLock();
   }
   pinWatchToVisualViewport();
   pinOverlaysToVisualViewport();
@@ -580,6 +582,7 @@ function hideLeftoverOverlays() {
   });
   document.body.classList.remove("overlay-open");
   pinOverlaysToVisualViewport();
+  syncOverlayLock();
 }
 
 function openMaterials(jobId) {
@@ -678,6 +681,7 @@ function closeDeleteConfirm() {
     restoreOpener();
   }
   pinOverlaysToVisualViewport();
+  syncOverlayLock();
   return true;
 }
 
@@ -693,6 +697,7 @@ function askDeleteJob(job) {
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
   pinOverlaysToVisualViewport();
+  syncOverlayLock();
   trapOverlay("#delete-overlay");
 }
 
@@ -1545,6 +1550,7 @@ function closeMenu(event) {
     restoreOpener();
   }
   pinOverlaysToVisualViewport();
+  syncOverlayLock();
   return true;
 }
 
@@ -1561,6 +1567,7 @@ function openMenu(event) {
   overlay.hidden = false;
   document.body.classList.add("overlay-open");
   pinOverlaysToVisualViewport();
+  syncOverlayLock();
   trapOverlay("#menu-overlay");
 }
 
@@ -1569,6 +1576,7 @@ function showImportResult(payload) {
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
   pinOverlaysToVisualViewport();
+  syncOverlayLock();
   const title = $("#menu-title");
   if (title) title.textContent = "가져오기";
   const actions = $("#menu-actions");
@@ -1624,8 +1632,10 @@ function pinWatchToVisualViewport() {
 
 function syncVisualViewportInset() {
   const vv = window.visualViewport;
+  const height = vv?.height || window.innerHeight || 0;
   const bottom = vv ? Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+  document.documentElement.style.setProperty("--vv-height", `${Math.round(height)}px`);
   pinWatchToVisualViewport();
   pinOverlaysToVisualViewport();
   rescrollFocusedField(document);

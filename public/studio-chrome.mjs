@@ -114,11 +114,35 @@ export function rescrollFocusedField(root = document) {
   scrollFocusIntoPanel(active);
 }
 
+let overlayLockY = 0;
+let overlayLocked = false;
+
+export function restoreOverlayLockY() {
+  const y = overlayLockY;
+  overlayLockY = 0;
+  overlayLocked = false;
+  if (typeof globalThis.scrollTo === "function") globalThis.scrollTo(0, y);
+}
+
+export function syncOverlayLock(root = document) {
+  const open = Boolean(root.body?.classList?.contains("overlay-open"));
+  if (open) {
+    if (overlayLocked) return;
+    overlayLocked = true;
+    overlayLockY = globalThis.scrollY || root.scrollingElement?.scrollTop || root.documentElement?.scrollTop || 0;
+    return;
+  }
+  if (!overlayLocked) return;
+  restoreOverlayLockY();
+}
+
 function syncVisualViewportInset() {
   const vv = globalThis.visualViewport;
   const innerHeight = globalThis.innerHeight || 0;
+  const height = vv?.height || innerHeight;
   const bottom = vv ? Math.max(0, innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
   globalThis.document?.documentElement?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+  globalThis.document?.documentElement?.style?.setProperty("--vv-height", `${Math.round(height)}px`);
   pinOverlaysToVisualViewport(globalThis.document);
   rescrollFocusedField(globalThis.document);
 }

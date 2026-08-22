@@ -1,11 +1,12 @@
 import { friendlyJobError, importBroughtCopy, isAbortError, parseJsonText, throwMappedFetchError } from "./shorts-ui.mjs";
-import { pinOverlaysToVisualViewport } from "./studio-chrome.mjs";
+import { pinOverlaysToVisualViewport, syncOverlayLock } from "./studio-chrome.mjs";
 
 function syncOverlayOpen(root = document) {
   const overlay = root.querySelector?.("#satellite-menu");
   const open = Boolean(overlay && !overlay.hidden);
   if (typeof document !== "undefined") document.body?.classList?.toggle("overlay-open", open);
   pinOverlaysToVisualViewport(root);
+  syncOverlayLock(typeof document !== "undefined" ? document : root);
 }
 
 export function resetSatelliteMenu(root = document) {
