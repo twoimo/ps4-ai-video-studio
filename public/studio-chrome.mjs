@@ -161,11 +161,10 @@ function syncVisualViewportInset() {
   const root = globalThis.document?.documentElement;
   root?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   root?.style?.setProperty("--vv-height", `${Math.round(height)}px`);
-  const ime = bottom > 80;
-  root?.classList?.toggle("ime-open", ime);
+  root?.classList?.toggle("ime-open", bottom > 80);
   const body = globalThis.document?.body;
   if (body?.style) {
-    if (ime) body.style.top = "0px";
+    if (bottom > 80) body.style.top = "0px";
     else body.style.removeProperty("top");
   }
   pinOverlaysToVisualViewport(globalThis.document);

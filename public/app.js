@@ -1858,9 +1858,8 @@ function syncVisualViewportInset() {
   const bottom = visualViewportKeyboardInset();
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   document.documentElement.style.setProperty("--vv-height", `${Math.round(height)}px`);
-  const ime = bottom > 80;
-  document.documentElement.classList.toggle("ime-open", ime);
-  if (ime) {
+  document.documentElement.classList.toggle("ime-open", bottom > 80);
+  if (bottom > 80) {
     document.body.style.top = "0px";
   } else {
     document.body.style.removeProperty("top");
