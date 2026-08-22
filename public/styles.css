@@ -302,7 +302,7 @@ body.template-page { display: block; overflow: auto; }
 
 #watch-feed,
 #watch-feed.watch-feed,
-.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
+.watch-feed { display: none; position: fixed; inset: 0; bottom: var(--vv-bottom, 0px); z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
 body.watch-open #watch-feed,

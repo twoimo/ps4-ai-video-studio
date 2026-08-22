@@ -224,6 +224,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /export function paintStudioPipe/);
   assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
   assert.match(chrome, /bindStudioPipe\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /--vv-bottom/);
+  assert.match(chrome, /visualViewport/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
   assert.equal(css.includes("short-card-body"), false);
   assert.match(app, /setView\("grid"\)/);
@@ -239,7 +241,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /function measureChrome/);
   assert.match(app, /getBoundingClientRect\(\)\.top/);
   assert.match(app, /setProperty\("--chrome"/);
-  assert.match(app, /innerHeight - chrome - gap/);
+  assert.match(app, /visualViewport\?\.height \|\| window\.innerHeight/);
+  assert.match(app, /height - chrome - gap/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /addEventListener\("resize"/);
   assert.match(app, /sizeShortsGrid\(\)/);
@@ -476,7 +479,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(html, /id="shorts">/);
   assert.match(home, /id="create-tile"/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
-  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*grid-template-columns:\s*1fr 1fr max-content/);
   assert.match(chromeCss, /\.studio-chips\s*\{[^}]*justify-self:\s*center/);
   assert.match(chromeCss, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border:\s*0/);
@@ -958,6 +961,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /createMode === "batch" \? "#batch" : "#create"/);
   assert.match(app, /visualViewport/);
   assert.match(app, /--vv-bottom/);
+  assert.match(app, /function pinWatchToVisualViewport/);
+  assert.match(app, /function sizeShortsGrid/);
+  assert.match(app, /visualViewport\?\.height/);
   assert.equal(app.includes("event.submitter"), false);
   assert.match(app, /addEventListener\("submit", \(event\) => \{\s*if \(state\.createMode === "batch"\) \{\s*event\.preventDefault\(\);\s*void saveBatchDrafts\(\);/);
   assert.match(app, /String\(400 \+ 2\)/);
@@ -1002,6 +1008,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="batch-field" hidden/);
   assert.match(html, /id="batch-actions" hidden/);
   assert.match(css, /--vv-bottom/);
+  assert.match(css, /#watch-feed[\s\S]*bottom:\s*var\(--vv-bottom/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*var\(--vv-bottom/);
+  assert.match(boardCss, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
   assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
   assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
   assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);

@@ -827,6 +827,9 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /function notifyActive/);
   assert.match(app, /function mountWatchFeed/);
   assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
+  assert.match(app, /function pinWatchToVisualViewport/);
+  assert.equal(feed.includes("pinWatchToVisualViewport"), false);
+  assert.equal(feed.includes("visualViewport"), false);
   assert.equal(/addEventListener\("resize", \(\) => \{[\s\S]*sizeWatchFeed/.test(app), false);
   assert.match(feed, /setProperty\("--watch-h"/);
   assert.match(feed, /removeProperty\("--watch-h"\)/);

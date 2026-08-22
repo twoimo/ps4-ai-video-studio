@@ -1036,7 +1036,7 @@ body:not(.first) .approval-review { animation: none; }
 .materials {
   box-sizing: border-box;
   max-width: 1440px;
-  margin: 0 auto max(80px, env(safe-area-inset-bottom));
+  margin: 0 auto max(80px, env(safe-area-inset-bottom), var(--vv-bottom, 0px));
   padding: 0 max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left));
 }
 .materials[hidden] { display: none; }
@@ -1118,7 +1118,7 @@ body:has(#materials) .wrap#app,
 #studio-chrome.studio-chrome,
 #studio-chrome {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: 1fr 1fr max-content;
   align-items: center;
   gap: 8px;
   margin: 0 10px 8px;

@@ -53,7 +53,17 @@ if (typeof window !== "undefined" && !window.__studioOpenMachine) {
   window.addEventListener("studio-open-machine", defaultOpenMachine);
 }
 
+function syncVisualViewportInset() {
+  const vv = globalThis.visualViewport;
+  const innerHeight = globalThis.innerHeight || 0;
+  const bottom = vv ? Math.max(0, innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
+  globalThis.document?.documentElement?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+}
+
 if (typeof document !== "undefined" && document.documentElement?.dataset?.studioChrome === "auto") {
   bindStudioPipe(document);
   void hydrateStudioChrome(document);
+  syncVisualViewportInset();
+  globalThis.visualViewport?.addEventListener("resize", syncVisualViewportInset);
+  globalThis.visualViewport?.addEventListener("scroll", syncVisualViewportInset);
 }

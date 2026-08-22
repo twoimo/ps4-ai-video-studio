@@ -217,6 +217,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(css.includes("Inter"), false);
   assert.match(css, /Isolate shared chrome/);
   assert.match(css, /#studio-chrome[\s\S]*isolation:\s*isolate/);
+  assert.match(css, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(css, /\.materials\s*\{[^}]*var\(--vv-bottom/);
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
   assert.equal(css.includes("family=Inter"), false);
   const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));

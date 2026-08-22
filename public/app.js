@@ -230,6 +230,7 @@ function setView(view, options = {}) {
     if (menuOverlay) menuOverlay.hidden = true;
     document.body.classList.remove("overlay-open");
   }
+  pinWatchToVisualViewport();
   if (openingWatch) {
     sizeWatchFeed(watchFeed);
   }
@@ -237,6 +238,7 @@ function setView(view, options = {}) {
   const afterPaint = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => fn();
   if (openingWatch) {
     afterPaint(() => {
+      pinWatchToVisualViewport();
       sizeWatchFeed(watchFeed);
       applyWatchTransform(watchFeed, { animate: false });
     });
@@ -364,7 +366,8 @@ function sizeShortsGrid() {
   const width = grid.clientWidth;
   if (!width) return;
   const chrome = measureChrome();
-  const col = (window.innerHeight - chrome - gap) * 9 / 16;
+  const height = window.visualViewport?.height || window.innerHeight;
+  const col = (height - chrome - gap) * 9 / 16;
   if (!(col > 0)) return;
   const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
   const n = Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));
@@ -1599,10 +1602,36 @@ async function refreshQuietly() {
   }
 }
 
+function pinWatchToVisualViewport() {
+  const root = $("#watch-feed");
+  if (!root) return;
+  const vv = window.visualViewport;
+  const open = document.body?.classList?.contains("watch-open");
+  if (!open || !vv) {
+    root.style.top = "";
+    root.style.left = "";
+    root.style.width = "";
+    root.style.height = "";
+    return;
+  }
+  root.style.top = `${Math.round(vv.offsetTop || 0)}px`;
+  root.style.left = `${Math.round(vv.offsetLeft || 0)}px`;
+  root.style.width = `${Math.round(vv.width)}px`;
+  root.style.height = `${Math.round(vv.height)}px`;
+}
+
 function syncVisualViewportInset() {
   const vv = window.visualViewport;
   const bottom = vv ? Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+  pinWatchToVisualViewport();
+  if (document.body?.classList?.contains("watch-open")) {
+    const root = $("#watch-feed");
+    sizeWatchFeed(root);
+    applyWatchTransform(root, { animate: false });
+  } else {
+    sizeShortsGrid();
+  }
 }
 
 function bindEvents() {
@@ -1612,6 +1641,7 @@ function bindEvents() {
   window.visualViewport?.addEventListener("scroll", syncVisualViewportInset);
   window.addEventListener("resize", sizeShortsGrid);
   window.addEventListener("orientationchange", () => {
+    pinWatchToVisualViewport();
     if (state.view !== "watch") return;
     const root = $("#watch-feed");
     sizeWatchFeed(root);
