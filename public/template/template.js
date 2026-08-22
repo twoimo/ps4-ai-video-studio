@@ -1,4 +1,4 @@
-import { friendlyJobError } from "../shorts-ui.mjs";
+import { friendlyJobError, parseJsonText } from "../shorts-ui.mjs";
 import { escapeSpecHtml, renderLockedSpec } from "../template-spec.mjs";
 
 const APP_TITLE = "PS4_JUSTDOIT";
@@ -9,7 +9,7 @@ async function loadTemplatePage() {
   if (!root) return;
   try {
     const response = await fetch("/api/grok-imagine/template");
-    const spec = await response.json().catch(() => ({}));
+    const spec = parseJsonText(await response.text());
     if (!response.ok) throw new Error(friendlyJobError(spec.error || "템플릿을 불러오지 못했습니다"));
     document.title = `템플릿 · ${APP_TITLE}`;
     if (title) title.textContent = "잠긴 프롬프트";

@@ -1,5 +1,5 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
-import { friendlyJobError, stripUiPaths } from "../../shorts-ui.mjs";
+import { friendlyJobError, parseJsonText, stripUiPaths } from "../../shorts-ui.mjs";
 import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);
@@ -59,7 +59,12 @@ async function saveMaterials() {
   } catch (error) {
     throw new Error(friendlyJobError(error));
   }
-  const data = await payload.json().catch(() => ({}));
+  let data;
+  try {
+    data = parseJsonText(await payload.text());
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
   if (!payload.ok) {
     const error = new Error(friendlyJobError(data.error || "초안을 저장하지 못했습니다."));
     error.status = payload.status;
@@ -102,7 +107,12 @@ function bindMaterials(frozen) {
       } catch (error) {
         throw new Error(friendlyJobError(error));
       }
-      const data = await response.json().catch(() => ({}));
+      let data;
+      try {
+        data = parseJsonText(await response.text());
+      } catch (error) {
+        throw new Error(friendlyJobError(error));
+      }
       if (!response.ok) {
         const error = new Error(friendlyJobError(data.error || "대기열에 넣지 못했습니다."));
         error.status = response.status;

@@ -1,4 +1,4 @@
-import { friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
+import { displayTitle, friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
 import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
@@ -67,7 +67,7 @@ function card(p) {
   return el("a", { class: `lib-card${p.live ? " live-card" : ""}`, href: `/p/${p.project_id}${staticSuffix}`, style: "text-decoration:none;color:inherit" },
     poster,
     el("div", { class: "lib-body" },
-      el("h3", {}, p.title || p.project_id),
+      el("h3", {}, displayTitle(p.title, p.project_id, "보드")),
       meta,
       p.stage_states.length ? miniRail(p.stage_states) : null,
     ),

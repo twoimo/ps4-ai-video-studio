@@ -184,7 +184,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /\.clapper\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
-  assert.match(libraryJs, /el\("h3", \{\}, p\.title \|\| p\.project_id\)/);
+  assert.match(libraryJs, /el\("h3", \{\}, displayTitle\(p\.title, p\.project_id, "보드"\)\)/);
   assert.doesNotMatch(libraryJs, /\(p\.title \|\| p\.project_id\)\.toUpperCase\(\)/);
   assert.match(css, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
   assert.match(css, /\.wrap#app \.slate/);
@@ -219,6 +219,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(libJs.includes("404"), false);
   assert.match(boardJs, /if \(st\.status === "failed"\) return "실패"/);
   assert.match(boardJs, /프로젝트를 찾을 수 없습니다/);
+  assert.match(boardJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
   assert.match(boardJs, /document\.title = displayTitle\(s\.title, "보드"\)/);
   assert.match(boardJs, /displayTitle\(s\.title, "보드"\)/);
   assert.equal(boardJs.includes("Backlot — ${s.title}"), false);
@@ -227,6 +228,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /function boardUnchanged/);
   assert.match(boardJs, /if \(boardUnchanged\(state, next\)\) return/);
   assert.match(libraryJs, /projectsFromListPayload\(await getJSON\("\/api\/projects"\)\)/);
+  assert.match(libraryJs, /displayTitle\(p\.title, p\.project_id, "보드"\)/);
   assert.match(board, /<title>보드<\/title>/);
   assert.equal(boardJs.includes("PROJECT NOT FOUND"), false);
   assert.equal(boardJs.includes("String(err)"), false);
@@ -415,7 +417,7 @@ test("satellite import resets the menu then paints the result card", async () =>
   await importSatelliteLibrary(root, async (url, init) => {
     assert.equal(url, "/api/library/import");
     assert.equal(init.method, "POST");
-    return { ok: true, json: async () => ({ imported: ["a"], seeded: [], roots: ["/x"] }) };
+    return { ok: true, text: async () => JSON.stringify({ imported: ["a"], seeded: [], roots: ["/x"] }) };
   });
   assert.equal(overlay.hidden, false);
   assert.equal(actions.hidden, true);

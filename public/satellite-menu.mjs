@@ -1,4 +1,4 @@
-import { friendlyJobError, importBroughtCopy } from "./shorts-ui.mjs";
+import { friendlyJobError, importBroughtCopy, parseJsonText } from "./shorts-ui.mjs";
 
 function syncOverlayOpen(root = document) {
   const overlay = root.querySelector?.("#satellite-menu");
@@ -40,7 +40,12 @@ export async function importSatelliteLibrary(root = document, request = fetch) {
   } catch (error) {
     throw new Error(friendlyJobError(error));
   }
-  const payload = await response.json().catch(() => ({}));
+  let payload;
+  try {
+    payload = parseJsonText(await response.text());
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
   if (!response.ok) {
     const error = new Error(friendlyJobError(payload.error || "가져오지 못했습니다."));
     error.status = response.status;

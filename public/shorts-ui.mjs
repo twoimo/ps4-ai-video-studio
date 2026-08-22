@@ -78,8 +78,9 @@ export function displayTitle(...values) {
 }
 
 export function parseJsonText(text) {
-  const raw = String(text ?? "").trim();
-  if (!raw || raw.startsWith("<") || /^<!doctype\s+html/i.test(raw) || /^<html[\s>]/i.test(raw)) {
+  const raw = String(text ?? "").replace(/^\uFEFF/, "").trim();
+  const head = raw.slice(0, 256);
+  if (!raw || raw.startsWith("<") || /<!doctype\s+html|<html[\s>]|<!--/i.test(head)) {
     throw new Error("불러오지 못했습니다.");
   }
   try {

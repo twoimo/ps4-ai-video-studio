@@ -1,4 +1,4 @@
-import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
+import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -265,7 +265,7 @@ function setView(view, options = {}) {
 
 function syncDocumentTitle() {
   if (state.view === "watch") {
-    const shortTitle = String(selectedJob()?.topic || "").trim();
+    const shortTitle = displayTitle(selectedJob()?.topic);
     document.title = shortTitle ? `${shortTitle} · ${APP_TITLE}` : APP_TITLE;
     return;
   }
@@ -477,7 +477,7 @@ function activateWatchSlide(jobId) {
   });
   const title = $("#watch-feed .watch-meta h2");
   const job = state.jobs.find((item) => item.id === jobId);
-  if (title) title.textContent = job?.topic || "쇼츠";
+  if (title) title.textContent = displayTitle(job?.topic, "쇼츠");
   const feed = $("#watch-feed");
   if (!document.body.classList.contains("watch-open")) {
     stopWatchFeed(feed);
@@ -512,7 +512,7 @@ function patchWatchSlide(job) {
   });
   if (state.selectedJobId === job.id) {
     const title = $("#watch-feed .watch-meta h2");
-    if (title) title.textContent = job.topic || "쇼츠";
+    if (title) title.textContent = displayTitle(job.topic, "쇼츠");
   }
 }
 
@@ -599,7 +599,7 @@ function collectDraftFields(root) {
 function youtubePrepMarkup(job) {
   const pack = shortUploadPack(job);
   const links = pack.links.map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
-  return `<section class="upload-pack"><h3>업로드 준비</h3><p class="inspect-hint">유튜브에 아직 올리지 않아요</p><p class="pack-title">${escapeHtml(pack.title || job.topic || "")}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
+  return `<section class="upload-pack"><h3>업로드 준비</h3><p class="inspect-hint">유튜브에 아직 올리지 않아요</p><p class="pack-title">${escapeHtml(displayTitle(pack.title, job.topic))}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
 }
 
 async function saveInspectDraft(jobId, root) {
@@ -637,7 +637,7 @@ function renderShortCard(job) {
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.topic || "쇼츠")}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
+  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(displayTitle(job.topic, "쇼츠"))}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
 }
 
 function upsertJob(partial) {
@@ -854,10 +854,10 @@ function watchJobLive(job) {
     const source = new EventSource(`/api/jobs/${encodeURIComponent(job.id)}/events?sse=1`);
     source.jobId = job.id;
     source.addEventListener("factory_stage", (event) => {
-      try { applyFactoryStage(job.id, JSON.parse(event.data)); } catch { void loadLiveSnapshot(job.id); }
+      try { applyFactoryStage(job.id, parseJsonText(event.data)); } catch { void loadLiveSnapshot(job.id); }
     });
     source.addEventListener("job", (event) => {
-      try { applyLiveSnapshot(job.id, JSON.parse(event.data)); } catch { void loadLiveSnapshot(job.id); }
+      try { applyLiveSnapshot(job.id, parseJsonText(event.data)); } catch { void loadLiveSnapshot(job.id); }
     });
     source.addEventListener("done", () => {
       source.close();
@@ -1357,7 +1357,12 @@ async function previewVoice(buttonId, audioId, providerId, voiceId) {
       })
     });
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
+      let payload;
+      try {
+        payload = parseJsonText(await response.text());
+      } catch (error) {
+        throw new Error(friendlyJobError(error));
+      }
       throw new Error(payload.error || "미리 듣기에 실패했습니다.");
     }
     const blob = await response.blob();

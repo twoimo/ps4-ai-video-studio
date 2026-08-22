@@ -112,6 +112,8 @@ test("short cards map status, hook still, and duration", () => {
   assert.throws(() => parseJsonText("not-json"), /불러오지 못했습니다/);
   assert.throws(() => parseJsonText("<!DOCTYPE html><html><body>x</body></html>"), /불러오지 못했습니다/);
   assert.throws(() => parseJsonText("<html><body>x</body></html>"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("<!-- comment --><html>"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("\uFEFF<!DOCTYPE html>"), /불러오지 못했습니다/);
   assert.equal(displayTitle(undefined), "");
   assert.equal(displayTitle("undefined"), "");
   assert.equal(displayTitle(null, "보드"), "보드");
@@ -810,6 +812,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /stripUiPaths/);
   assert.match(materials, /method: "PATCH"/);
   assert.match(materials, /friendlyJobError\(data\.error \|\| "초안을 저장하지 못했습니다\."\)/);
+  assert.match(materials, /parseJsonText\(await payload\.text\(\)\)/);
+  assert.equal(materials.includes(".json().catch(() => ({}))"), false);
   assert.equal(materials.includes("Failed to fetch"), false);
   assert.match(materials, /String\(400 \+ 2\)/);
   assert.match(materials, /지금은 다시 못 만들어요/);
@@ -1094,9 +1098,12 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /enqueueToast\.current/);
   assert.match(app, /enqueueToast\(error, "error"\)/);
   assert.match(app, /parseJsonText\(text\)/);
+  assert.match(app, /displayTitle\(/);
+  assert.match(app, /parseJsonText\(event\.data\)/);
   const apiFn = app.slice(app.indexOf("async function api"), app.indexOf("function enqueueToast"));
   assert.match(apiFn, /parseJsonText\(text\)/);
   assert.equal(apiFn.includes(".json().catch(() => ({}))"), false);
+  assert.equal(app.includes(".json().catch(() => ({}))"), false);
   assert.match(app, /source\.onerror = \(\) => \{/);
   assert.doesNotMatch(app, /source\.onerror = \(\) => \{\s*source\.close\(\)/);
   assert.match(app, /jobsFromListPayload\(payload\)/);
@@ -1216,6 +1223,7 @@ test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and 
     assert.equal(source.includes("쇼츠 공장"), false);
     assert.equal(source.includes("class=\"wrap work\""), false);
     assert.equal(source.includes("Failed to fetch"), false);
+    assert.equal(source.includes(".json().catch(() => ({}))"), false);
   }
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.equal(files[3].includes("402"), false);
