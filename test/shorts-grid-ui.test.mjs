@@ -8,6 +8,7 @@ import {
   formatClock,
   friendlyJobError,
   importBroughtCopy,
+  jobsFromListPayload,
   inspectVideoDownloads,
   isPlaceholderThumbnail,
   isWatchableShort,
@@ -16,6 +17,8 @@ import {
   shortPreview,
   shortStatus,
   shortStatusLabel,
+  settingsSaveFailMessage,
+  shortCardUnchanged,
   shortThumbnail,
   shortUploadPack,
   stripErrorPrefix,
@@ -87,6 +90,19 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(friendlyJobError("TypeError: Failed to fetch"), "연결하지 못했습니다.");
   assert.equal(friendlyJobError("unknown project: demo"), "작업을 찾지 못했습니다.");
   assert.equal(friendlyJobError("Error: unknown project: demo"), "작업을 찾지 못했습니다.");
+  assert.equal(friendlyJobError(new TypeError("Cannot read properties of undefined (reading 'map')")), "지금은 처리할 수 없습니다.");
+  assert.equal(friendlyJobError("TypeError: Cannot read properties of undefined (reading 'map')"), "지금은 처리할 수 없습니다.");
+  assert.equal(friendlyJobError("Cannot read properties of undefined (reading 'map')"), "지금은 처리할 수 없습니다.");
+  assert.deepEqual(jobsFromListPayload(undefined), []);
+  assert.deepEqual(jobsFromListPayload({}), []);
+  assert.deepEqual(jobsFromListPayload({ jobs: null }), []);
+  assert.equal(jobsFromListPayload({ jobs: [{ id: "a" }] })[0].id, "a");
+  assert.equal(jobsFromListPayload([{ id: "b" }])[0].id, "b");
+  assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "draft", topic: "abcd" }), true);
+  assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "running", topic: "abcd" }), false);
+  assert.equal(settingsSaveFailMessage("ECONNREFUSED"), "설정을 저장하지 못했습니다.");
+  assert.equal(settingsSaveFailMessage("Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(settingsSaveFailMessage(new TypeError("x is not a function")), "지금은 처리할 수 없습니다.");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -870,6 +886,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /addEventListener\("change", \(\) => \{ void persistSettings/);
   assert.match(app, /state\.view === "settings" && next !== "settings"\) void persistSettings/);
   assert.match(app, /await persistSettings\(\{ toast: true \}\)/);
+  assert.match(app, /settingsSaveFailMessage\(error\)/);
   assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
   assert.match(html, /<form class="create-panel" id="create-form" novalidate onsubmit="return false">/);
   assert.match(html, /<form class="create-panel" id="settings-form" onsubmit="return false">/);
@@ -1057,6 +1074,9 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /function enqueueToast/);
   assert.match(app, /enqueueToast\.current/);
   assert.match(app, /enqueueToast\(error, "error"\)/);
+  assert.match(app, /jobsFromListPayload\(payload\)/);
+  assert.match(app, /shortCardUnchanged\(prev, job\)/);
+  assert.equal(app.includes("payload.jobs.map"), false);
   assert.equal(app.includes("작업 상태 갱신 실패"), false);
   assert.equal(app.includes("Failed to fetch"), false);
   assert.equal(app.includes("요청 실패 (${response.status})"), false);

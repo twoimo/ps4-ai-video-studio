@@ -53,13 +53,48 @@ export function stripErrorPrefix(value) {
   return String(value ?? "").replace(/^(?:(?:type)?error:\s*)+/i, "").trim();
 }
 
+const TYPE_ERROR = /cannot read propert|cannot set propert|is not a function|is not an object|undefined is not|null is not|cannot convert undefined|cannot convert null/i;
+
+export function jobsFromListPayload(payload) {
+  if (Array.isArray(payload)) return payload.filter((job) => job && typeof job === "object");
+  if (Array.isArray(payload?.jobs)) return payload.jobs.filter((job) => job && typeof job === "object");
+  return [];
+}
+
+export function shortCardUnchanged(prev, next) {
+  if (!prev || !next) return false;
+  const left = shortStatus(prev);
+  const right = shortStatus(next);
+  return prev.id === next.id
+    && left.key === right.key
+    && left.label === right.label
+    && String(prev.topic || "") === String(next.topic || "")
+    && String(prev.updatedAt || "") === String(next.updatedAt || "")
+    && Number(prev.progress || 0) === Number(next.progress || 0)
+    && shortThumbnail(prev) === shortThumbnail(next)
+    && shortDurationSeconds(prev) === shortDurationSeconds(next);
+}
+
+export function settingsSaveFailMessage(error) {
+  const text = friendlyJobError(error);
+  if (!text || text === "요청에 실패했습니다.") return "설정을 저장하지 못했습니다.";
+  return text;
+}
+
 export function friendlyJobError(error) {
-  const original = stripErrorPrefix(error?.message || error || "");
+  const raw = String(error?.message || error || "");
+  const tagged = String(error || "");
+  const original = stripErrorPrefix(raw);
   const text = stripUiPaths(original);
-  if (/failed to fetch|networkerror|load failed|network request failed/i.test(original)) return "연결하지 못했습니다.";
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw) || /failed to fetch|networkerror|load failed|network request failed/i.test(original)) {
+    return "연결하지 못했습니다.";
+  }
   if (/ENOENT|ENOTDIR|no such file/i.test(original)) return "파일을 찾지 못했습니다.";
   if (/unknown project|project not found/i.test(original)) return "작업을 찾지 못했습니다.";
   if (/\b404\b/.test(original) || /not found/i.test(original)) return "찾지 못했습니다.";
+  if (error instanceof TypeError || /^typeerror\b/i.test(tagged) || /^typeerror\b/i.test(raw) || TYPE_ERROR.test(original)) {
+    return "지금은 처리할 수 없습니다.";
+  }
   if (!text) return "요청에 실패했습니다.";
   if (/[가-힣]/.test(text)) return text;
   return "요청에 실패했습니다.";

@@ -1,4 +1,4 @@
-import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
+import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, jobsFromListPayload, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -980,11 +980,13 @@ function syncPollTimer() {
 
 async function refreshJobs() {
   const payload = await api("/api/jobs");
-  const previousIds = state.jobs.map((job) => job.id).join("\n");
-  const nextIds = payload.jobs.map((job) => job.id).join("\n");
+  const previousJobs = state.jobs;
+  const jobs = jobsFromListPayload(payload);
+  const previousIds = previousJobs.map((job) => job.id).join("\n");
+  const nextIds = jobs.map((job) => job.id).join("\n");
   const selectedId = state.selectedJobId;
-  const selectedLive = selectedId ? state.jobs.find((job) => job.id === selectedId) : null;
-  state.jobs = [...payload.jobs].sort((left, right) => {
+  const selectedLive = selectedId ? previousJobs.find((job) => job.id === selectedId) : null;
+  state.jobs = [...jobs].sort((left, right) => {
     const leftIndex = Number(left.libraryIndex);
     const rightIndex = Number(right.libraryIndex);
     if (Number.isFinite(leftIndex) && Number.isFinite(rightIndex)) return leftIndex - rightIndex;
@@ -1001,7 +1003,11 @@ async function refreshJobs() {
   state.jobsLoaded = true;
   if (structural) renderJobs();
   else {
-    state.jobs.forEach(patchGridCard);
+    state.jobs.forEach((job) => {
+      const prev = previousJobs.find((item) => item.id === job.id);
+      if (shortCardUnchanged(prev, job)) return;
+      patchGridCard(job);
+    });
     if (state.view === "watch") renderWatchFeed();
     syncDocumentTitle();
   }
@@ -1317,7 +1323,7 @@ async function persistSettings({ toast = false } = {}) {
     applySettingsToForm(payload.settings);
     if (toast) showToast("설정을 저장했습니다.");
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(settingsSaveFailMessage(error), "error");
   }
 }
 
