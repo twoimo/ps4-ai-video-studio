@@ -952,7 +952,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /export function renderMaterialsPanel/);
   assert.match(editor, /export function collectInspectPayload/);
   assert.match(editor, /inspectVideoDownloads\(job\)/);
-  assert.match(editor, /import \{ displayTitle, inspectVideoDownloads \} from "\.\/shorts-ui\.mjs"/);
+  assert.match(editor, /import \{ displayTitle, frozenRemakeLabel, inspectVideoDownloads \} from "\.\/shorts-ui\.mjs"/);
   assert.match(editor, /value="\$\{escapeMaterialsHtml\(displayTitle\(job\.topic\)\)\}"/);
   assert.match(editor, /shots\.length/);
   assert.match(editor, /class="inspect-files"/);
