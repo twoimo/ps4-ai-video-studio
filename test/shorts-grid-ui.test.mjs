@@ -723,7 +723,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
   assert.match(app, /function overlayStartFocus/);
-  assert.match(app, /!node\.classList\?\.contains\("draft-close"\)/);
+  assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
+  assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\)/);
+  assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
+  assert.match(html, /id="settings-overlay"[\s\S]*class="draft-close"[\s\S]*id="settings-tts-provider"/);
   assert.match(app, /root\.id === "machine-overlay"/);
   assert.match(app, /hash === "batch"/);
   assert.match(app, /createMode === "batch" \? "#batch" : "#create"/);
