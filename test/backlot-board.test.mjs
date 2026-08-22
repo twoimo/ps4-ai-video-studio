@@ -192,6 +192,12 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satellite, /\/api\/library\/import/);
   assert.match(satellite, /method: "POST"/);
   assert.match(satellite, /resetSatelliteMenu\(root\)/);
+  assert.match(satellite, /function showSatelliteImportResult/);
+  assert.match(satellite, /가져옴 \$\{imported\}/);
+  assert.match(library, /id="satellite-import-result"/);
+  assert.match(board, /id="satellite-import-result"/);
+  assert.match(library, /id="satellite-import-summary"/);
+  assert.match(board, /id="satellite-import-ok">확인</);
   assert.match(board, /class="lib-skeleton"/);
   assert.match(board, /id="materials"/);
   assert.doesNotMatch(css, /max-width:\s*440px/);

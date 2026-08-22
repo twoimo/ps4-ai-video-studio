@@ -739,6 +739,16 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /hash === "create" \|\| hash === "batch"/);
   assert.ok(html.indexOf('hash === "create" || hash === "batch"') < html.indexOf('src="/app.js"'), "create/settings unhide before app.js");
   assert.ok(html.indexOf('hash === "settings"') < html.indexOf('src="/app.js"'), "settings unhide before app.js");
+  const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
+  assert.match(boot, /if \(hash === "batch"\)/);
+  assert.match(boot, /title\.textContent = "양산"/);
+  assert.match(boot, /single\.hidden = true/);
+  assert.match(boot, /batch\.hidden = false/);
+  assert.match(boot, /submit\.hidden = true/);
+  assert.match(boot, /actions\.hidden = false/);
+  assert.match(html, /id="single-topic-field"/);
+  assert.match(html, /id="batch-field" hidden/);
+  assert.match(html, /id="batch-actions" hidden/);
   assert.match(css, /--vv-bottom/);
   assert.match(editor, /class="inspect-form"/);
   assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit"/);

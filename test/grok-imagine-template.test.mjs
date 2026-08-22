@@ -154,6 +154,9 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /href="\/#settings">설정</);
   assert.match(page, /id="satellite-import">가져오기</);
   assert.match(page, /src="\/satellite-menu\.mjs"/);
+  assert.match(page, /id="satellite-import-result"/);
+  assert.match(page, /id="satellite-import-summary"/);
+  assert.match(page, /id="satellite-import-ok">확인</);
   assert.match(specJs, /같은 현장/);
   assert.match(specJs, /실제 크기/);
   assert.equal(page.includes("aria-label=\"메뉴\""), false);
