@@ -860,13 +860,11 @@ function watchJobLive(job) {
       try { applyLiveSnapshot(job.id, parseJsonText(event.data)); } catch { void loadLiveSnapshot(job.id); }
     });
     source.addEventListener("done", () => {
-      source.close();
-      if (state.sse === source) state.sse = null;
       void loadLiveSnapshot(job.id);
       void refreshJobs();
     });
     source.onerror = () => {
-      if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
+      void endJobSseIfGone(source, job.id);
     };
     state.sse = source;
     void loadLiveSnapshot(job.id);
@@ -874,6 +872,27 @@ function watchJobLive(job) {
     if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
     void loadLiveSnapshot(job.id);
   }
+}
+
+function jobSseGone(error) {
+  const text = String(error?.message || error || "");
+  return /ENOENT|no such file|파일을 찾지 못했습니다|작업을 찾지 못했습니다/i.test(text);
+}
+
+async function endJobSseIfGone(source, jobId) {
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+  } catch (error) {
+    if (!jobSseGone(error)) {
+      if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(jobId), 1000);
+      return;
+    }
+    try { source.close(); } catch { /* already closed */ }
+    if (state.sse === source) state.sse = null;
+    if (state.livePoll) { window.clearInterval(state.livePoll); state.livePoll = null; }
+    return;
+  }
+  if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(jobId), 1000);
 }
 
 async function loadLiveSnapshot(jobId) {

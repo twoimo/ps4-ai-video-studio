@@ -340,6 +340,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
+  assert.match(libraryJs, /function failLibrary/);
+  assert.match(libraryJs, /querySelector\("\.lib-card"\)/);
+  assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
   assert.match(libraryJs, /empty\.textContent = friendlyJobError\(error\)/);
   assert.equal(libraryJs.includes("보드를 불러오지 못했습니다"), false);
   assert.match(libJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);

@@ -86,17 +86,20 @@ async function render() {
   for (const p of projects) grid.append(card(p));
 }
 
-render().catch((error) => {
+function failLibrary(error) {
   const count = document.getElementById("count");
   const empty = document.getElementById("empty");
   const grid = document.getElementById("grid");
+  if (grid?.querySelector(".lib-card")) return;
   if (count) count.textContent = "불러오지 못함";
   if (grid) grid.innerHTML = "";
   if (empty) {
     empty.style.display = "block";
     empty.textContent = friendlyJobError(error);
   }
-});
+}
+
+render().catch(failLibrary);
 if (!new URLSearchParams(location.search).has("static")) {
-  subscribe("/api/library/events", () => render().catch(console.error));
+  subscribe("/api/library/events", () => render().catch(failLibrary));
 }

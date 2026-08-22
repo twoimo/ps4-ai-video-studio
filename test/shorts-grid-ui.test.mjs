@@ -119,6 +119,11 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(displayTitle(null, "보드"), "보드");
   assert.equal(displayTitle("undefined", "보드"), "보드");
   assert.equal(displayTitle("한강 갑문", "보드"), "한강 갑문");
+  assert.equal(displayTitle({ topic: "한강 갑문" }), "한강 갑문");
+  assert.equal(displayTitle({ title: "보드 제목" }), "보드 제목");
+  assert.equal(displayTitle({}), "");
+  assert.equal(displayTitle("[object Object]", "보드"), "보드");
+  assert.equal(displayTitle({ topic: { title: "중첩" } }), "중첩");
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "draft", topic: "abcd" }), true);
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "running", topic: "abcd" }), false);
   assert.equal(settingsSaveFailMessage("ECONNREFUSED"), "설정을 저장하지 못했습니다.");
@@ -1106,6 +1111,10 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.equal(app.includes(".json().catch(() => ({}))"), false);
   assert.match(app, /source\.onerror = \(\) => \{/);
   assert.doesNotMatch(app, /source\.onerror = \(\) => \{\s*source\.close\(\)/);
+  assert.match(app, /function jobSseGone/);
+  assert.match(app, /function endJobSseIfGone/);
+  assert.match(app, /ENOENT/);
+  assert.doesNotMatch(app, /addEventListener\("done", \(\) => \{\s*source\.close\(\)/);
   assert.match(app, /jobsFromListPayload\(payload\)/);
   assert.match(app, /shortCardUnchanged\(prev, job\)/);
   assert.equal(app.includes("payload.jobs.map"), false);

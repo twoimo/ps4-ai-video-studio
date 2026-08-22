@@ -67,12 +67,21 @@ export function projectsFromListPayload(payload) {
   return [];
 }
 
+function titleFromValue(value, depth = 0) {
+  if (value == null || depth > 3) return "";
+  if (typeof value === "object") {
+    if (Array.isArray(value)) return titleFromValue(value[0], depth + 1);
+    return titleFromValue(value.topic ?? value.title ?? value.name ?? value.text, depth + 1);
+  }
+  const text = String(value).trim();
+  if (!text || text === "undefined" || text === "null" || text === "[object Object]") return "";
+  return text;
+}
+
 export function displayTitle(...values) {
   for (const value of values) {
-    if (value == null) continue;
-    const text = String(value).trim();
-    if (!text || text === "undefined" || text === "null") continue;
-    return text;
+    const text = titleFromValue(value);
+    if (text) return text;
   }
   return "";
 }
