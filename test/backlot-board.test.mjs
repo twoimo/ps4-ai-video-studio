@@ -153,6 +153,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /href="\/#settings">설정</);
   assert.equal(board.includes("그림 · 멈춤"), false);
   assert.match(board, /src="\/studio-chrome\.mjs"/);
+  const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
+  assert.match(chrome, /bindStudioPipe\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.doesNotMatch(boardJs, /main\.append\(script\)/);
   assert.doesNotMatch(boardJs, /if \(script\) main\.append/);
   assert.match(css, /\.wrap\s*\{\s*max-width:\s*1440px/);
@@ -219,6 +221,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(editor.includes("쇼츠 공장"), false);
   assert.match(materialsJs, /method: "PATCH"/);
   assert.match(materialsJs, /\/run/);
+  assert.match(materialsJs, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
+  assert.match(editor, /<form class="inspect-form" onsubmit="return false">/);
+  assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
 
   const page = await handleBacklotPage(new Request("http://backlot.local/backlot"), new URL("http://backlot.local/backlot"));
   assert.ok(page);

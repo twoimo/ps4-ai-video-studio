@@ -145,6 +145,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(pipe, /export function machineSheetHtml[\s\S]*pipelineStages\(health\)/);
   assert.match(pipe, /export function renderStudioPipe/);
   assert.match(chrome, /export function paintStudioPipe/);
+  assert.match(chrome, /bindStudioPipe\(document\);\s*void hydrateStudioChrome\(document\);/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
   assert.equal(css.includes("short-card-body"), false);
   assert.match(app, /setView\("grid"\)/);
@@ -752,8 +753,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="batch-field" hidden/);
   assert.match(html, /id="batch-actions" hidden/);
   assert.match(css, /--vv-bottom/);
-  assert.match(editor, /class="inspect-form"/);
-  assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit"/);
+  assert.match(editor, /<form class="inspect-form" onsubmit="return false">/);
+  assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
+  assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
+  assert.match(app, /function bindEvents\(\) \{\s*bindStudioPipe\(document, openMachine\);/);
+  assert.ok(app.indexOf("bindEvents();") < app.indexOf("void warnIfFactoryToolsMissing()"), "chips bind before health");
   assert.match(boardCss, /IBM Plex Sans KR/);
   assert.match(boardCss, /#studio-chrome[\s\S]*font-family:\s*var\(--sans\)/);
   assert.equal(boardCss.includes("family=Inter"), false);
