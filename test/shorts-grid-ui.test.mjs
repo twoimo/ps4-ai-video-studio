@@ -198,7 +198,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
   assert.equal(css.includes("round(up"), false);
-  assert.match(css, /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(var\(--col\),\s*1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/);
   assert.match(css, /grid-auto-rows:\s*auto/);
   assert.match(css, /\.shorts-grid\s*\{[^}]*overflow:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
@@ -210,7 +210,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /100cqh/);
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
   assert.equal(css.includes("grid-template-rows: repeat(var(--n)"), false);
-  assert.equal(/repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/.test(css), false);
+  assert.match(css, /minmax\(min\(100%,\s*var\(--col\)\)/);
   assert.match(html, /class="short-card short-skeleton"/);
   assert.equal((html.match(/class="short-card short-skeleton"/g) || []).length, 8);
   assert.match(app, /jobsLoaded/);
@@ -576,6 +576,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(/\.watch-menu\s*\{[^}]*border-radius:\s*50%/.test(css), false);
   assert.equal(/\.watch-menu\s*\{[^}]*background:\s*rgba/.test(css), false);
   assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-menu[\s\S]*display:\s*none/.test(css), false);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]*max-width:\s*100%/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)[\s\S]*right:\s*auto/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-right\)\)/);
   assert.equal(css.includes("watch-inspect-dismiss"), false);
@@ -899,6 +901,12 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(board, /aria-label="재료"/);
   assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
   assert.ok(board.indexOf('class="wrap" id="app"') < board.indexOf('id="materials"'), "materials follows the original wrap");
+  assert.doesNotMatch(board, /id="app"[^>]*hidden/);
+  assert.doesNotMatch(boardCss, /#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(boardCss, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(boardCss, /body:has\([^\)]*materials[^\)]*\)[\s\S]{0,120}#app[\s\S]{0,80}display:\s*none/);
+  assert.doesNotMatch(materials, /getElementById\("app"\)/);
+  assert.doesNotMatch(materials, /#app/);
   assert.match(materials, /renderMaterialsPanel/);
   assert.match(materials, /collectInspectPayload/);
   assert.match(materials, /method: "PATCH"/);

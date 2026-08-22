@@ -696,6 +696,8 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*min-height:\s*100%/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*margin-inline:\s*auto/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]*max-width:\s*100%/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
   assert.match(css, /#watch-feed \.watch-menu/);
   assert.equal(css.includes("watch-inspect"), false);
   assert.equal(css.includes("inspect-open"), false);
