@@ -631,7 +631,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /function openHome\(event\) \{\s*event\?\.preventDefault\(\);\s*stopWatchFeed\(\$\("#watch-feed"\)\);/);
   assert.match(app, /영상 주제를 4자 이상 입력하세요/);
   assert.match(app, /showImportResult\(\{ error:/);
-  assert.match(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
+  assert.doesNotMatch(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
+  assert.match(app, /\$\("#create-form"\)\?\.addEventListener\("submit"/);
+  assert.equal(app.includes("error.message"), false);
   assert.match(app, /if \(state\.view === "watch"\) \{\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
   assert.match(app, /isWatchableShort\(job\)\) \{\s*setView\("watch"/);
   assert.match(app, /ArrowDown/);
@@ -1122,6 +1124,10 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
     app,
     /if \(!Array\.isArray\(payload\?\.jobs\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
   );
+  const initFn = app.slice(app.indexOf("async function init"), app.lastIndexOf("init();"));
+  assert.match(initFn, /showToast\(error, "error"\)/);
+  assert.equal(initFn.includes("state.jobs = []"), false);
+  assert.equal(initFn.includes("renderJobs()"), false);
   assert.match(app, /shortCardUnchanged\(prev, job\)/);
   assert.equal(app.includes("payload.jobs.map"), false);
   assert.equal(app.includes("작업 상태 갱신 실패"), false);

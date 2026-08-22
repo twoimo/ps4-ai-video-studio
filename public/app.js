@@ -702,7 +702,7 @@ async function confirmDeleteJob() {
     renderJobs();
     showToast("삭제했습니다.");
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
@@ -951,7 +951,7 @@ async function refreshCreatePreview() {
   } catch (error) {
     if (seq !== state.createSeq) return;
     const preview = $("#create-prompt-preview");
-    if (preview) preview.innerHTML = `<div class="warning-box"><b>미리보기 실패</b><p>${escapeHtml(error.message)}</p></div>`;
+    if (preview) preview.innerHTML = `<div class="warning-box"><b>미리보기 실패</b><p>${escapeHtml(friendlyJobError(error))}</p></div>`;
   }
 }
 
@@ -966,7 +966,7 @@ async function hydrateCreateSlots() {
       mount.dataset.ready = "1";
       mount.querySelectorAll("[data-world-slot]").forEach((input) => input.addEventListener("input", () => {
         window.clearTimeout(state.previewTimer);
-        state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+        state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
       }));
     }
     if (seq !== state.createSeq) return;
@@ -978,7 +978,7 @@ async function hydrateCreateSlots() {
       mount.innerHTML = `<p class="form-footnote">월드 슬롯을 불러오지 못했습니다.</p>`;
       mount.dataset.ready = "1";
     }
-    showToast(`템플릿을 불러오지 못했습니다: ${error.message}`, "error");
+    showToast("템플릿을 불러오지 못했습니다.", "error");
   }
 }
 
@@ -989,7 +989,7 @@ async function runSelectedJob() {
     await api(`/api/jobs/${encodeURIComponent(state.selectedJobId)}/run`, { method: "POST" });
     showToast("만들기를 시작했습니다.");
     await refreshJobs();
-  } catch (error) { showToast(error.message, "error"); }
+  } catch (error) { showToast(error, "error"); }
 }
 
 async function pollJobs() {
@@ -1087,7 +1087,7 @@ async function createProduction(event) {
     }, 4200);
     location.assign(materialsUrl(payload.job.id));
     return;
-  } catch (error) { showToast(error.message, "error"); }
+  } catch (error) { showToast(error, "error"); }
   finally {
     if (button) button.disabled = false;
     if (label) label.textContent = "초안 저장";
@@ -1204,7 +1204,7 @@ async function saveBatchDrafts() {
     showToast(`초안 ${topics.length}개를 저장했습니다.`);
     closeOverlays();
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
@@ -1225,7 +1225,7 @@ async function queueBatchJobs() {
     showToast(`대기열에 ${topics.length}개를 넣었습니다.`);
     closeOverlays();
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
@@ -1328,7 +1328,7 @@ async function hydrateStudioSettings() {
     if (seq !== state.settingsSeq) return;
     const songs = $("#settings-bgm-songs");
     if (songs && songs.dataset.ready !== "1") songs.textContent = "곡 없음";
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
@@ -1395,7 +1395,7 @@ async function previewVoice(buttonId, audioId, providerId, voiceId) {
       await audio.play().catch(() => {});
     }
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   } finally {
     if (button) button.disabled = false;
   }
@@ -1457,9 +1457,9 @@ async function draftScriptFromTopic() {
   } catch (error) {
     if (errorBox) {
       errorBox.hidden = false;
-      errorBox.textContent = error.message;
+      errorBox.textContent = friendlyJobError(error);
     }
-    showToast(error.message, "error");
+    showToast(error, "error");
   } finally {
     if (button) button.disabled = false;
   }
@@ -1524,7 +1524,7 @@ async function importLibrary(event) {
     await refreshJobs();
     showImportResult(payload);
   } catch (error) {
-    showImportResult({ error: error.message || "가져오지 못했습니다." });
+    showImportResult({ error: friendlyJobError(error) || "가져오지 못했습니다." });
   }
 }
 
@@ -1550,7 +1550,7 @@ async function refreshQuietly() {
     await refreshJobs();
     showToast("목록을 갱신했습니다.");
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
@@ -1575,7 +1575,7 @@ function bindEvents() {
     notifyActive();
     playWatchFeed(root);
   });
-  $("#create-form").addEventListener("submit", (event) => {
+  $("#create-form")?.addEventListener("submit", (event) => {
     if (state.createMode === "batch") {
       event.preventDefault();
       void saveBatchDrafts();
@@ -1618,11 +1618,11 @@ function bindEvents() {
   $("#settings-bgm-enabled")?.addEventListener("change", syncToggleLabels);
   $("#topic")?.addEventListener("input", () => {
     window.clearTimeout(state.previewTimer);
-    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
   });
   $("#facts")?.addEventListener("input", () => {
     window.clearTimeout(state.previewTimer);
-    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
   });
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
@@ -1701,10 +1701,7 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
-    state.jobs = [];
-    state.jobsLoaded = true;
-    renderJobs();
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 

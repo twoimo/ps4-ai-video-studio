@@ -75,7 +75,11 @@ function card(p) {
 }
 
 async function render() {
-  const projects = projectsFromListPayload(await getJSON("/api/projects"));
+  const payload = await getJSON("/api/projects");
+  if (!Array.isArray(payload?.projects) && !Array.isArray(payload)) {
+    throw new Error("불러오지 못했습니다.");
+  }
+  const projects = projectsFromListPayload(payload);
   document.getElementById("count").textContent = `${projects.length} projects`;
   const liveCount = projects.filter((p) => p.live).length;
   const badge = document.getElementById("liveBadge");
@@ -90,7 +94,7 @@ function failLibrary(error) {
   const count = document.getElementById("count");
   const empty = document.getElementById("empty");
   const grid = document.getElementById("grid");
-  if (grid?.querySelector(".lib-card")) return;
+  if (grid?.querySelector(".lib-card, .lib-skeleton")) return;
   if (count) count.textContent = "불러오지 못함";
   if (grid) grid.innerHTML = "";
   if (empty) {

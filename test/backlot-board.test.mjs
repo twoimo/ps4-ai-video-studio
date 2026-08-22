@@ -227,7 +227,12 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(libJs, /source\.onerror[\s\S]{0,80}source\.close/);
   assert.match(boardJs, /function boardUnchanged/);
   assert.match(boardJs, /if \(boardUnchanged\(state, next\)\) return/);
-  assert.match(libraryJs, /projectsFromListPayload\(await getJSON\("\/api\/projects"\)\)/);
+  assert.match(libraryJs, /const payload = await getJSON\("\/api\/projects"\)/);
+  assert.match(
+    libraryJs,
+    /if \(!Array\.isArray\(payload\?\.projects\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
+  );
+  assert.match(libraryJs, /projectsFromListPayload\(payload\)/);
   assert.match(libraryJs, /displayTitle\(p\.title, p\.project_id, "보드"\)/);
   assert.match(board, /<title>보드<\/title>/);
   assert.equal(boardJs.includes("PROJECT NOT FOUND"), false);
@@ -341,7 +346,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
   assert.match(libraryJs, /function failLibrary/);
-  assert.match(libraryJs, /querySelector\("\.lib-card"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
   assert.match(boardJs, /function failBoard/);
   assert.match(boardJs, /if \(state \|\| app\.querySelector\("\.slate, \.rail, \.main-col"\)\) return/);
