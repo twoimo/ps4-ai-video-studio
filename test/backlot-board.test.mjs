@@ -180,7 +180,10 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /Studio extra: full-width wrap/);
   assert.ok(css.indexOf("Studio extra: materials") < css.indexOf("Studio extra: full-width wrap"), "full-width override follows materials extra");
   assert.match(css, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
-  assert.match(css, /body:has\(#studio-chrome\) \.slate \.wordmark/);
+  assert.doesNotMatch(css, /\.slate \.wordmark\s*\{[^}]*text-transform:\s*uppercase/);
+  assert.match(css, /\.slate \.clapper,\s*\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(css, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
+  assert.match(css, /\.wrap#app \.slate/);
   assert.match(css, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
   assert.match(css, /IBM Plex Sans KR/);
   assert.match(css, /:root\s*\{[\s\S]*--sans:\s*'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;/);
@@ -224,6 +227,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
   const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
   assert.match(satellite, /export function resetSatelliteMenu/);
+  assert.match(satellite, /classList\?\.toggle\("overlay-open"/);
   assert.match(satellite, /\/api\/library\/import/);
   assert.match(satellite, /method: "POST"/);
   assert.match(satellite, /resetSatelliteMenu\(root\)/);
@@ -256,7 +260,10 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
   assert.match(materialsJs, /영상 주제를 4자 이상 입력하세요/);
   assert.match(materialsJs, /health\?\.imagine\?\.frozen !== false/);
+  assert.match(materialsJs, /button\?\.inert/);
+  assert.match(materialsJs, /button\.inert = true/);
   assert.match(materialsJs, /button\.disabled = true/);
+  assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
   assert.match(boardJs, /function pauseBoardVideos/);
   assert.match(boardJs, /function exclusiveBoardMedia/);
   assert.match(boardJs, /addEventListener\("play"/);

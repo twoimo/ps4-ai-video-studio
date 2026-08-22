@@ -158,10 +158,6 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
   font-family: var(--mono); font-size: calc(17px * var(--fs-scale)); font-weight: 600;
   letter-spacing: 0.08em; text-transform: uppercase;
 }
-.slate .wordmark {
-  font-family: var(--mono); font-size: calc(11px * var(--fs-scale)); letter-spacing: 0.22em;
-  color: var(--text-3); text-transform: uppercase; margin-right: 2px;
-}
 .chip {
   font-family: var(--mono); font-size: calc(10.5px * var(--fs-scale)); letter-spacing: 0.06em;
   padding: 3px 9px; border-radius: 99px;
@@ -242,10 +238,6 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
   font-size: calc(24px * var(--fs-scale));
   letter-spacing: .18em;
   text-shadow: 0 1px 0 rgba(255,247,222,.75);
-}
-:root[data-theme="light"] .slate .wordmark {
-  color: #aa9368;
-  font-weight: 700;
 }
 :root[data-theme="light"] .chip {
   background: rgba(236,216,169,.46);
@@ -1008,7 +1000,6 @@ body:not(.first) .approval-review { animation: none; }
   .wrap { padding: 0 12px 52px; }
   .slate { padding-top: 14px; }
   .clapper { width: 30px; height: 23px; }
-  .slate .wordmark { font-size: calc(10px * var(--fs-scale)); }
   .slate h1 { font-size: calc(15px * var(--fs-scale)); letter-spacing: .06em; }
   .chip { font-size: calc(9.5px * var(--fs-scale)); padding: 3px 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .live { font-size: calc(10px * var(--fs-scale)); letter-spacing: .1em; }
@@ -1097,7 +1088,12 @@ body:not(.first) .approval-review { animation: none; }
   cursor: pointer;
 }
 .materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
-.materials .inspect-frozen, .materials .inspect-regen.is-paused, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
+.materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
+.materials .inspect-regen[inert], .materials .inspect-regen.is-paused {
+  pointer-events: none;
+  cursor: default;
+  opacity: 1;
+}
 .materials .materials-status[data-kind="error"] { color: var(--red); }
 
 /* Studio extra: full-width wrap and chrome, no 1440/1120 center column */
@@ -1216,8 +1212,8 @@ body:not(.first) .approval-review { animation: none; }
 }
 #studio-chrome .library-board-toggle:hover,
 #studio-chrome .library-more-toggle:hover { color: var(--text, #ececef); }
-body:has(#studio-chrome) .slate .clapper,
-body:has(#studio-chrome) .slate .wordmark { display: none; }
+.slate .clapper,
+.slate .wordmark { display: none; }
 body:has(#studio-chrome) .wrap:not(#app) .slate h1,
 body:has(#studio-chrome) .wrap:not(#app) .slate > div:has(h1),
 body:has(#studio-chrome) .wrap:not(#app) .theme-toggle { display: none; }
@@ -1244,18 +1240,19 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
   object-fit: contain;
 }
 
-/* Studio extra: slim board slate under chrome, not a second header */
-body:has(#studio-chrome) .wrap#app .slate {
+/* Studio extra: slim board slate always, no OM wordmark/clapper */
+.wrap#app .slate {
   gap: 8px;
   padding: 4px 0 8px;
   min-height: 0;
+  margin: 0;
   border-bottom: 0;
   background: none;
 }
-body:has(#studio-chrome) .wrap#app .slate .clapper,
-body:has(#studio-chrome) .wrap#app .slate .wordmark,
-body:has(#studio-chrome) .wrap#app .slate .theme-toggle { display: none; }
-body:has(#studio-chrome) .wrap#app .slate h1 {
+.wrap#app .slate .clapper,
+.wrap#app .slate .wordmark,
+.wrap#app .slate .theme-toggle { display: none; }
+.wrap#app .slate h1 {
   font-size: calc(13px * var(--fs-scale));
   letter-spacing: 0.04em;
   text-transform: none;

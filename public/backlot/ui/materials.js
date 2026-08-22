@@ -76,12 +76,16 @@ function bindMaterials(frozen) {
   root.querySelector("[data-inspect-save], .inspect-save")?.addEventListener("click", save);
   root.querySelector("[data-inspect-regen], .inspect-regen")?.addEventListener("click", async (event) => {
     const button = event?.currentTarget;
-    if (button?.disabled) return;
+    if (button?.disabled || button?.inert || button?.hasAttribute?.("inert")) return;
     try {
       const health = await readJson("/api/health", {});
       if (health?.imagine?.frozen !== false) {
         status("지금은 그림을 안 만들어요.", "error");
-        if (button) button.disabled = true;
+        if (button) {
+          button.inert = true;
+          button.setAttribute("inert", "");
+          button.classList.add("is-paused");
+        }
         return;
       }
       if (button) button.disabled = true;

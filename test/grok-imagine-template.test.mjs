@@ -129,6 +129,11 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(specJs, /id="spec-skeleton"/);
   assert.match(specJs, /id="spec-locks"/);
   assert.match(specJs, /슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다/);
+  assert.doesNotMatch(specJs, /Factory stays/);
+  assert.doesNotMatch(specJs, /ignore early_if \+ offtopic/);
+  assert.doesNotMatch(specJs, /class="spec-lede">\$\{escapeSpecHtml\(spec\.eraRule/);
+  assert.doesNotMatch(specJs, /class="spec-lede">\$\{escapeSpecHtml\(spec\.graphicsGrammar/);
+  assert.doesNotMatch(specJs, /class="spec-lede">\$\{escapeSpecHtml\(captions\.rule/);
   assert.equal(specJs.includes("editable: true"), false);
   assert.match(html, /id="open-template"[^>]*href="\/template"/);
   assert.match(html, /id="open-template-menu"[^>]*href="\/template"/);

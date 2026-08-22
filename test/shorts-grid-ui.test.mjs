@@ -118,6 +118,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.library\s*\{[^}]*padding:\s*8px 0 0/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
+  assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overscroll-behavior:\s*none/);
+  assert.match(chromeCss, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /@import url\('\.\/studio-chrome\.css'\)/);
   assert.match(css, /--rows:\s*1/);
   assert.match(css, /--chrome:\s*calc\(52px \+ env\(safe-area-inset-top, 0px\)\)/);
@@ -695,6 +698,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /class="primary-button inspect-save"[^>]*>저장</);
   assert.match(editor, /secondary-button inspect-regen/);
   assert.match(editor, /is-paused/);
+  assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
   assert.match(editor, /다시 만들기 · 멈춤/);
   assert.match(editor, /지금은 그림을 안 만들어요/);
   assert.match(editor, /export function fallbackCaptionPrompts/);
@@ -751,10 +755,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /z-index:\s*100/);
   assert.match(boardCss, /Isolate shared chrome/);
   assert.match(boardCss, /isolation:\s*isolate/);
-  assert.match(boardCss, /body:has\(#studio-chrome\) \.slate \.wordmark/);
+  assert.doesNotMatch(boardCss, /\.slate \.wordmark\s*\{[^}]*text-transform:\s*uppercase/);
+  assert.match(boardCss, /\.slate \.clapper,\s*\.slate \.wordmark\s*\{[^}]*display:\s*none/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
-  assert.match(boardCss, /Studio extra: slim board slate under chrome/);
-  assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap#app \.slate/);
+  assert.match(boardCss, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
+  assert.match(boardCss, /\.wrap#app \.slate/);
   assert.match(boardCss, /Studio extra: slim library slate under chrome/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate/);
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
@@ -840,7 +845,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.doesNotMatch(boardCss, /max-width:\s*400px/);
   assert.match(boardCss, /\.materials \.inspect-frozen[\s\S]*color:\s*var\(--text-2\)/);
   assert.doesNotMatch(boardCss, /\.materials \.inspect-frozen[^{]*\{[^}]*var\(--red\)/);
+  assert.match(boardCss, /\.materials \.inspect-regen\[inert\]/);
   assert.match(boardCss, /\.materials \.inspect-regen\.is-paused/);
+  assert.match(boardCss, /pointer-events:\s*none/);
+  assert.doesNotMatch(boardCss, /\.materials \.inspect-regen\.is-paused[^{]*\{[^}]*opacity:\s*\.48/);
   assert.match(boardCss, /\.materials \.inspect-stack\s*\{[^}]*gap/);
   assert.match(boardCss, /\.materials \.inspect-caption\s*\{[^}]*grid-template-columns:\s*1\.5rem/);
   assert.match(boardCss, /\.materials \.inspect-files\s*\{/);
@@ -896,7 +904,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(panel, /채팅용/);
   assert.equal(panel.includes("자막 ASS"), false);
   assert.equal(panel.includes("watch-inspect-close"), false);
-  assert.match(panel, /disabled/);
+  assert.match(panel, /inert/);
+  assert.doesNotMatch(panel, /data-inspect-regen[^>]*disabled/);
   assert.match(panel, /is-paused/);
   assert.match(panel, /다시 만들기 · 멈춤/);
   assert.match(panel, /title="지금은 그림을 안 만들어요"/);

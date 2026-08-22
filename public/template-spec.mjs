@@ -47,7 +47,6 @@ export function renderLockedSpec(spec = {}) {
   const situation = (spec.situation || []).map((item) => `<li>${escapeSpecHtml(item)}</li>`).join("");
   const fails = (spec.hardFails || []).map((item) => `<li>${escapeSpecHtml(item)}</li>`).join("");
   const loop = (spec.loop || []).map((item) => `<li>${escapeSpecHtml(item)}</li>`).join("");
-  const clip = spec.clipCountLock || {};
   const captions = spec.captions || {};
   const setups = tally.setups || {};
   return `
@@ -57,7 +56,6 @@ export function renderLockedSpec(spec = {}) {
       </header>
       <section class="spec-section" id="spec-corpus">
         <h3>코퍼스 ${escapeSpecHtml(tally.N ?? 288)}</h3>
-        <p class="spec-lede">${escapeSpecHtml(spec.eraRule || "ignore early_if + offtopic; spec is mature_explainer 253")}</p>
         <div class="spec-kvs">
           ${specKv("N", tally.N ?? 288)}
           ${specKv("mature_explainer", tally.eras?.mature_explainer ?? "")}
@@ -88,9 +86,6 @@ export function renderLockedSpec(spec = {}) {
           ${specKv("lid aligned", tally.lid?.yes ?? "")}
           ${specKv("captions", captions.rule ? "MarginV=450" : "Alignment=2")}
         </div>
-        <p class="spec-lede">${escapeSpecHtml(spec.graphicsGrammar?.inSceneLabels || "")}</p>
-        <p class="spec-lede">${escapeSpecHtml(spec.graphicsGrammar?.dialogue || "")}</p>
-        <p class="spec-lede">${escapeSpecHtml(captions.rule || "")}</p>
       </section>
       <section class="spec-section" id="spec-slots">
         <h3>월드 슬롯 10</h3>
@@ -116,7 +111,6 @@ export function renderLockedSpec(spec = {}) {
       <section class="spec-section" id="spec-loop">
         <h3>Reference-first loop</h3>
         <ol class="spec-list">${loop}</ol>
-        <p class="spec-lede">${escapeSpecHtml(clip.note || "")} Factory stays ${escapeSpecHtml(clip.factoryStays || "6 unique sources / 7 holds")}.</p>
         <pre class="spec-pre">${escapeSpecHtml((spec.styleSheet && JSON.stringify(spec.styleSheet, null, 2)) || "")}</pre>
       </section>
       <section class="spec-section" id="spec-documents">

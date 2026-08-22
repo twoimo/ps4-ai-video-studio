@@ -1,3 +1,9 @@
+function syncOverlayOpen(root = document) {
+  const overlay = root.querySelector?.("#satellite-menu");
+  const open = Boolean(overlay && !overlay.hidden);
+  if (typeof document !== "undefined") document.body?.classList?.toggle("overlay-open", open);
+}
+
 export function resetSatelliteMenu(root = document) {
   const title = root.querySelector?.("#satellite-menu-title");
   const actions = root.querySelector?.("#satellite-menu-actions");
@@ -21,12 +27,14 @@ function showSatelliteImportResult(root, payload = {}) {
   if (actions) actions.hidden = true;
   if (result) result.hidden = false;
   if (overlay) overlay.hidden = false;
+  syncOverlayOpen(root);
 }
 
 export async function importSatelliteLibrary(root = document, request = fetch) {
   resetSatelliteMenu(root);
   const overlay = root.querySelector?.("#satellite-menu");
   if (overlay) overlay.hidden = false;
+  syncOverlayOpen(root);
   const response = await request("/api/library/import", { method: "POST" });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -47,6 +55,7 @@ export function bindSatelliteMenu(root = document, request = fetch) {
     const overlay = root.querySelector?.("#satellite-menu");
     if (overlay) overlay.hidden = true;
     resetSatelliteMenu(root);
+    syncOverlayOpen(root);
   };
   root.querySelectorAll?.("[data-close-satellite]").forEach((node) => {
     node.addEventListener("click", close);
@@ -62,6 +71,7 @@ export function bindSatelliteMenu(root = document, request = fetch) {
       const actions = root.querySelector?.("#satellite-menu-actions");
       const result = root.querySelector?.("#satellite-import-result");
       if (overlay) overlay.hidden = false;
+      syncOverlayOpen(root);
       if (actions) actions.hidden = true;
       if (result) result.hidden = false;
       if (summary) summary.textContent = error.message || "가져오지 못했습니다.";
