@@ -9,6 +9,7 @@ import { backlotHealth, handleBacklotApi, handleBacklotMedia, handleBacklotPage 
 import { getLockedSpec } from "../src/grok-imagine-spec.mjs";
 import { FACTORY_LOCKS, WORLD_SLOT_IDS } from "../src/grok-imagine-template.mjs";
 import { importSatelliteLibrary } from "../public/satellite-menu.mjs";
+import { projectIdFromPath } from "../public/backlot/ui/lib.js";
 
 async function api(path) {
   const url = new URL(`http://backlot.local${path}`);
@@ -241,6 +242,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /\/run/);
   assert.match(materialsJs, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
   assert.match(materialsJs, /영상 주제를 4자 이상 입력하세요/);
+  assert.match(materialsJs, /health\?\.imagine\?\.frozen !== false/);
+  assert.match(materialsJs, /button\.disabled = true/);
   assert.match(boardJs, /function pauseBoardVideos/);
   assert.match(boardJs, /visibilitychange/);
   assert.match(boardJs, /pagehide/);
@@ -278,8 +281,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
     assert.equal(head.status, 200, path);
     assert.equal(head.headers.get("content-type"), "text/html; charset=utf-8");
   }
-  assert.match(boardJs, /split\("\/p\/"\)\[1\][\s\S]*replace\(\/\\\/\+\$\/, ""\)/);
-  assert.match(materialsJs, /split\("\/p\/"\)\[1\][\s\S]*replace\(\/\\\/\+\$\/, ""\)/);
+  assert.match(boardJs, /projectIdFromPath\(location\.pathname\)/);
+  assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
   assert.match(libraryJs, /보드를 불러오지 못했습니다/);
   assert.doesNotMatch(libraryJs, /불러오는 중/);
@@ -327,6 +330,14 @@ test("OpenMontage-shaped projects and path escape stay defensive", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("/p and /backlot/p parse to the same project id", () => {
+  assert.equal(projectIdFromPath("/p/demo"), "demo");
+  assert.equal(projectIdFromPath("/p/demo/"), "demo");
+  assert.equal(projectIdFromPath("/backlot/p/demo"), "demo");
+  assert.equal(projectIdFromPath("/backlot/p/demo/"), "demo");
+  assert.equal(projectIdFromPath("/backlot"), "");
 });
 
 test("satellite import resets the menu then paints the result card", async () => {

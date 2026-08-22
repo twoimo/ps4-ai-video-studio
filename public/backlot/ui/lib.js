@@ -1,5 +1,10 @@
 // Shared helpers for the Backlot UI.
 
+export function projectIdFromPath(pathname = "") {
+  const match = String(pathname || "").match(/\/(?:backlot\/)?p\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 export async function getJSON(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${url}`);

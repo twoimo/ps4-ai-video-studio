@@ -144,6 +144,7 @@ function setView(view, options = {}) {
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
   if (next !== "watch") clearWatchSize(watchFeed);
+  const leavingWatch = document.body.classList.contains("watch-open") && next !== "watch";
   state.view = next;
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "settings", "machine"].includes(state.view));
@@ -156,10 +157,16 @@ function setView(view, options = {}) {
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
   const openingWatch = state.view === "watch";
-  if (openingWatch) {
+  if (openingWatch || leavingWatch) {
     document.querySelectorAll(".preview-wrap video, .shorts-grid video, audio").forEach((media) => {
       try { media.pause(); } catch { /* ignore leftover preview/grid/audio */ }
     });
+  }
+  if (leavingWatch && next === "grid") {
+    if (menuOverlay) menuOverlay.hidden = true;
+    document.body.classList.remove("overlay-open");
+  }
+  if (openingWatch) {
     sizeWatchFeed(watchFeed);
   }
   syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
@@ -263,13 +270,32 @@ function applyHash() {
   setView("grid", { skipHash: true });
 }
 
+function measureChrome() {
+  const grid = $("#shorts-grid");
+  const header = $("#studio-chrome");
+  if (grid) {
+    const top = Math.round(grid.getBoundingClientRect().top);
+    if (top > 0) return top;
+  }
+  if (!header) return 52;
+  const style = typeof getComputedStyle === "function" ? getComputedStyle(header) : null;
+  const margin = style ? (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0) : 8;
+  return Math.round(header.offsetHeight + margin);
+}
+
+function syncChromeSize() {
+  document.documentElement.style.setProperty("--chrome", `${measureChrome()}px`);
+}
+
 function sizeShortsGrid() {
   const grid = $("#shorts-grid");
   if (!grid) return;
+  syncChromeSize();
   const gap = 2;
   const width = grid.clientWidth;
   if (!width) return;
-  const col = (window.innerHeight - 52 - gap) * 9 / 16;
+  const chrome = measureChrome();
+  const col = (window.innerHeight - chrome - gap) * 9 / 16;
   if (!(col > 0)) return;
   const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
   const n = Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));

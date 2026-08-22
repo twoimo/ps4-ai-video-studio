@@ -211,6 +211,12 @@
     <div id="toast" class="toast" role="status"></div>
     <script>
       (function () {
+        var grid = document.getElementById("shorts-grid");
+        var header = document.getElementById("studio-chrome");
+        var chrome = grid && grid.getBoundingClientRect().top > 0
+          ? Math.round(grid.getBoundingClientRect().top)
+          : header ? header.offsetHeight + 8 : 0;
+        if (chrome) document.documentElement.style.setProperty("--chrome", chrome + "px");
         var hash = (location.hash || "").replace(/^#/, "");
         function show(id) {
           var node = document.getElementById(id);

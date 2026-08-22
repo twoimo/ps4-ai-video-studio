@@ -120,6 +120,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
   assert.match(css, /@import url\('\.\/studio-chrome\.css'\)/);
   assert.match(css, /--rows:\s*1/);
+  assert.match(css, /--chrome:\s*calc\(52px \+ env\(safe-area-inset-top, 0px\)\)/);
   assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
   assert.equal(css.includes("round(up"), false);
@@ -158,7 +159,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
   assert.match(app, /Math\.max\(shortLandscape \? 3 : 1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
-  assert.match(app, /innerHeight - 52 - gap/);
+  assert.match(app, /function measureChrome/);
+  assert.match(app, /getBoundingClientRect\(\)\.top/);
+  assert.match(app, /setProperty\("--chrome"/);
+  assert.match(app, /innerHeight - chrome - gap/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /addEventListener\("resize"/);
   assert.match(app, /sizeShortsGrid\(\)/);
@@ -756,6 +760,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /월드 슬롯을 불러오지 못했습니다/);
   assert.match(html, /hash === "create" \|\| hash === "batch"/);
   assert.ok(html.indexOf('hash === "create" || hash === "batch"') < html.indexOf('src="/app.js"'), "create/settings unhide before app.js");
+  assert.ok(html.indexOf('setProperty("--chrome"') < html.indexOf('src="/app.js"'), "first-paint --chrome before app.js");
+  assert.match(app, /leavingWatch/);
+  assert.match(app, /preview-wrap video, \.shorts-grid video, audio/);
   assert.ok(html.indexOf('hash === "settings"') < html.indexOf('src="/app.js"'), "settings unhide before app.js");
   const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
   assert.match(boot, /if \(hash === "batch"\)/);

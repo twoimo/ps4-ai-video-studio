@@ -18,6 +18,7 @@
   --sans: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
   --watch-col: min(100vw, calc(100dvh * 9 / 16));
   --vv-bottom: 0px;
+  --chrome: calc(52px + env(safe-area-inset-top, 0px));
 }
 
 * { box-sizing: border-box; }
@@ -47,7 +48,6 @@ h1, h2, h3, p { margin-top: 0; }
 .shorts-grid {
   --rows: 1;
   --gap: 2px;
-  --chrome: 52px;
   --thumb-h: calc((100dvh - var(--chrome) - var(--gap)) / var(--rows));
   --col: calc(var(--thumb-h) * 9 / 16);
   display: grid;

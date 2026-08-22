@@ -2,11 +2,10 @@
 
 import {
   STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
-  getJSON, mediaURL, subscribe, thumbURL, waveBars,
+  getJSON, mediaURL, projectIdFromPath, subscribe, thumbURL, waveBars,
 } from "/backlot/ui/lib.js";
 
-const rawProjectPath = (location.pathname.split("/p/")[1] || "").replace(/\/+$/, "");
-const projectId = decodeURIComponent(rawProjectPath);
+const projectId = projectIdFromPath(location.pathname);
 const encodedProjectId = encodeURIComponent(projectId);
 const app = document.getElementById("app");
 const modal = document.getElementById("modal");

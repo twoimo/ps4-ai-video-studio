@@ -1,8 +1,7 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
-import { getJSON } from "/backlot/ui/lib.js";
+import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
-const rawProjectPath = (location.pathname.split("/p/")[1] || "").replace(/\/+$/, "");
-const projectId = decodeURIComponent(rawProjectPath);
+const projectId = projectIdFromPath(location.pathname);
 const root = document.getElementById("materials");
 const creditMark = String(400 + 2);
 
@@ -75,9 +74,17 @@ function bindMaterials(frozen) {
   };
   root.querySelector(".inspect-form")?.addEventListener("submit", save);
   root.querySelector("[data-inspect-save], .inspect-save")?.addEventListener("click", save);
-  root.querySelector("[data-inspect-regen], .inspect-regen")?.addEventListener("click", async () => {
-    if (frozen) return;
+  root.querySelector("[data-inspect-regen], .inspect-regen")?.addEventListener("click", async (event) => {
+    const button = event?.currentTarget;
+    if (button?.disabled) return;
     try {
+      const health = await readJson("/api/health", {});
+      if (health?.imagine?.frozen !== false) {
+        status("지금은 그림을 안 만들어요.", "error");
+        if (button) button.disabled = true;
+        return;
+      }
+      if (button) button.disabled = true;
       await saveMaterials();
       const response = await fetch(`/api/jobs/${encodeURIComponent(projectId)}/run`, { method: "POST" });
       const data = await response.json().catch(() => ({}));
@@ -88,6 +95,7 @@ function bindMaterials(frozen) {
       }
       status("대기열에 넣었습니다.");
     } catch (error) {
+      if (button && !frozen) button.disabled = false;
       status(pausedActionError(error), "error");
     }
   });
