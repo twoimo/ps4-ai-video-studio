@@ -219,7 +219,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /\.shorts-grid\s*\{[^}]*overflow:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*width:\s*100%/);
-  assert.match(css, /\.short-card-thumb\s*\{[^}]*height:\s*auto/);
+  assert.match(css, /\.short-card-thumb\s*\{[^}]*height:\s*var\(--thumb-h\)/);
+  assert.match(css, /\.short-card-thumb\s*\{[^}]*max-height:\s*var\(--thumb-h\)/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border-radius:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*-webkit-touch-callout:\s*none/);
@@ -699,6 +700,12 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)[\s\S]*right:\s*auto/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-right\)\)/);
+  const baseWatch = css.slice(0, css.indexOf("@media (max-width: 860px)"));
+  assert.match(baseWatch, /\.watch-close[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(baseWatch, /\.watch-menu[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /\.confirm-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /input:-webkit-autofill[\s\S]*-webkit-text-fill-color:\s*var\(--text\)/);
+  assert.match(css, /input:-webkit-autofill[\s\S]*var\(--surface\)/);
   assert.equal(css.includes("watch-inspect-dismiss"), false);
   assert.equal(css.includes("inspect-open"), false);
   assert.equal(css.includes(".watch-mute"), false);
@@ -1088,6 +1095,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /createMode === "batch"/);
   assert.match(app, /querySelector\?\.\("#batch-topics"\)/);
   assert.match(app, /querySelector\?\.\("#topic"\)/);
+  assert.doesNotMatch(app, /target\.closest\("\[hidden\]"\)/);
+  assert.match(app, /rememberStudioCreateMode\(sessionStorage, "single"\)/);
   assert.match(app, /matchMedia\?\.\("\(pointer: coarse\)"\)/);
   assert.match(app, /if \(!coarse\)/);
   assert.match(app, /active && root\.contains\(active\)/);
@@ -1564,6 +1573,8 @@ test("displayTitle drops workspace paths and falls back to 보드", () => {
   assert.equal(displayStageLabel("CustomStage"), "단계");
   assert.equal(displayItemLabel("research_brief"), "조사");
   assert.equal(displayItemLabel("artifact"), "항목");
+  assert.equal(displayItemLabel("Item 3"), "3번");
+  assert.equal(displayItemLabel("take 2"), "2테이크");
   assert.equal(displayPipelineLabel("unknown"), "단계");
   assert.equal(displayPipelineLabel("ps4-studio"), "보드");
   assert.equal(displayPipelineLabel("style_playbook"), "");
@@ -1691,8 +1702,11 @@ test("failJobsLoad paints create+empty, batch is a button, and health sheet stay
   assert.match(app, /const createSwap = prev === "create" && next === "create"/);
   assert.match(ui, /export function healthTextKo/);
   assert.match(ui, /export function writeCreateModeHint/);
+  assert.match(ui, /export function rememberStudioCreateMode/);
   assert.match(ui, /export function takeCreateModeHint/);
   assert.match(ui, /studioCreateMode/);
+  assert.match(app, /rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(html, /class="confirm-actions"/);
   assert.match(pipe, /healthTextKo\(stage\.label\)/);
   assert.match(pipe, /healthTextKo\(status\)/);
   assert.match(pipe, /<ul id="machine-sheet">/);

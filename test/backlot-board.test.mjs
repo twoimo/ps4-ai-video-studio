@@ -662,6 +662,10 @@ test("library empty Korean, fail clears skeletons, and hero uses an auto 9:16 bo
   const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
   assert.match(library, /아직 보드가 없습니다/);
   assert.doesNotMatch(library, /No projects yet/);
+  assert.match(library, /id="empty"[^>]*hidden/);
+  assert.match(libraryJs, /function syncLibraryEmpty/);
+  assert.match(libraryJs, /dataset\?\.busy === "1"/);
+  assert.match(libraryJs, /querySelector\("\.is-skeleton"\)/);
   assert.match(libraryJs, /querySelector\("\.lib-card:not\(\.is-skeleton\)"\)/);
   assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
   assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
@@ -696,6 +700,10 @@ test("library posters are 9:16, cost wraps, and materials save stays opaque", as
   assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*max-height:\s*118px/);
   assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /Studio extra: board aside overflow/);
+  assert.match(css, /\.board\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*320px\)/);
+  assert.match(css, /aside,\s*\.materials\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.lib-grid:has\(\.is-skeleton\) \+ #empty/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
@@ -722,6 +730,10 @@ test("library swallows long-press, materials holds IME toast, and board keep ign
   assert.match(libraryJs, /armClickSwallow\(card\)/);
   assert.match(libraryJs, /keepPaintedGrid\(grid\)/);
   assert.match(boardJs, /keepPaintedGrid\(app\)/);
+  assert.match(boardJs, /\$\{index \+ 1\}번/);
+  assert.match(boardJs, /\$\{i \+ 1\}테이크/);
+  assert.doesNotMatch(boardJs, /`Item \$\{index \+ 1\}`/);
+  assert.doesNotMatch(boardJs, /`take \$\{i \+ 1\}`/);
   assert.match(ui, /export function keepPaintedGrid/);
   assert.match(ui, /classList\?\.contains\("is-skeleton"\)/);
   assert.match(materials, /toast\.held/);

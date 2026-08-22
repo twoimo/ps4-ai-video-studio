@@ -132,6 +132,10 @@ export function displayStageLabel(name, fallback = "단계") {
 export function displayItemLabel(name, fallback = "항목") {
   const key = String(name || "").trim();
   if (!key || key === "unknown" || key === "artifact") return fallback;
+  const itemN = key.match(/^Item\s+(\d+)$/i);
+  if (itemN) return `${itemN[1]}번`;
+  const takeN = key.match(/^take\s+(\d+)$/i);
+  if (takeN) return `${takeN[1]}테이크`;
   if (ITEM_LABELS[key]) return ITEM_LABELS[key];
   if (STAGE_LABELS[key]) return STAGE_LABELS[key];
   if (LATIN_LABEL.test(key)) return fallback;
@@ -159,13 +163,19 @@ export function keepPaintedGrid(root) {
 
 export const STUDIO_CREATE_MODE_KEY = "studioCreateMode";
 
-export function writeCreateModeHint(mode) {
+export function rememberStudioCreateMode(storage, mode = "single") {
   try {
-    if (mode === "batch") sessionStorage.setItem(STUDIO_CREATE_MODE_KEY, "batch");
-    else sessionStorage.removeItem(STUDIO_CREATE_MODE_KEY);
+    const store = storage && typeof storage.setItem === "function" ? storage : globalThis.sessionStorage;
+    if (!store) return;
+    if (mode === "batch") store.setItem(STUDIO_CREATE_MODE_KEY, "batch");
+    else store.removeItem(STUDIO_CREATE_MODE_KEY);
   } catch {
     /* ignore quota / private mode */
   }
+}
+
+export function writeCreateModeHint(mode) {
+  rememberStudioCreateMode(globalThis.sessionStorage, mode);
 }
 
 export function takeCreateModeHint() {

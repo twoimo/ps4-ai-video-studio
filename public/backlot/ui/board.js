@@ -337,7 +337,7 @@ function titledItems(items, selectedId = null) {
       return el("li", {}, shortText(item));
     }
     const id = item.id || item.concept_id || item.option_id;
-    const title = item.title || item.name || item.display_name || item.label || id || item.path || item.platform || item.description || `Item ${index + 1}`;
+    const title = item.title || item.name || item.display_name || item.label || id || item.path || item.platform || item.description || `${index + 1}번`;
     const detail = item.hook || item.why_this_works || item.summary || item.description || item.silhouette_notes;
     return el("li", { class: id && id === selectedId ? "selected" : "" },
       el("div", { class: "approval-item-title" }, shortText(title, 100),
@@ -811,11 +811,11 @@ function sceneCard(s, card) {
         || (t.path && t.path === card.visual.path)
         || (t.id && t.id === card.visual.id)
       );
-      const tk = el("span", { class: `tk${isActive ? " active" : ""}`, title: `take ${i + 1}` });
+      const tk = el("span", { class: `tk${isActive ? " active" : ""}`, title: `${i + 1}테이크` });
       if (t.exists && t.type === "image") tk.append(el("img", { src: thumbURL(s.project_id, t.path, 320), loading: "lazy", alt: "" }));
       takes.append(tk);
     });
-    takes.append(el("span", { class: "tk-label" }, `${card.takes.length} TAKES`));
+    takes.append(el("span", { class: "tk-label" }, `${card.takes.length}테이크`));
     wrap.append(takes);
   }
 

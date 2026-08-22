@@ -1,4 +1,4 @@
-import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, takeCreateModeHint, throwMappedFetchError } from "./shorts-ui.mjs";
+import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, rememberStudioCreateMode, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, takeCreateModeHint, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock, visualViewportKeyboardInset } from "./studio-chrome.mjs";
@@ -212,7 +212,7 @@ function overlayStartFocus(root) {
     if (!coarse) {
       const batch = state.createMode === "batch";
       const target = batch ? root.querySelector?.("#batch-topics") : root.querySelector?.("#topic");
-      if (target && target.closest("[hidden]") == null && typeof target.focus === "function") {
+      if (target && typeof target.focus === "function") {
         target.focus({ preventScroll: true });
         scrollFocusIntoPanel(target);
         return;
@@ -1356,6 +1356,7 @@ async function createProduction(event) {
     state.selectedJobId = payload.job.id;
     state.highlightJobId = payload.job.id;
     upsertJob(payload.job);
+    rememberStudioCreateMode(sessionStorage, "single");
     window.setTimeout(() => {
       if (state.highlightJobId === payload.job.id) state.highlightJobId = null;
       document.querySelector(`[data-job-id="${CSS.escape(payload.job.id)}"]`)?.classList.remove("just-created");
@@ -1427,6 +1428,7 @@ function openCreate(event) {
   rememberOpener(event);
   const swap = state.view === "create";
   state.createMode = "single";
+  rememberStudioCreateMode(sessionStorage, "single");
   setView("create", { skipHash: swap });
   if (swap && location.hash !== "#create") {
     skipStaleHashChange();
@@ -1493,6 +1495,7 @@ async function saveBatchDrafts() {
       if (payload.job) upsertJob(payload.job);
     }
     await refreshJobs();
+    rememberStudioCreateMode(sessionStorage, "single");
     showToast(`초안 ${topics.length}개를 저장했습니다.`);
     closeOverlays();
   } catch (error) {
@@ -1514,6 +1517,7 @@ async function queueBatchJobs() {
       }
     }
     await refreshJobs();
+    rememberStudioCreateMode(sessionStorage, "single");
     showToast(`대기열에 ${topics.length}개를 넣었습니다.`);
     closeOverlays();
   } catch (error) {

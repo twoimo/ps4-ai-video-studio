@@ -1375,3 +1375,16 @@ html, body {
   width: auto;
   object-fit: cover;
 }
+
+/* Studio extra: board aside overflow */
+.board {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+}
+aside,
+.materials {
+  overflow-x: clip;
+}
+.lib-grid:has(.is-skeleton) + #empty,
+.lib-grid[data-busy] + #empty {
+  display: none !important;
+}

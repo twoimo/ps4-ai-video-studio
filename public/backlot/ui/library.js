@@ -129,7 +129,18 @@ function card(p) {
   );
 }
 
+function syncLibraryEmpty(hasProjects = false) {
+  const empty = document.getElementById("empty");
+  if (!empty) return;
+  const busy = grid?.dataset?.busy === "1" || Boolean(grid?.querySelector(".is-skeleton"));
+  const hide = busy || hasProjects;
+  empty.hidden = hide;
+  empty.style.display = hide ? "none" : "block";
+}
+
 async function render() {
+  if (grid) grid.dataset.busy = "1";
+  syncLibraryEmpty(true);
   const payload = await getJSON("/api/projects");
   if (!Array.isArray(payload?.projects) && !Array.isArray(payload)) {
     throw new Error("불러오지 못했습니다.");
@@ -141,8 +152,9 @@ async function render() {
   badge.classList.toggle("idle", liveCount === 0);
   document.getElementById("liveText").textContent = liveCount ? `${liveCount} 진행` : "대기";
   grid.innerHTML = "";
-  document.getElementById("empty").style.display = projects.length ? "none" : "block";
+  if (grid) delete grid.dataset.busy;
   for (const p of projects) grid.append(card(p));
+  syncLibraryEmpty(Boolean(projects.length));
 }
 
 function failLibrary(error) {
@@ -151,8 +163,12 @@ function failLibrary(error) {
   const grid = document.getElementById("grid");
   if (keepPaintedGrid(grid) && grid?.querySelector(".lib-card:not(.is-skeleton)")) return;
   if (count) count.textContent = "불러오지 못함";
-  if (grid) grid.innerHTML = "";
+  if (grid) {
+    grid.innerHTML = "";
+    delete grid.dataset.busy;
+  }
   if (empty) {
+    empty.hidden = false;
     empty.style.display = "block";
     empty.textContent = friendlyJobError(error);
   }
