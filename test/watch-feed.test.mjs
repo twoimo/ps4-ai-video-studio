@@ -864,7 +864,7 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /sizeWatchFeed\(watchFeed\)/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /requestAnimationFrame/);
-  assert.match(app, /orientationchange/);
+  assert.match(app, /bindRotateSettle/);
   assert.match(app, /applyWatchTransform/);
   assert.match(app, /stepWatchFeed/);
   assert.match(app, /function notifyActive/);
@@ -1205,4 +1205,12 @@ test("landscape watch close and menu use max top/left or top/right safe-area", a
   assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-left\)\)/);
   assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-menu[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-right\)\)/);
   assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-right\)\)/);
+});
+
+test("landscape watch title chrome clears mute plus swapped safe-area", async () => {
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-slide-chrome[\s\S]*bottom:\s*max\(112px,\s*calc\(env\(safe-area-inset-bottom\) \+ 44px\),\s*calc\(env\(safe-area-inset-right\) \+ 44px\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-slide-chrome[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\),\s*56px\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-slide-chrome[\s\S]*padding-right:\s*max\(52px,\s*calc\(44px \+ env\(safe-area-inset-bottom\)\),\s*calc\(44px \+ env\(safe-area-inset-right\)\)\)/);
+  assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
 });

@@ -15,6 +15,7 @@ import {
   displayPipelineLabel,
   displayStageLabel,
   frozenRemakeLabel,
+  healthTextKo,
   projectsFromListPayload,
   inspectVideoDownloads,
   isAbortError,
@@ -833,7 +834,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /clearWatchSize/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /requestAnimationFrame/);
-  assert.match(app, /orientationchange/);
+  assert.match(app, /bindRotateSettle/);
   assert.match(app, /function notifyActive/);
   assert.match(app, /function mountWatchFeed/);
   assert.match(app, /data-loop="head"/);
@@ -1118,7 +1119,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.doesNotMatch(app, /if \(view === "batch"\) return "#batch"/);
   assert.doesNotMatch(app, /replaceState\(history\.state, "", "#batch"\)/);
   assert.match(app, /takeCreateModeHint\(\)/);
-  assert.match(app, /location\.hash === "#batch"/);
+  assert.match(app, /hash === "batch"/);
+  assert.match(app, /location\.replace\("\/#create"\)/);
   assert.match(app, /visualViewport/);
   assert.match(app, /--vv-bottom/);
   assert.match(app, /function pinWatchToVisualViewport/);
@@ -1214,7 +1216,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
   assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
   assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
-  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*var\(--vv-bottom,\s*0px\)/);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
   assert.match(boardCss, /\.scene-card \{ max-width: 100%; \}/);
   assert.match(boardCss, /\.cost \.bar \{ width: min\(150px, 38%\); \}/);
   assert.doesNotMatch(boardCss, /100vw - 42px/);
@@ -1748,11 +1751,12 @@ test("#batch does not open 양산; mode is the session hint and watch forces sin
   assert.match(app, /state\.createMode = hinted === "batch" \? "batch" : "single"/);
   assert.doesNotMatch(app, /leftoverBatch \|\| hinted/);
   assert.doesNotMatch(app, /const leftoverBatch = hash === "batch"/);
-  assert.match(app, /if \(location\.hash === "#batch"\) \{\s*history\.replaceState\(history\.state, "", `\$\{location\.pathname\}\$\{location\.search\}#create`\)/);
+  assert.match(app, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
   assert.match(app, /if \(openingWatch\) \{\s*state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
   assert.doesNotMatch(html, /leftoverBatch = hash === "batch"/);
   assert.doesNotMatch(html, /leftoverBatch = leftoverBatch \|\|/);
   assert.match(html, /leftoverBatch = sessionStorage\.getItem\("studioCreateMode"\) === "batch"/);
+  assert.match(html, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
   assert.match(html, /if \(hash === "create" \|\| hash === "batch"\)/);
 });
 
@@ -1773,4 +1777,31 @@ test("portrait IME --thumb-h uses innerHeight and landscape mute swaps safe-area
   assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*height:\s*44px/);
   assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\)\)/);
   assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*right:\s*max\(0px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\)\)/);
+});
+
+test("leftover #batch bounces to /#create, import clears the hint, and settleRotate waits for width", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
+  const ui = await readFile(join(publicDir, "shorts-ui.mjs"), "utf8");
+  assert.match(html, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(app, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(app, /state\.createMode = hinted === "batch" \? "batch" : "single"/);
+  assert.match(app, /async function importLibrary[\s\S]*state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(chrome, /export function settleRotate/);
+  assert.match(chrome, /requestAnimationFrame\(\(\) => requestAnimationFrame\(cb\)\)/);
+  assert.match(chrome, /export function bindRotateSettle/);
+  assert.match(chrome, /orientationchange/);
+  assert.match(chrome, /screen\?\.orientation\?\.addEventListener\?\.\("change"/);
+  assert.match(app, /bindRotateSettle\(/);
+  assert.match(app, /sizeShortsGrid\(\)/);
+  assert.match(app, /innerWidth >= 600 && window\.innerWidth > window\.innerHeight/);
+  assert.doesNotMatch(css, /--n:\s*2/);
+  assert.equal(healthTextKo("ready"), "준비");
+  assert.equal(healthTextKo("frozen"), "멈춤");
+  assert.equal(healthTextKo("편집 · ffmpeg"), "편집");
+  assert.equal(healthTextKo("ffmpeg"), "단계");
+  assert.match(ui, /ready:\s*"준비"/);
+  assert.match(ui, /frozen:\s*"멈춤"/);
 });

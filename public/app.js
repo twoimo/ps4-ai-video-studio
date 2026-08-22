@@ -1,7 +1,7 @@
 import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, rememberStudioCreateMode, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, takeCreateModeHint, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
-import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock, visualViewportKeyboardInset } from "./studio-chrome.mjs";
+import { bindFocusScroll, bindRotateSettle, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock, visualViewportKeyboardInset } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -325,13 +325,13 @@ function syncDocumentTitle() {
 
 function applyHash() {
   const hash = location.hash.replace("#", "");
+  if (hash === "batch") {
+    location.replace("/#create");
+  }
   if (hash === "batch" || hash === "create") {
     const hinted = takeCreateModeHint();
     state.createMode = hinted === "batch" ? "batch" : "single";
     setView("create", { skipHash: true });
-    if (location.hash === "#batch") {
-      history.replaceState(history.state, "", `${location.pathname}${location.search}#create`);
-    }
     return;
   }
   if (hash === "template") {
@@ -1858,6 +1858,8 @@ function showImportResult(payload) {
 
 async function importLibrary(event) {
   event?.preventDefault();
+  state.createMode = "single";
+  rememberStudioCreateMode(sessionStorage, "single");
   try {
     const payload = await api("/api/library/import", { method: "POST" });
     await refreshJobs();
@@ -1949,8 +1951,9 @@ function bindEvents() {
   window.visualViewport?.addEventListener("resize", syncVisualViewportInset);
   window.visualViewport?.addEventListener("scroll", syncVisualViewportInset);
   window.addEventListener("resize", sizeShortsGrid);
-  window.addEventListener("orientationchange", () => {
+  bindRotateSettle(() => {
     pinWatchToVisualViewport();
+    sizeShortsGrid();
     if (state.view !== "watch") return;
     const root = $("#watch-feed");
     if (root?.dataset?.swiping === "1") return;

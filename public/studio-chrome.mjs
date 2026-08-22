@@ -166,6 +166,21 @@ export function syncOverlayLock(root = document) {
   restoreOverlayLockY();
 }
 
+export function settleRotate(fn) {
+  if (typeof fn !== "function") return;
+  const after = typeof requestAnimationFrame === "function"
+    ? (cb) => requestAnimationFrame(() => requestAnimationFrame(cb))
+    : (cb) => cb();
+  after(fn);
+}
+
+export function bindRotateSettle(fn, target = globalThis) {
+  if (typeof fn !== "function") return;
+  const run = () => settleRotate(fn);
+  target.addEventListener?.("orientationchange", run);
+  target.screen?.orientation?.addEventListener?.("change", run);
+}
+
 export function visualViewportKeyboardInset() {
   const vv = globalThis.visualViewport;
   if (!vv) return 0;
@@ -185,8 +200,10 @@ function syncVisualViewportInset() {
   const height = vv?.height || globalThis.innerHeight || 0;
   const bottom = visualViewportKeyboardInset();
   const root = globalThis.document?.documentElement;
+  const innerH = globalThis.innerHeight || height;
   root?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   root?.style?.setProperty("--vv-height", `${Math.round(height)}px`);
+  root?.style?.setProperty("--inner-height", `${Math.round(innerH)}px`);
   root?.classList?.toggle("ime-open", bottom > 80);
   const body = globalThis.document?.body;
   if (body?.style) {
@@ -226,6 +243,7 @@ if (typeof document !== "undefined" && document.documentElement?.dataset?.studio
   bindCreateModeHints(document);
   void hydrateStudioChrome(document);
   syncVisualViewportInset();
+  bindRotateSettle(syncVisualViewportInset);
   armSatelliteHistory();
   globalThis.addEventListener?.("popstate", leaveSatelliteIfNeeded);
   globalThis.visualViewport?.addEventListener("resize", syncVisualViewportInset);

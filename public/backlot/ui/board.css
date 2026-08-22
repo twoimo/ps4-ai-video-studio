@@ -1085,7 +1085,8 @@ body:not(.first) .approval-review { animation: none; }
   display: grid;
   gap: 8px;
   position: sticky;
-  bottom: var(--vv-bottom, 0px);
+  bottom: 0;
+  padding-bottom: max(8px, env(safe-area-inset-bottom), var(--vv-bottom, 0px));
   z-index: 2;
   background: var(--surface);
 }

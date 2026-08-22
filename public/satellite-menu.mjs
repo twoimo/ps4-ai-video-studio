@@ -1,4 +1,4 @@
-import { friendlyJobError, importBroughtCopy, isAbortError, parseJsonText, throwMappedFetchError } from "./shorts-ui.mjs";
+import { friendlyJobError, importBroughtCopy, isAbortError, parseJsonText, rememberStudioCreateMode, throwMappedFetchError } from "./shorts-ui.mjs";
 import { pinOverlaysToVisualViewport, syncOverlayLock } from "./studio-chrome.mjs";
 
 function syncOverlayOpen(root = document) {
@@ -33,6 +33,7 @@ function showSatelliteImportResult(root, payload = {}) {
 }
 
 export async function importSatelliteLibrary(root = document, request = fetch) {
+  rememberStudioCreateMode(sessionStorage, "single");
   resetSatelliteMenu(root);
   const overlay = root.querySelector?.("#satellite-menu");
   if (overlay) overlay.hidden = false;

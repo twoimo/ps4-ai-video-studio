@@ -256,7 +256,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /\.materials textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
   assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
-  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*var\(--vv-bottom,\s*0px\)/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
   assert.match(css, /\.scene-card \{ max-width: 100%; \}/);
   assert.match(css, /\.cost \.bar \{ width: min\(150px, 38%\); \}/);
   assert.doesNotMatch(css, /100vw - 42px/);
@@ -785,6 +786,20 @@ test("inspect-stack overflow-x is visible and satellite #batch rewrites to /#cre
   assert.doesNotMatch(satelliteBoot, /hash === "create" \|\| hash === "batch"/);
   assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
   assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("sticky 저장 sits at bottom 0 and satellite import clears the batch hint", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(satellite, /rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(satellite, /export async function importSatelliteLibrary[\s\S]*rememberStudioCreateMode\(sessionStorage, "single"\)/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

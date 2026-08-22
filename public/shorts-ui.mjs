@@ -146,12 +146,35 @@ export function frozenRemakeLabel(frozen = false) {
   return frozen ? "지금은 못 만들어요" : "다시 만들기";
 }
 
+const HEALTH_EN_KO = {
+  ready: "준비",
+  frozen: "멈춤",
+  wait: "대기",
+  waiting: "대기",
+  running: "진행",
+  failed: "실패",
+  error: "실패",
+  done: "완료",
+  complete: "완료",
+  completed: "완료",
+  queued: "대기",
+  draft: "초안",
+  ok: "준비",
+  paused: "멈춤",
+  blocked: "막힘"
+};
+
 export function healthTextKo(text, fallback = "단계") {
   const raw = String(text || "").trim();
   if (!raw) return fallback;
   const parts = raw.split(/\s*[·•|,]\s*/).map((part) => part.trim()).filter(Boolean);
-  const korean = parts.filter((part) => /[가-힣]/.test(part) && !/[A-Za-z]/.test(part));
-  if (korean.length) return korean.join(" · ");
+  const mapped = parts.map((part) => {
+    const key = part.toLowerCase();
+    if (HEALTH_EN_KO[key]) return HEALTH_EN_KO[key];
+    if (/[가-힣]/.test(part) && !/[A-Za-z]/.test(part)) return part;
+    return "";
+  }).filter(Boolean);
+  if (mapped.length) return [...new Set(mapped)].join(" · ");
   if (/[가-힣]/.test(raw) && !/[A-Za-z]/.test(raw)) return raw;
   return fallback;
 }

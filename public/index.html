@@ -239,6 +239,9 @@
         try {
           leftoverBatch = sessionStorage.getItem("studioCreateMode") === "batch";
         } catch (e) {}
+        if (hash === "batch") {
+          location.replace("/#create");
+        }
         if (hash === "create" || hash === "batch") {
           show("create-overlay");
           if (leftoverBatch) {
