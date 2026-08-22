@@ -50,9 +50,9 @@ function card(p) {
   if (p.live && p.active_stage) {
     poster.append(el("span", { class: "lp-live" },
       el("span", { class: "dot" }),
-      p.awaiting_human ? "◈ AWAITING YOU" : `LIVE · ${p.active_stage.toUpperCase()}`));
+      p.awaiting_human ? "◈ 확인 필요" : `진행 · ${p.active_stage.toUpperCase()}`));
   } else if (p.awaiting_human) {
-    poster.append(el("span", { class: "lp-live" }, "◈ AWAITING YOU"));
+    poster.append(el("span", { class: "lp-live" }, "◈ 확인 필요"));
   }
 
   const meta = el("div", { class: "lb-meta" },
@@ -79,7 +79,7 @@ async function render() {
   const liveCount = projects.filter((p) => p.live).length;
   const badge = document.getElementById("liveBadge");
   badge.classList.toggle("idle", liveCount === 0);
-  document.getElementById("liveText").textContent = liveCount ? `${liveCount} LIVE` : "IDLE";
+  document.getElementById("liveText").textContent = liveCount ? `${liveCount} 진행` : "대기";
   grid.innerHTML = "";
   document.getElementById("empty").style.display = projects.length ? "none" : "block";
   for (const p of projects) grid.append(card(p));

@@ -1,5 +1,21 @@
 const pagers = new WeakMap();
 const watchPlayers = new WeakMap();
+const watchEpochs = new WeakMap();
+
+function watchEpochOf(root) {
+  return root ? (watchEpochs.get(root) || 0) : 0;
+}
+
+function bumpWatchEpoch(root) {
+  if (!root) return 0;
+  const next = watchEpochOf(root) + 1;
+  watchEpochs.set(root, next);
+  return next;
+}
+
+function isStaleWatch(root, epoch) {
+  return Boolean(root) && watchEpochOf(root) !== epoch;
+}
 
 function pagerOf(root) {
   if (!root) return null;
@@ -177,6 +193,7 @@ export function createWatchPlayer(root) {
 }
 
 export function stopWatchFeed(root) {
+  bumpWatchEpoch(root);
   pauseLeftoverMedia(root);
   const videos = [];
   const held = root ? watchPlayers.get(root) : null;
@@ -208,23 +225,29 @@ function playResult(play) {
   return play && typeof play.then === "function" ? play : Promise.resolve(play);
 }
 
-function remuteAndPlay(video) {
+function finishWatchPlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) {
+    try { video.pause(); } catch { /* ignore stale play */ }
+    return video;
+  }
+  return revealWatchVideo(video);
+}
+
+function remuteAndPlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
   video.muted = true;
   if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
   let play;
   try {
     play = video.play();
   } catch {
-    revealWatchVideo(video);
-    return Promise.resolve(video);
+    return Promise.resolve(finishWatchPlay(video, root, epoch));
   }
-  return playResult(play).then(() => revealWatchVideo(video)).catch(() => {
-    revealWatchVideo(video);
-    return video;
-  });
+  return playResult(play).then(() => finishWatchPlay(video, root, epoch)).catch(() => finishWatchPlay(video, root, epoch));
 }
 
-function unmuteAndPlay(video) {
+function unmuteAndPlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
   revealWatchVideo(video);
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
@@ -232,40 +255,43 @@ function unmuteAndPlay(video) {
   try {
     play = video.play();
   } catch {
-    return remuteAndPlay(video);
+    return remuteAndPlay(video, root, epoch);
   }
-  return playResult(play).then(() => revealWatchVideo(video)).catch(() => remuteAndPlay(video));
+  return playResult(play).then(() => finishWatchPlay(video, root, epoch)).catch(() => remuteAndPlay(video, root, epoch));
 }
 
-function playMutedThenUnmutePlay(video) {
+function playMutedThenUnmutePlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
   video.muted = true;
   if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
   let mutedPlay;
   try {
     mutedPlay = video.play();
   } catch {
-    return remuteAndPlay(video);
+    return remuteAndPlay(video, root, epoch);
   }
-  return playResult(mutedPlay).then(() => unmuteAndPlay(video)).catch(() => remuteAndPlay(video));
+  return playResult(mutedPlay).then(() => unmuteAndPlay(video, root, epoch)).catch(() => remuteAndPlay(video, root, epoch));
 }
 
-export function playWatchMedia(video) {
+export function playWatchMedia(video, root, epoch) {
   if (!video || typeof video.play !== "function") return Promise.resolve(video);
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   let play;
   try {
     play = video.play();
   } catch {
-    return playMutedThenUnmutePlay(video);
+    return playMutedThenUnmutePlay(video, root, epoch);
   }
-  return playResult(play).then(() => revealWatchVideo(video)).catch(() => playMutedThenUnmutePlay(video));
+  return playResult(play).then(() => finishWatchPlay(video, root, epoch)).catch(() => playMutedThenUnmutePlay(video, root, epoch));
 }
 
-function revealAndPlay(video, jobId) {
+function revealAndPlay(video, jobId, root, epoch) {
+  if (isStaleWatch(root, epoch)) return;
   if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
   revealWatchVideo(video);
-  return playWatchMedia(video);
+  return playWatchMedia(video, root, epoch);
 }
 
 export function playWatchFeed(target) {
@@ -274,6 +300,8 @@ export function playWatchFeed(target) {
     return playWatchMedia(target);
   }
   const root = target;
+  const epoch = watchEpochOf(root);
+  if (isStaleWatch(root, epoch)) return Promise.resolve();
   const slides = watchSlides(root);
   const activeSlide = slides[currentIndex(root)];
   const jobId = activeSlide?.dataset?.jobId;
@@ -285,7 +313,7 @@ export function playWatchFeed(target) {
   video.volume = 1;
   video.preload = "auto";
   if (jobId && video.dataset?.jobId === jobId) {
-    return revealAndPlay(video, jobId);
+    return revealAndPlay(video, jobId, root, epoch);
   }
   if (video.style) {
     video.style.visibility = "hidden";
@@ -297,7 +325,7 @@ export function playWatchFeed(target) {
   attachWatchVideo(video);
   if (activeSlide?.dataset?.poster) video.poster = activeSlide.dataset.poster;
   const src = activeSlide?.dataset?.src || activeSlide?.dataset?.videoUrl;
-  const reveal = () => revealAndPlay(video, jobId);
+  const reveal = () => revealAndPlay(video, jobId, root, epoch);
   if (typeof video.addEventListener === "function") {
     video.addEventListener("loadeddata", reveal, { once: true });
     video.addEventListener("canplay", reveal, { once: true });
@@ -305,8 +333,8 @@ export function playWatchFeed(target) {
   }
   if (src && video.getAttribute?.("src") !== src) video.src = src;
   if (video.dataset) video.dataset.jobId = jobId || "";
-  if ((video.readyState || 0) >= 2) revealWatchVideo(video);
-  return playWatchMedia(video);
+  if ((video.readyState || 0) >= 2 && !isStaleWatch(root, epoch)) revealWatchVideo(video);
+  return playWatchMedia(video, root, epoch);
 }
 
 export function clearWatchSize(root) {

@@ -63,11 +63,11 @@
         <div id="menu-body">
           <div class="library-menu" id="menu-actions">
             <button type="button" id="menu-create">새 쇼츠</button>
-            <button type="button" id="menu-batch">양산</button>
+            <a id="menu-batch" href="#batch">양산</a>
             <button type="button" id="import-library">가져오기</button>
             <a id="open-board-menu" href="/backlot">보드</a>
             <a id="open-template-menu" href="/template">템플릿</a>
-            <button type="button" id="open-settings">설정</button>
+            <a id="open-settings" href="#settings">설정</a>
             <button type="button" id="refresh-all">새로고침</button>
           </div>
           <div id="menu-import-result" hidden>
@@ -82,7 +82,7 @@
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel create-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="create-title">
         <button type="button" class="draft-close" id="close-create" aria-label="닫기">×</button>
-        <form class="create-panel" id="create-form">
+        <form class="create-panel" id="create-form" onsubmit="return false">
           <h2 id="create-title">새 쇼츠</h2>
           <div id="single-topic-field">
           <label class="field-label" for="topic">주제</label>
@@ -113,7 +113,12 @@
             <p class="form-footnote">월드 슬롯, 다른 생성 소스, 로컬 업로드는 여기에만 있습니다.</p>
             <label class="field-label" for="sources">검증 출처 URL</label>
             <textarea id="sources" rows="2" placeholder="주제에 맞는 공식 출처 URL"></textarea>
-            <div id="create-world-slots" class="slot-grid"></div>
+            <div id="create-world-slots" class="slot-grid">
+              <div class="slot-card template-skeleton" aria-hidden="true"></div>
+              <div class="slot-card template-skeleton" aria-hidden="true"></div>
+              <div class="slot-card template-skeleton" aria-hidden="true"></div>
+              <div class="slot-card template-skeleton" aria-hidden="true"></div>
+            </div>
             <div id="create-prompt-preview" class="prompt-preview" aria-live="polite"></div>
             <div class="form-row">
               <div>
@@ -168,7 +173,7 @@
       <div class="overlay-backdrop" data-close-view="grid"></div>
       <div class="overlay-panel settings-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <button type="button" class="draft-close" id="close-settings" aria-label="닫기">×</button>
-        <form class="create-panel" id="settings-form">
+        <form class="create-panel" id="settings-form" onsubmit="return false">
           <h2 id="settings-title">설정</h2>
           <label class="field-label" for="settings-tts-provider">나레이션</label>
           <select id="settings-tts-provider">
@@ -184,7 +189,7 @@
           <button class="ghost-button" id="settings-preview-voice" type="button">목소리 미리 듣기</button>
           <audio id="settings-preview-audio" hidden controls></audio>
           <label class="toggle-label settings-bgm"><input id="settings-bgm-enabled" type="checkbox" /><span class="toggle"></span><span>배경 음악 <b class="toggle-state" data-toggle-state="settings-bgm-enabled">꺼짐</b></span></label>
-          <p id="settings-bgm-songs" class="form-footnote">곡 없음</p>
+          <p id="settings-bgm-songs" class="form-footnote">곡을 불러오는 중</p>
           <label class="field-label" for="settings-bgm-volume">배경 음량</label>
           <input id="settings-bgm-volume" type="range" min="0" max="0.4" step="0.01" value="0.08" />
           <p class="form-footnote">resource/songs 또는 workspace/songs에 오디오를 넣습니다. 없으면 나레이션만 씁니다.</p>
@@ -197,13 +202,42 @@
 
     <div class="studio-overlay feed-card" id="machine-overlay" hidden>
       <div class="overlay-backdrop" data-close-view="grid"></div>
-      <div class="overlay-panel machine-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="machine-title">
+      <div class="overlay-panel machine-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="machine-title" tabindex="-1">
         <button type="button" class="draft-close" id="close-machine" aria-label="닫기">×</button>
         <div id="machine-root" class="machine-root"><h2 id="machine-title">사양</h2></div>
       </div>
     </div>
 
     <div id="toast" class="toast" role="status"></div>
+    <script>
+      (function () {
+        var hash = (location.hash || "").replace(/^#/, "");
+        function show(id) {
+          var node = document.getElementById(id);
+          if (node) node.hidden = false;
+          document.body.classList.add("overlay-open");
+        }
+        if (hash === "create" || hash === "batch") {
+          show("create-overlay");
+          if (hash === "batch") {
+            var title = document.getElementById("create-title");
+            var single = document.getElementById("single-topic-field");
+            var batch = document.getElementById("batch-field");
+            var submit = document.getElementById("create-submit");
+            var actions = document.getElementById("batch-actions");
+            if (title) title.textContent = "양산";
+            if (single) single.hidden = true;
+            if (batch) batch.hidden = false;
+            if (submit) submit.hidden = true;
+            if (actions) actions.hidden = false;
+          }
+        } else if (hash === "settings") {
+          show("settings-overlay");
+        } else if (hash === "machine") {
+          show("machine-overlay");
+        }
+      })();
+    </script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

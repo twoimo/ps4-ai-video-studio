@@ -66,7 +66,8 @@ function selectedJob() {
 }
 
 function hashForView(view) {
-  if (view === "create") return "#create";
+  if (view === "create") return state.createMode === "batch" ? "#batch" : "#create";
+  if (view === "batch") return "#batch";
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "settings") return "#settings";
   if (view === "machine") return "#machine";
@@ -115,11 +116,25 @@ function restoreOpener() {
   if (opener && typeof opener.focus === "function") opener.focus();
 }
 
+function overlayStartFocus(root) {
+  if (!root) return;
+  if (root.id === "machine-overlay") {
+    const panel = root.querySelector(".overlay-panel");
+    if (panel && typeof panel.focus === "function") {
+      if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
+      panel.focus();
+    }
+    return;
+  }
+  const items = overlayFocusables(root).filter((node) => !node.classList?.contains("draft-close"));
+  (items[0] || overlayFocusables(root)[0])?.focus();
+}
+
 function trapOverlay(selector) {
   const root = $(selector);
   if (!root) return;
   bindFocusTrap(root);
-  window.requestAnimationFrame(() => overlayFocusables(root)[0]?.focus());
+  window.requestAnimationFrame(() => overlayStartFocus(root));
 }
 
 function setView(view, options = {}) {
@@ -186,7 +201,13 @@ function syncDocumentTitle() {
 
 function applyHash() {
   const hash = location.hash.replace("#", "");
+  if (hash === "batch") {
+    state.createMode = "batch";
+    setView("create", { skipHash: true });
+    return;
+  }
   if (hash === "create") {
+    state.createMode = "single";
     setView("create", { skipHash: true });
     return;
   }
@@ -860,9 +881,10 @@ async function createProduction(event) {
       }
     }).catch(() => {});
   }
-  const button = event.submitter;
-  button.disabled = true;
-  button.querySelector("span").textContent = "저장 중…";
+  const button = event?.target?.querySelector?.("#create-submit") || $("#create-submit");
+  const label = button?.querySelector?.("span");
+  if (button) button.disabled = true;
+  if (label) label.textContent = "저장 중…";
   try {
     const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     state.selectedJobId = payload.job.id;
@@ -875,7 +897,10 @@ async function createProduction(event) {
     location.assign(materialsUrl(payload.job.id));
     return;
   } catch (error) { showToast(error.message, "error"); }
-  finally { button.disabled = false; button.querySelector("span").textContent = "초안 저장"; }
+  finally {
+    if (button) button.disabled = false;
+    if (label) label.textContent = "초안 저장";
+  }
 }
 
 function syncProviderForm() {
@@ -1081,8 +1106,11 @@ async function hydrateStudioSettings() {
     if (songs) {
       const count = Array.isArray(payload.songs) ? payload.songs.length : 0;
       songs.textContent = count ? `곡 ${count}개` : "곡 없음";
+      songs.dataset.ready = "1";
     }
   } catch (error) {
+    const songs = $("#settings-bgm-songs");
+    if (songs && songs.dataset.ready !== "1") songs.textContent = "곡 없음";
     showToast(error.message, "error");
   }
 }
@@ -1296,8 +1324,17 @@ async function refreshQuietly() {
   }
 }
 
+function syncVisualViewportInset() {
+  const vv = window.visualViewport;
+  const bottom = vv ? Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
+  document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+}
+
 function bindEvents() {
   bindStudioPipe(document, openMachine);
+  syncVisualViewportInset();
+  window.visualViewport?.addEventListener("resize", syncVisualViewportInset);
+  window.visualViewport?.addEventListener("scroll", syncVisualViewportInset);
   window.addEventListener("resize", sizeShortsGrid);
   window.addEventListener("orientationchange", () => {
     if (state.view !== "watch") return;

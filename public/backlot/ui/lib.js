@@ -38,10 +38,10 @@ export function fmtMoney(v) {
 export function fmtAgo(epochSeconds) {
   if (!epochSeconds) return "";
   const diff = Date.now() / 1000 - epochSeconds;
-  if (diff < 90) return "just now";
-  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
-  return `${Math.round(diff / 86400)}d ago`;
+  if (diff < 90) return "방금";
+  if (diff < 3600) return `${Math.round(diff / 60)}분 전`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}시간 전`;
+  return `${Math.round(diff / 86400)}일 전`;
 }
 
 export function fmtClock(iso) {

@@ -169,6 +169,30 @@ test("stopWatchFeed pauses every video and removes the node", () => {
   assert.equal(videos[1].removeCalls, 1);
 });
 
+test("stopWatchFeed epoch ignores a late play after leave", async () => {
+  let resolvePlay;
+  const video = fakeVideo(3);
+  video.play = function play() {
+    this.playCalls += 1;
+    return new Promise((resolve) => {
+      resolvePlay = () => {
+        this.paused = false;
+        resolve();
+      };
+    });
+  };
+  const root = fakePager({
+    slides: [{ dataset: { src: "/a.mp4", jobId: "a" } }],
+    video,
+    height: 640
+  });
+  const pending = playWatchFeed(root);
+  stopWatchFeed(root);
+  resolvePlay();
+  await pending;
+  assert.equal(video.paused, true);
+});
+
 test("syncWatchFeed stops videos when the surface is not watch", () => {
   const videos = [fakeVideo(6)];
   const root = fakeRoot(videos);
@@ -668,6 +692,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
   const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
   assert.match(feed, /export function stopWatchFeed\(root\)/);
+  assert.match(feed, /bumpWatchEpoch\(root\)/);
+  assert.match(feed, /isStaleWatch/);
   assert.match(feed, /video\.pause\(\)/);
   assert.match(feed, /video\.currentTime = 0/);
   assert.match(feed, /export function syncWatchFeed/);

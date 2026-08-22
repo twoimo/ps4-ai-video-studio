@@ -3,7 +3,7 @@
    Dark-room editorial: near-black matte canvas, artifacts glow.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
 
 :root {
   --bg: #0a0a0c;
@@ -37,7 +37,7 @@
   --media-bg: #000;
   --textcard-bg: #0d0d10;
   --badge-bg: rgba(8,8,10,.72);
-  --sans: 'Inter', -apple-system, sans-serif;
+  --sans: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --screenplay: 'Courier Prime', 'Courier New', monospace;
 
@@ -1126,7 +1126,7 @@ body:not(.first) .approval-review { animation: none; }
   z-index: 100;
   isolation: isolate;
   pointer-events: auto;
-  font-family: inherit;
+  font-family: var(--sans);
   font-size: 15px;
   line-height: 1.15;
 }
@@ -1217,5 +1217,26 @@ body:not(.first) .approval-review { animation: none; }
 #studio-chrome .library-board-toggle:hover,
 #studio-chrome .library-more-toggle:hover { color: var(--text, #ececef); }
 body:has(#studio-chrome) .slate .clapper,
-body:has(#studio-chrome) .slate .wordmark,
-body:has(#studio-chrome) .slate h1 { display: none; }
+body:has(#studio-chrome) .slate .wordmark { display: none; }
+body:has(#studio-chrome) .wrap:not(#app) .slate h1,
+body:has(#studio-chrome) .wrap:not(#app) .slate > div:has(h1),
+body:has(#studio-chrome) .wrap:not(#app) .theme-toggle { display: none; }
+body:has(#studio-chrome) .wrap:not(#app) .slate {
+  gap: 10px;
+  padding: 10px 0;
+}
+
+/* Studio extra: compact 9:16 render-hero so 720p files are not squashed */
+.render-hero {
+  height: min(36vh, 320px);
+  aspect-ratio: 9 / 16;
+  width: auto;
+  max-width: 100%;
+  margin-inline: auto;
+}
+.render-hero video {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+}

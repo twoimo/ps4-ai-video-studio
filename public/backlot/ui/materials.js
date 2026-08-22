@@ -59,14 +59,17 @@ async function saveMaterials() {
 }
 
 function bindMaterials(frozen) {
-  root.querySelector("[data-inspect-save], .inspect-save")?.addEventListener("click", async () => {
+  const save = async (event) => {
+    event?.preventDefault?.();
     try {
       await saveMaterials();
       status("초안을 저장했습니다.");
     } catch (error) {
       status(pausedActionError(error), "error");
     }
-  });
+  };
+  root.querySelector(".inspect-form")?.addEventListener("submit", save);
+  root.querySelector("[data-inspect-save], .inspect-save")?.addEventListener("click", save);
   root.querySelector("[data-inspect-regen], .inspect-regen")?.addEventListener("click", async () => {
     if (frozen) return;
     try {
@@ -87,6 +90,10 @@ function bindMaterials(frozen) {
 
 async function mountMaterials() {
   if (!root || !projectId) return;
+  root.hidden = false;
+  if (!root.querySelector(".lib-skeleton") && !root.querySelector(".inspect-stack")) {
+    root.innerHTML = `<div class="lib-skeleton" aria-hidden="true"></div>`;
+  }
   const [job, prompts, health] = await Promise.all([
     readJson(`/api/jobs/${encodeURIComponent(projectId)}`),
     readJson(`/api/jobs/${encodeURIComponent(projectId)}/prompts`),

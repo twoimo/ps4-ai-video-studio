@@ -62,15 +62,15 @@ function renderSlate(s) {
   const stalled = s.stages.find((x) => x.stalled);
   let liveEl;
   if (awaiting) {
-    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "◈ AWAITING YOU");
+    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "◈ 확인 필요");
   } else if (stalled) {
     liveEl = el("span", { class: "live", style: "color:var(--red)" },
       el("span", { class: "dot", style: "background:var(--red);animation:none" }), "⚠ STALLED?");
   } else if (s.live || inProgress) {
-    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "LIVE");
+    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "진행");
   } else {
     liveEl = el("span", { class: "live idle" }, el("span", { class: "dot" }),
-      `IDLE${s.last_activity ? " · " + fmtAgo(s.last_activity).toUpperCase() : ""}`);
+      `대기${s.last_activity ? " · " + fmtAgo(s.last_activity) : ""}`);
   }
 
   const cost = el("div", { class: "cost" });
@@ -126,6 +126,17 @@ function stageSub(st) {
   return "";
 }
 
+const RAIL_LABELS = {
+  script: "대본",
+  "hook-lock": "첫 장면",
+  "image-edit": "그림 고치기",
+  animate: "움직이기",
+  compose: "편집",
+  scene_plan: "첫 장면",
+  assets: "그림 고치기",
+  edit: "편집"
+};
+
 function renderRail(s) {
   const rail = el("nav", { class: "rail" });
   let pendingIndex = 1;
@@ -143,7 +154,7 @@ function renderRail(s) {
     },
       el("span", { class: "line" }),
       el("span", { class: "node" }, icon),
-      el("span", { class: "name" }, st.name),
+      el("span", { class: "name" }, RAIL_LABELS[st.name] || st.name),
       el("span", { class: "sub", style: "white-space:pre-line" },
         st.undeclared ? `${stageSub(st)}\nunlisted`.trim() : stageSub(st)),
     );
@@ -806,7 +817,7 @@ function renderStoryboard(s) {
   const strip = el("div", { class: "filmstrip" });
   for (const card of board.scenes) strip.append(sceneCard(s, card));
   return el("div", {},
-    el("div", { class: "section-title" }, "Storyboard",
+    el("div", { class: "section-title" }, "장면",
       el("span", { class: "meta" },
         `${board.scenes.length} scenes${board.total_duration_seconds ? ` · ${fmtDuration(board.total_duration_seconds)}` : ""} · card width ∝ duration`)),
     el("div", { class: "strip-outer" }, strip));
@@ -847,7 +858,7 @@ function renderRenders(s) {
     el("span", { style: "margin-left:auto" }, `${(current.size / 1048576).toFixed(1)} MB`),
   );
   return el("div", {},
-    el("div", { class: "section-title" }, "Renders",
+    el("div", { class: "section-title" }, "완성 영상",
       el("span", { class: "meta" }, `${renders.length} version${renders.length === 1 ? "" : "s"}`)),
     el("div", { class: "render-hero" }, video),
     versions);
@@ -862,7 +873,7 @@ function renderFoundMedia(s) {
       el("img", { src: thumbURL(s.project_id, snap.path, 640), loading: "lazy", alt: "" })));
   }
   return el("div", {},
-    el("div", { class: "section-title" }, "What the watcher found",
+    el("div", { class: "section-title" }, "가져온 클립",
       el("span", { class: "meta" }, "snapshots / verification frames")),
     grid);
 }

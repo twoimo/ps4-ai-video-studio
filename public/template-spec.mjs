@@ -63,15 +63,15 @@ export function renderLockedSpec(spec = {}) {
           ${specKv("mature_explainer", tally.eras?.mature_explainer ?? "")}
           ${specKv("offtopic", tally.eras?.offtopic ?? "")}
           ${specKv("early_if", tally.eras?.early_if ?? "")}
-          ${specKv("same site", `${tally.site?.yes ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("real scale", `${tally.scale?.real ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("toy (they)", tally.scale?.toy ?? "")}
-          ${specKv("no bars", `${(tally[`${"letter"}box`] || {}).no ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("motion in-hold", `${tally.motion?.yes ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("setups median", setups.median ?? 13)}
-          ${specKv("setups mean", setups.mean ?? 13.89)}
-          ${specKv("setups mode", setups.mode ?? 13)}
-          ${specKv("setups range", `${setups.min ?? 5}–${setups.max ?? 29}`)}
+          ${specKv("같은 현장", `${tally.site?.yes ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("실제 크기", `${tally.scale?.real ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("장난감", tally.scale?.toy ?? "")}
+          ${specKv("막대 없음", `${(tally[`${"letter"}box`] || {}).no ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("홀드 속 움직임", `${tally.motion?.yes ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("세팅 중앙값", setups.median ?? 13)}
+          ${specKv("세팅 평균", setups.mean ?? 13.89)}
+          ${specKv("세팅 최빈값", setups.mode ?? 13)}
+          ${specKv("세팅 범위", `${setups.min ?? 5}–${setups.max ?? 29}`)}
         </div>
         ${renderSpecTable(["era", "count"], eraRows)}
       </section>
