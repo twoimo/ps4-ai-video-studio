@@ -783,6 +783,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /export function renderMaterialsPanel/);
   assert.match(editor, /export function collectInspectPayload/);
   assert.match(editor, /inspectVideoDownloads\(job\)/);
+  assert.match(editor, /import \{ displayTitle, inspectVideoDownloads \} from "\.\/shorts-ui\.mjs"/);
+  assert.match(editor, /value="\$\{escapeMaterialsHtml\(displayTitle\(job\.topic\)\)\}"/);
   assert.match(editor, /shots\.length/);
   assert.match(editor, /class="inspect-files"/);
   assert.match(editor, /class="inspect-topic"/);
@@ -1116,6 +1118,10 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /ENOENT/);
   assert.doesNotMatch(app, /addEventListener\("done", \(\) => \{\s*source\.close\(\)/);
   assert.match(app, /jobsFromListPayload\(payload\)/);
+  assert.match(
+    app,
+    /if \(!Array\.isArray\(payload\?\.jobs\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
+  );
   assert.match(app, /shortCardUnchanged\(prev, job\)/);
   assert.equal(app.includes("payload.jobs.map"), false);
   assert.equal(app.includes("작업 상태 갱신 실패"), false);

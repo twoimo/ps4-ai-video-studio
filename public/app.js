@@ -1008,6 +1008,9 @@ function syncPollTimer() {
 
 async function refreshJobs() {
   const payload = await api("/api/jobs");
+  if (!Array.isArray(payload?.jobs) && !Array.isArray(payload)) {
+    throw new Error("불러오지 못했습니다.");
+  }
   const previousJobs = state.jobs;
   const jobs = jobsFromListPayload(payload);
   const previousIds = previousJobs.map((job) => job.id).join("\n");

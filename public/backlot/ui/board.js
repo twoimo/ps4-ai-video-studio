@@ -1150,14 +1150,17 @@ async function refresh() {
   render();
 }
 
-refresh().catch(() => {
+function failBoard() {
+  if (state || app.querySelector(".slate, .rail, .main-col")) return;
   app.innerHTML = "";
   app.append(el("div", { class: "empty", style: "margin-top:80px" },
     el("div", { class: "big" }, "프로젝트를 찾을 수 없습니다")));
-});
+}
+
+refresh().catch(failBoard);
 // ?static=1 disables the live feed (screenshots, static exports).
 if (!new URLSearchParams(location.search).has("static")) {
-  subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(console.error));
+  subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(failBoard));
 }
 
 function pauseBoardVideos() {
