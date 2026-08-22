@@ -5,7 +5,7 @@ import {
   getJSON, mediaURL, pauseBacklotMedia, subscribe, thumbURL, waveBars,
 } from "/backlot/ui/lib.js";
 
-const rawProjectPath = location.pathname.split("/p/")[1] || "";
+const rawProjectPath = (location.pathname.split("/p/")[1] || "").replace(/\/+$/, "");
 const projectId = decodeURIComponent(rawProjectPath);
 const encodedProjectId = encodeURIComponent(projectId);
 const app = document.getElementById("app");
@@ -99,10 +99,10 @@ function renderSlate(s) {
     ...chips,
     el("a", {
       class: "chip studio-return",
-      href: "/",
+      href: "/backlot",
       style: "text-decoration:none",
       onclick: () => pauseBacklotMedia(),
-    }, "PS4_JUSTDOIT"),
+    }, "Library"),
     el("div", { class: "spacer" }),
     renderThemeToggle(),
     liveEl,
@@ -1086,8 +1086,6 @@ function render() {
   firstPaint = false;
   app.innerHTML = "";
   app.append(renderSlate(s));
-  const master = renderStudioMaster(s);
-  if (master) app.append(master);
   app.append(renderRail(s));
   const replayBar = renderReplayBar(state);
   if (replayBar) app.append(replayBar);
@@ -1126,6 +1124,8 @@ function render() {
       if (section) app.append(section);
     }
   }
+  const master = renderStudioMaster(s);
+  if (master) app.append(master);
 }
 
 // Defensive normalization (F-02): the server contract guarantees these

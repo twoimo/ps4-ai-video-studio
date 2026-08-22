@@ -1424,12 +1424,6 @@ function openTemplate(event) {
   setView("template");
 }
 
-function openBoard(event) {
-  event?.preventDefault();
-  closeMenu();
-  location.assign("/backlot");
-}
-
 function openSettings(event) {
   event?.preventDefault();
   rememberOpener(event);
@@ -1752,8 +1746,6 @@ function bindEvents() {
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome);
   $("#open-template")?.addEventListener("click", openTemplate);
-  $("#open-board")?.addEventListener("click", openBoard);
-  $("#open-board-menu")?.addEventListener("click", openBoard);
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);

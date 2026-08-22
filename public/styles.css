@@ -47,15 +47,15 @@ h1, h2, h3, p { margin-top: 0; }
 .library-more { position: relative; }
 #library-more,
 .library-more-toggle,
-.library-board-toggle { list-style: none; cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px; line-height: 0; border: 0; background: none; }
+.library-board-toggle { list-style: none; cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px; line-height: 1.2; border: 0; background: none; text-decoration: none; }
 #library-more:hover,
 .library-more-toggle:hover,
 .library-board-toggle:hover { color: var(--text); }
 .library-board-toggle { font-size: 13px; font-weight: 600; letter-spacing: -.02em; }
 .library-gear { display: block; width: 18px; height: 18px; }
 .library-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 188px; display: grid; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.35); }
-.library-menu button { text-align: left; padding: 10px 12px; border-radius: 7px; color: var(--text); font-size: 13px; }
-.library-menu button:hover { background: var(--surface-2); }
+.library-menu button, .library-menu a { text-align: left; padding: 10px 12px; border-radius: 7px; color: var(--text); font-size: 13px; text-decoration: none; }
+.library-menu button:hover, .library-menu a:hover { background: var(--surface-2); }
 
 .shorts-grid {
   --rows: 1;
@@ -155,7 +155,7 @@ body.overlay-open { overflow: hidden; }
 }
 .studio-overlay.feed-card .create-panel { width: 100%; max-width: none; min-height: 0; }
 .menu-overlay-panel .library-menu { position: static; right: auto; top: auto; min-width: 0; display: grid; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
-.menu-overlay-panel .library-menu button { min-height: 44px; font-size: 14px; }
+.menu-overlay-panel .library-menu button, .menu-overlay-panel .library-menu a { min-height: 44px; font-size: 14px; display: flex; align-items: center; }
 .draft-close {
   position: absolute;
   top: 10px;

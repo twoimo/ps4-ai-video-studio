@@ -289,7 +289,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /class="library-gear"/);
   assert.match(home, /<svg class="library-gear"/);
   assert.match(home, /id="import-library">가져오기</);
-  assert.match(home, /id="open-board"/);
+  assert.match(home, /id="open-board"[^>]*href="\/backlot"/);
   assert.match(home, /id="open-template">템플릿</);
   assert.match(home, /id="open-settings">설정</);
   assert.match(home, /id="refresh-all">새로고침</);

@@ -104,7 +104,14 @@ body {
   background-image: var(--bg-vignette);
 }
 
-.wrap { max-width: 1440px; margin: 0 auto; padding: 0 28px 80px; }
+html, body { width: 100%; min-height: 100dvh; }
+.wrap {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 max(28px, env(safe-area-inset-right)) max(80px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
+  box-sizing: border-box;
+}
 
 /* film grain — barely-there, keeps the dark room from feeling flat */
 body::after {
@@ -964,7 +971,7 @@ body:not(.first) .approval-review { animation: none; }
 
 /* responsive project board */
 @media (max-width: 900px) {
-  .wrap { max-width: none; width: 100%; padding: 0 18px 64px; overflow-x: clip; }
+  .wrap { max-width: none; width: 100%; }
   .slate { flex-wrap: wrap; align-items: flex-start; gap: 10px 12px; }
   .slate > div:nth-child(2) { min-width: 0; flex: 1 1 240px; }
   .slate h1 { overflow-wrap: anywhere; }
@@ -981,7 +988,15 @@ body:not(.first) .approval-review { animation: none; }
   .stage { flex: 0 0 82px; }
   .stage .name { font-size: calc(10px * var(--fs-scale)); max-width: 76px; overflow-wrap: anywhere; text-align: center; }
   .stage .sub { max-width: 76px; font-size: calc(9.5px * var(--fs-scale)); }
+}
 
+@media (max-width: 720px) {
+  html, body { overflow-x: clip; }
+  .wrap {
+    max-width: none;
+    width: 100%;
+    padding: 0 max(18px, env(safe-area-inset-right)) max(64px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  }
   .board { display: block; }
   .main-col, aside { width: 100%; min-width: 0; }
   aside { margin-top: 20px; }
@@ -1002,10 +1017,29 @@ body:not(.first) .approval-review { animation: none; }
   .section-title { flex-wrap: wrap; }
   .section-title .meta { margin-left: 0; }
   .approval-review-head { flex-wrap: wrap; gap: 12px; }
+
+  .drawer .drawer-head .close {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-bg {
+    padding: 16px 12px max(24px, env(safe-area-inset-bottom));
+    align-items: flex-end;
+  }
+  .modal-close {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    min-height: 44px;
+  }
+  .replay-bar { flex-wrap: wrap; }
+  .replay-bar .rp-btn { min-height: 44px; }
 }
 
 @media (max-width: 520px) {
-  .wrap { padding: 0 12px 52px; }
+  .wrap { padding: 0 max(12px, env(safe-area-inset-right)) max(52px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
   .slate { padding-top: 14px; }
   .clapper { width: 30px; height: 23px; }
   .slate .wordmark { font-size: calc(10px * var(--fs-scale)); }
@@ -1041,15 +1075,11 @@ body:not(.first) .approval-review { animation: none; }
   .approval-status { white-space: normal; }
 }
 
-/* Studio extra: optional 9:16 captioned master beside the board.
-   Never replaces rail / script / filmstrip / replay. */
+/* Secondary captioned master after the living board.
+   Never a board column and never a 400 overlay card. */
 .studio-master {
-  position: fixed;
-  right: 16px;
-  top: 84px;
-  z-index: 5;
-  width: min(22vw, calc((100dvh - 120px) * 9 / 16));
-  aspect-ratio: 9 / 16;
+  margin-top: 28px;
+  width: min(220px, 42vw);
   border: 1px solid var(--border);
   background: var(--media-bg);
   overflow: hidden;
@@ -1057,13 +1087,11 @@ body:not(.first) .approval-review { animation: none; }
 .studio-master video {
   display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
+  aspect-ratio: 9 / 16;
   object-fit: cover;
 }
 .studio-return {
   text-decoration: none;
   color: inherit;
-}
-@media (max-width: 1100px) {
-  .studio-master { display: none; }
 }

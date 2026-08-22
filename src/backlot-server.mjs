@@ -303,7 +303,7 @@ export async function handleBacklotPage(request, url) {
   if (url.pathname === "/backlot" || url.pathname === "/backlot/") {
     return uiHtml("index.html", ["board.css", "library.js"]);
   }
-  if (/^\/backlot\/p\//.test(url.pathname)) {
+  if (/^\/(?:backlot\/)?p\/[^/]+\/?$/.test(url.pathname)) {
     return uiHtml("board.html", ["board.css", "board.js"]);
   }
   return null;

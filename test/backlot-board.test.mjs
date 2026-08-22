@@ -101,14 +101,23 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /\.rail/);
   assert.match(css, /\.filmstrip/);
   assert.match(css, /\.replay-bar/);
-  assert.match(home, /id="open-board"/);
-  assert.match(app, /location\.assign\("\/backlot"\)/);
+  assert.match(home, /id="open-board"[^>]*href="\/backlot"/);
+  assert.match(home, /id="open-board-menu"[^>]*href="\/backlot"/);
+  assert.equal(home.includes('id="backlot-overlay"'), false);
+  assert.equal(app.includes('setView("backlot")'), false);
+  assert.equal(app.includes("openBoard"), false);
   assert.match(app, /id="spec-corpus"/);
   assert.match(app, /id="spec-types"/);
   assert.match(app, /id="spec-skeleton"/);
   assert.match(app, /id="spec-locks"/);
   assert.match(app, /id="spec-situation"/);
   assert.match(app, /id="spec-loop"/);
+  assert.match(boardJs, /href: "\/backlot"/);
+  assert.match(css, /@media \(max-width: 720px\)/);
+  assert.match(css, /\.board\s*\{\s*display:\s*block/);
+  assert.match(css, /\.wrap\s*\{[^}]*width:\s*100%/);
+  assert.doesNotMatch(css, /max-width:\s*440px/);
+  assert.doesNotMatch(css, /max-width:\s*400px/);
   assert.equal(library.includes("쇼츠 공장"), false);
   assert.equal(board.includes("쇼츠 공장"), false);
   assert.equal(boardJs.includes("쇼츠 공장"), false);
@@ -119,9 +128,19 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(page.status, 200);
   const html = await page.text();
   assert.match(html, /id="grid"/);
+  assert.match(html, /class="lib-grid"/);
+  assert.doesNotMatch(html, /id="backlot-overlay"/);
+  assert.doesNotMatch(html, /role="dialog"/);
 
   const boardPage = await handleBacklotPage(new Request("http://backlot.local/backlot/p/demo"), new URL("http://backlot.local/backlot/p/demo"));
-  assert.match(await boardPage.text(), /id="app"/);
+  const boardHtml = await boardPage.text();
+  assert.match(boardHtml, /id="app"/);
+  assert.match(boardHtml, /src="\/backlot\/ui\/board\.js/);
+  assert.doesNotMatch(boardHtml, /id="backlot-overlay"/);
+  assert.doesNotMatch(boardHtml, /role="dialog"/);
+
+  const alias = await handleBacklotPage(new Request("http://backlot.local/p/demo"), new URL("http://backlot.local/p/demo"));
+  assert.match(await alias.text(), /id="app"/);
 });
 
 test("OpenMontage-shaped projects and path escape stay defensive", async () => {
