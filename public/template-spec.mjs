@@ -47,31 +47,29 @@ export function renderLockedSpec(spec = {}) {
   const situation = (spec.situation || []).map((item) => `<li>${escapeSpecHtml(item)}</li>`).join("");
   const fails = (spec.hardFails || []).map((item) => `<li>${escapeSpecHtml(item)}</li>`).join("");
   const loop = (spec.loop || []).map((item) => `<li>${escapeSpecHtml(item)}</li>`).join("");
-  const clip = spec.clipCountLock || {};
   const captions = spec.captions || {};
   const setups = tally.setups || {};
   return `
       <header class="spec-section" style="border-top:0">
-        <h2>${escapeSpecHtml(spec.title)}</h2>
+        <h2>잠긴 프롬프트</h2>
         <p class="spec-lede">${escapeSpecHtml(spec.id)} · ${escapeSpecHtml(spec.date)}. 슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다. 잠금·코퍼스·스켈레톤은 읽기 전용입니다.</p>
       </header>
       <section class="spec-section" id="spec-corpus">
         <h3>코퍼스 ${escapeSpecHtml(tally.N ?? 288)}</h3>
-        <p class="spec-lede">${escapeSpecHtml(spec.eraRule || "ignore early_if + offtopic; spec is mature_explainer 253")}</p>
         <div class="spec-kvs">
           ${specKv("N", tally.N ?? 288)}
           ${specKv("mature_explainer", tally.eras?.mature_explainer ?? "")}
           ${specKv("offtopic", tally.eras?.offtopic ?? "")}
           ${specKv("early_if", tally.eras?.early_if ?? "")}
-          ${specKv("same site", `${tally.site?.yes ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("real scale", `${tally.scale?.real ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("toy (they)", tally.scale?.toy ?? "")}
-          ${specKv("no bars", `${(tally[`${"letter"}box`] || {}).no ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("motion in-hold", `${tally.motion?.yes ?? ""}/${tally.N ?? 288}`)}
-          ${specKv("setups median", setups.median ?? 13)}
-          ${specKv("setups mean", setups.mean ?? 13.89)}
-          ${specKv("setups mode", setups.mode ?? 13)}
-          ${specKv("setups range", `${setups.min ?? 5}–${setups.max ?? 29}`)}
+          ${specKv("같은 현장", `${tally.site?.yes ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("실제 크기", `${tally.scale?.real ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("장난감", tally.scale?.toy ?? "")}
+          ${specKv("막대 없음", `${(tally[`${"letter"}box`] || {}).no ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("홀드 속 움직임", `${tally.motion?.yes ?? ""}/${tally.N ?? 288}`)}
+          ${specKv("세팅 중앙값", setups.median ?? 13)}
+          ${specKv("세팅 평균", setups.mean ?? 13.89)}
+          ${specKv("세팅 최빈값", setups.mode ?? 13)}
+          ${specKv("세팅 범위", `${setups.min ?? 5}–${setups.max ?? 29}`)}
         </div>
         ${renderSpecTable(["era", "count"], eraRows)}
       </section>
@@ -88,9 +86,6 @@ export function renderLockedSpec(spec = {}) {
           ${specKv("lid aligned", tally.lid?.yes ?? "")}
           ${specKv("captions", captions.rule ? "MarginV=450" : "Alignment=2")}
         </div>
-        <p class="spec-lede">${escapeSpecHtml(spec.graphicsGrammar?.inSceneLabels || "")}</p>
-        <p class="spec-lede">${escapeSpecHtml(spec.graphicsGrammar?.dialogue || "")}</p>
-        <p class="spec-lede">${escapeSpecHtml(captions.rule || "")}</p>
       </section>
       <section class="spec-section" id="spec-slots">
         <h3>월드 슬롯 10</h3>
@@ -104,7 +99,7 @@ export function renderLockedSpec(spec = {}) {
         <ul class="spec-list">${forbidden}</ul>
       </section>
       <section class="spec-section" id="spec-locks">
-        <h3>FACTORY_LOCKS</h3>
+        <h3>잠금</h3>
         ${renderLockTable(spec.locks)}
       </section>
       <section class="spec-section" id="spec-situation">
@@ -116,7 +111,6 @@ export function renderLockedSpec(spec = {}) {
       <section class="spec-section" id="spec-loop">
         <h3>Reference-first loop</h3>
         <ol class="spec-list">${loop}</ol>
-        <p class="spec-lede">${escapeSpecHtml(clip.note || "")} Factory stays ${escapeSpecHtml(clip.factoryStays || "6 unique sources / 7 holds")}.</p>
         <pre class="spec-pre">${escapeSpecHtml((spec.styleSheet && JSON.stringify(spec.styleSheet, null, 2)) || "")}</pre>
       </section>
       <section class="spec-section" id="spec-documents">

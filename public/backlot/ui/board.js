@@ -1,29 +1,29 @@
 // Backlot project board — renders BoardState and stays live via SSE.
 
+import { displayItemLabel, displayPipelineLabel, displayStageLabel, displayTitle, keepPaintedGrid } from "../../shorts-ui.mjs";
 import {
   STAGE_ICONS, el, fmtAgo, fmtClock, fmtDuration, fmtMoney,
-  getJSON, mediaURL, subscribe, thumbURL, waveBars,
+  getJSON, mediaURL, projectIdFromPath, readStoredTheme, writeStoredTheme, subscribe, thumbURL, waveBars,
 } from "/backlot/ui/lib.js";
 
-const rawProjectPath = location.pathname.split("/p/")[1] || "";
-const projectId = decodeURIComponent(rawProjectPath);
+const projectId = projectIdFromPath(location.pathname);
 const encodedProjectId = encodeURIComponent(projectId);
 const app = document.getElementById("app");
 const modal = document.getElementById("modal");
 const player = document.getElementById("player");
 
-const THEME_KEY = "backlot.theme";
-let currentTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+let currentTheme = readStoredTheme();
 let state = null;
 let selectedStage = null;   // stage drawer open for this stage name
 let activeRender = 0;
 let replay = null;          // {t0, t1, t, playing} — replay mode when non-null
 let firstPaint = true;
+let boardLayer = "";
 
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = currentTheme;
-  localStorage.setItem(THEME_KEY, currentTheme);
+  writeStoredTheme(currentTheme);
 }
 
 function renderThemeToggle() {
@@ -49,12 +49,14 @@ applyTheme(currentTheme);
 
 function renderSlate(s) {
   const board = s.storyboard;
+  const pipelineType = String(s.pipeline?.pipeline_type || "").trim();
   const chips = [
-    el("span", { class: "chip" }, `${s.pipeline.pipeline_type} pipeline`),
+    pipelineType && pipelineType !== "style_playbook"
+      ? el("span", { class: "chip" }, displayPipelineLabel(pipelineType))
+      : null,
     board && board.total_duration_seconds
       ? el("span", { class: "chip" }, `${board.scenes.length} scenes · ${fmtDuration(board.total_duration_seconds)}`)
       : null,
-    s.style_playbook ? el("span", { class: "chip" }, s.style_playbook) : null,
   ];
 
   const awaiting = s.stages.find((x) => x.status === "awaiting_human");
@@ -62,15 +64,15 @@ function renderSlate(s) {
   const stalled = s.stages.find((x) => x.stalled);
   let liveEl;
   if (awaiting) {
-    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "◈ AWAITING YOU");
+    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "◈ 확인 필요");
   } else if (stalled) {
     liveEl = el("span", { class: "live", style: "color:var(--red)" },
       el("span", { class: "dot", style: "background:var(--red);animation:none" }), "⚠ STALLED?");
   } else if (s.live || inProgress) {
-    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "LIVE");
+    liveEl = el("span", { class: "live" }, el("span", { class: "dot" }), "진행");
   } else {
     liveEl = el("span", { class: "live idle" }, el("span", { class: "dot" }),
-      `IDLE${s.last_activity ? " · " + fmtAgo(s.last_activity).toUpperCase() : ""}`);
+      `대기${s.last_activity ? " · " + fmtAgo(s.last_activity) : ""}`);
   }
 
   const cost = el("div", { class: "cost" });
@@ -93,7 +95,7 @@ function renderSlate(s) {
     el("div", { class: "clapper" }),
     el("div", {},
       el("a", { class: "wordmark", href: "/", style: "text-decoration:none" }, "Backlot"),
-      el("h1", {}, s.title),
+      el("h1", {}, displayTitle(s.title, "보드")),
     ),
     ...chips,
     el("div", { class: "spacer" }),
@@ -118,13 +120,24 @@ function stageSub(st) {
     return "in progress";
   }
   if (st.status === "in_progress") return "in progress";
-  if (st.status === "failed") return st.error ? String(st.error).slice(0, 60) : "failed";
+  if (st.status === "failed") return "실패";
   if (st.timestamp) {
     const approved = st.gated && st.human_approved ? " · approved" : "";
     return fmtClock(st.timestamp) + approved;
   }
   return "";
 }
+
+const RAIL_LABELS = {
+  script: "대본",
+  "hook-lock": "첫 장면",
+  "image-edit": "그림 고치기",
+  animate: "움직이기",
+  compose: "편집",
+  scene_plan: "첫 장면",
+  assets: "그림 고치기",
+  edit: "편집"
+};
 
 function renderRail(s) {
   const rail = el("nav", { class: "rail" });
@@ -143,7 +156,7 @@ function renderRail(s) {
     },
       el("span", { class: "line" }),
       el("span", { class: "node" }, icon),
-      el("span", { class: "name" }, st.name),
+      el("span", { class: "name" }, RAIL_LABELS[st.name] || displayStageLabel(st.name)),
       el("span", { class: "sub", style: "white-space:pre-line" },
         st.undeclared ? `${stageSub(st)}\nunlisted`.trim() : stageSub(st)),
     );
@@ -230,7 +243,7 @@ function renderDrawer(s) {
   }
   if (!shown) {
     body.append(el("div", { class: "hint" },
-      st.status === "pending" ? "This stage hasn't run yet." : "No canonical artifact found on disk for this stage."));
+      st.status === "pending" ? "이 단계는 아직 안 돌았어요." : "이 단계의 항목이 없습니다."));
   }
 
   return el("div", { class: "drawer" },
@@ -286,7 +299,7 @@ function renderScriptCard(s) {
 
   const card = el("div", { class: "script-card script-preview", title: "Click to expand full script", onclick: openScriptModal },
     stamp,
-    el("div", { class: "sp-title" }, script.title || s.title),
+    el("div", { class: "sp-title" }, displayTitle(script.title, s.title, "보드")),
     el("div", { class: "sp-meta" },
       `script · ${fmtDuration(script.total_duration_seconds)} · ${(script.sections || []).length} sections`),
     ...scriptSections(script, 4),
@@ -296,7 +309,7 @@ function renderScriptCard(s) {
 }
 
 function humanize(value) {
-  return String(value || "artifact").replaceAll("_", " ");
+  return displayItemLabel(value);
 }
 
 function shortText(value, limit = 180) {
@@ -324,7 +337,7 @@ function titledItems(items, selectedId = null) {
       return el("li", {}, shortText(item));
     }
     const id = item.id || item.concept_id || item.option_id;
-    const title = item.title || item.name || item.display_name || item.label || id || item.path || item.platform || item.description || `Item ${index + 1}`;
+    const title = item.title || item.name || item.display_name || item.label || id || item.path || item.platform || item.description || `${index + 1}번`;
     const detail = item.hook || item.why_this_works || item.summary || item.description || item.silhouette_notes;
     return el("li", { class: id && id === selectedId ? "selected" : "" },
       el("div", { class: "approval-item-title" }, shortText(title, 100),
@@ -465,13 +478,13 @@ function artifactReviewTitle(name, artifact, s) {
     const concept = (artifact.concept_options || []).find((item) => item.id === selected);
     return (concept && concept.title) || "Production proposal";
   }
-  if (name === "research_brief") return artifact.topic || "Research brief";
-  if (name === "scene_plan") return "Scene plan";
-  if (name === "asset_manifest") return "Generated assets";
-  if (name === "edit_decisions") return "Edit decisions";
-  if (name === "render_report") return "Render report";
-  if (name === "publish_log") return "Publish plan";
-  return artifact.title || artifact.name || s.title;
+  if (name === "research_brief") return artifact.topic || displayItemLabel(name);
+  if (name === "scene_plan") return displayItemLabel(name);
+  if (name === "asset_manifest") return displayItemLabel(name);
+  if (name === "edit_decisions") return displayItemLabel(name);
+  if (name === "render_report") return displayItemLabel(name);
+  if (name === "publish_log") return displayItemLabel(name);
+  return displayTitle(artifact.title, artifact.name, s.title, "보드") || displayItemLabel(name);
 }
 
 function renderApprovalReview(s) {
@@ -532,7 +545,7 @@ function openScriptModal() {
   if (!script) return;
   modal.innerHTML = "";
   modal.append(
-    el("span", { class: "modal-close", onclick: closeModal }, "ESC · CLOSE"),
+    el("span", { class: "modal-close", onclick: closeModal }, "닫기"),
     el("div", { class: "modal-page" },
       el("div", { class: "script-card", style: "cursor:default" },
         el("div", { class: "sp-title" }, script.title || state.title),
@@ -543,6 +556,7 @@ function openScriptModal() {
       )),
   );
   modal.classList.add("open");
+  pushBoardLayer("modal");
 }
 
 function openNarrModal(card) {
@@ -550,7 +564,7 @@ function openNarrModal(card) {
   const meta = [sceneLabel(card.id), card.section_label, fmtDuration(card.duration_seconds)]
     .filter(Boolean).join(" · ");
   modal.append(
-    el("span", { class: "modal-close", onclick: closeModal }, "ESC · CLOSE"),
+    el("span", { class: "modal-close", onclick: closeModal }, "닫기"),
     el("div", { class: "modal-page" },
       el("div", { class: "script-card", style: "cursor:default" },
         el("div", { class: "sp-meta" }, meta),
@@ -560,11 +574,41 @@ function openNarrModal(card) {
       )),
   );
   modal.classList.add("open");
+  pushBoardLayer("modal");
 }
 
-function closeModal() { modal.classList.remove("open"); }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+function pushBoardLayer(layer) {
+  if (!layer || boardLayer === layer) return;
+  history.pushState({ studioLayer: layer }, "", location.href);
+  boardLayer = layer;
+}
+
+function closeModal(options = {}) {
+  if (options && typeof options.preventDefault === "function") options = {};
+  const fromPop = Boolean(options.fromPop || modal?.dataset?.fromPop);
+  if (modal?.dataset) delete modal.dataset.fromPop;
+  const wasOpen = modal?.classList.contains("open");
+  modal?.classList.remove("open");
+  if (wasOpen) pauseBoardVideos();
+  if (boardLayer !== "modal") return;
+  boardLayer = "";
+  if (!fromPop) history.back();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (boardLayer === "modal") {
+    history.back();
+    return;
+  }
+  closeModal();
+});
 modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+window.addEventListener("popstate", () => {
+  if (boardLayer !== "modal") return;
+  if (modal) modal.dataset.fromPop = "1";
+  closeModal();
+});
 
 // ---------------------------------------------------------------------------
 // right rail: decisions, activity
@@ -675,7 +719,7 @@ function sceneCard(s, card) {
 
   const slate = el("div", { class: "sc-slate" },
     el("span", { class: "num" }, sceneLabel(card.id)),
-    card.takes.length > 1 ? el("span", { class: "take" }, `T${card.takes.length}`) : null,
+    card.takes.length > 1 ? el("span", { class: "take" }, `${card.takes.length}테이크`) : null,
     card.hero_moment ? el("span", { class: "hero" }, "★ HERO") : null,
     el("span", { class: "dur" }, fmtDuration(dur)),
   );
@@ -695,7 +739,7 @@ function sceneCard(s, card) {
       v.quality_score != null ? `q ${v.quality_score}` : null].filter(Boolean).join(" · ");
     if (v.type === "video") {
       thumb = el("div", { class: "thumb approved" },
-        el("video", { src: mediaURL(s.project_id, v.path), muted: "", preload: "metadata", playsinline: "" }),
+        el("video", { src: mediaURL(s.project_id, v.path), muted: "", preload: "metadata", playsinline: "", disablepictureinpicture: "" }),
         el("span", { class: "play" }, "▶"),
         badge ? el("span", { class: "badge" }, badge) : null);
       thumb.onclick = () => {
@@ -767,11 +811,11 @@ function sceneCard(s, card) {
         || (t.path && t.path === card.visual.path)
         || (t.id && t.id === card.visual.id)
       );
-      const tk = el("span", { class: `tk${isActive ? " active" : ""}`, title: `take ${i + 1}` });
+      const tk = el("span", { class: `tk${isActive ? " active" : ""}`, title: `${i + 1}테이크` });
       if (t.exists && t.type === "image") tk.append(el("img", { src: thumbURL(s.project_id, t.path, 320), loading: "lazy", alt: "" }));
       takes.append(tk);
     });
-    takes.append(el("span", { class: "tk-label" }, `${card.takes.length} TAKES`));
+    takes.append(el("span", { class: "tk-label" }, `${card.takes.length}테이크`));
     wrap.append(takes);
   }
 
@@ -806,7 +850,7 @@ function renderStoryboard(s) {
   const strip = el("div", { class: "filmstrip" });
   for (const card of board.scenes) strip.append(sceneCard(s, card));
   return el("div", {},
-    el("div", { class: "section-title" }, "Storyboard",
+    el("div", { class: "section-title" }, "장면",
       el("span", { class: "meta" },
         `${board.scenes.length} scenes${board.total_duration_seconds ? ` · ${fmtDuration(board.total_duration_seconds)}` : ""} · card width ∝ duration`)),
     el("div", { class: "strip-outer" }, strip));
@@ -828,7 +872,8 @@ function renderRenders(s) {
   // preload="metadata" gives the element its intrinsic aspect ratio (and a
   // poster frame) before playback — without it a portrait 9:16 render sits
   // in a letterboxed 100%-wide black box that reads as landscape.
-  const video = el("video", { src, controls: "", preload: "metadata" });
+  const video = el("video", { src, controls: "", preload: "metadata", playsinline: "", disablepictureinpicture: "" });
+  video.disablePictureInPicture = true;
   // Click the frame to start playback (controls handle pause/scrub) — the
   // big player was inert to a click on the picture itself.
   video.addEventListener("click", () => { if (video.paused) video.play().catch(() => {}); });
@@ -847,7 +892,7 @@ function renderRenders(s) {
     el("span", { style: "margin-left:auto" }, `${(current.size / 1048576).toFixed(1)} MB`),
   );
   return el("div", {},
-    el("div", { class: "section-title" }, "Renders",
+    el("div", { class: "section-title" }, "완성 영상",
       el("span", { class: "meta" }, `${renders.length} version${renders.length === 1 ? "" : "s"}`)),
     el("div", { class: "render-hero" }, video),
     versions);
@@ -862,7 +907,7 @@ function renderFoundMedia(s) {
       el("img", { src: thumbURL(s.project_id, snap.path, 640), loading: "lazy", alt: "" })));
   }
   return el("div", {},
-    el("div", { class: "section-title" }, "What the watcher found",
+    el("div", { class: "section-title" }, "가져온 클립",
       el("span", { class: "meta" }, "snapshots / verification frames")),
     grid);
 }
@@ -872,7 +917,7 @@ function renderNoState(s) {
   return el("div", { class: "notice", style: "border-color:#2b2b33;background:var(--surface-2);color:var(--text-3)" },
     el("span", { style: "font-size:calc(15px * var(--fs-scale))" }, "◌"),
     el("span", {},
-      el("b", { style: "color:var(--text-2)" }, "No pipeline state. "),
+      el("b", { style: "color:var(--text-2)" }, "단계가 없습니다. "),
       "This project has no checkpoints — Backlot is showing what it found on disk. ",
       "Runs that follow the checkpoint protocol get the full board."));
 }
@@ -1052,9 +1097,9 @@ function tickReplay() {
 // ---------------------------------------------------------------------------
 
 function render() {
-  if (!state) return;
+  if (!app || !state) return;
   const s = replay ? stateAt(state, replay.t) : state;
-  document.title = `Backlot — ${s.title}`;
+  document.title = displayTitle(s.title, "보드");
   document.body.classList.toggle("first", firstPaint);
   firstPaint = false;
   app.innerHTML = "";
@@ -1072,8 +1117,6 @@ function render() {
   const main = el("div", { class: "main-col" });
   const approvalReview = renderApprovalReview(s);
   if (approvalReview) main.append(approvalReview);
-  const script = renderScriptCard(s);
-  if (script) main.append(script);
   const aside = el("aside", {});
   const decisions = renderDecisions(s);
   const activity = renderActivity(s);
@@ -1086,7 +1129,7 @@ function render() {
   const found = renderFoundMedia(s);
   const renders = renderRenders(s);
 
-  if (approvalReview || script || decisions || activity) {
+  if (approvalReview || decisions || activity) {
     for (const section of [storyboard, found, renders]) {
       if (section) main.append(section);
     }
@@ -1125,18 +1168,67 @@ function normalize(s) {
   return s;
 }
 
+function boardUnchanged(prev, next) {
+  if (!prev || !next) return false;
+  try {
+    return JSON.stringify(prev) === JSON.stringify(next);
+  } catch {
+    return false;
+  }
+}
+
 async function refresh() {
-  state = normalize(await getJSON(`/api/project/${encodeURIComponent(projectId)}/state`));
+  const next = normalize(await getJSON(`/api/project/${encodeURIComponent(projectId)}/state`));
+  if (boardUnchanged(state, next)) return;
+  state = next;
   render();
 }
 
-refresh().catch((err) => {
+function failBoard() {
+  if (!app) return;
+  if (state || app.querySelector(".slate, .rail, .main-col")) return;
+  if (keepPaintedGrid(app)) return;
   app.innerHTML = "";
   app.append(el("div", { class: "empty", style: "margin-top:80px" },
-    el("div", { class: "big" }, "PROJECT NOT FOUND"),
-    el("div", {}, String(err))));
-});
-// ?static=1 disables the live feed (screenshots, static exports).
-if (!new URLSearchParams(location.search).has("static")) {
-  subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(console.error));
+    el("div", { class: "big" }, "프로젝트를 찾을 수 없습니다")));
 }
+
+function initBoard() {
+  if (!app) return;
+  refresh().catch(failBoard);
+  // ?static=1 disables the live feed (screenshots, static exports).
+  if (!new URLSearchParams(location.search).has("static")) {
+    subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(failBoard));
+  }
+}
+initBoard();
+
+function pauseBoardVideos() {
+  document.querySelectorAll("video, audio").forEach((media) => {
+    try { media.pause(); } catch { /* ignore leftover playback */ }
+  });
+}
+
+function exclusiveBoardMedia(current) {
+  document.querySelectorAll("video, audio").forEach((media) => {
+    if (media === current) return;
+    try { media.pause(); } catch { /* ignore leftover playback */ }
+  });
+}
+
+document.addEventListener("play", (event) => {
+  const media = event.target;
+  if (media?.pause && (media.tagName === "VIDEO" || media.tagName === "AUDIO")) {
+    exclusiveBoardMedia(media);
+  }
+}, true);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseBoardVideos();
+});
+window.addEventListener("pagehide", pauseBoardVideos);
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  if (modal) modal.dataset.fromPop = "1";
+  closeModal();
+  pauseBoardVideos();
+});

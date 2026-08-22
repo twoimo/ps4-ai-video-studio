@@ -15,7 +15,7 @@ export function shortStatus(job = {}) {
       ? { key: "frozen", label: "실패·프리즈" }
       : { key: "completed", label: "완료" };
   }
-  if (Number(job.queuePosition) > 0) return { key: "queued", label: `대기 ${job.queuePosition}` };
+  if (Number(job.queuePosition) > 0) return { key: "queued", label: `대기 ${job.queuePosition}번` };
   if (["running", "verifying"].includes(job.status)) return { key: "running", label: "생성중" };
   if (job.status === "queued" && (job.provider === "grok-imagine" || job.provider === "gemini-browser")) {
     return { key: "running", label: "생성중" };
@@ -25,6 +25,259 @@ export function shortStatus(job = {}) {
 
 export function shortStatusLabel(job) {
   return shortStatus(job).label;
+}
+
+export function importBroughtCopy(payload = {}) {
+  if (payload.error) return String(payload.error);
+  const imported = Array.isArray(payload.imported) ? payload.imported : [];
+  const seeded = Array.isArray(payload.seeded) ? payload.seeded : [];
+  const count = Number.isFinite(Number(payload.count)) ? Number(payload.count) : new Set([...imported, ...seeded]).size;
+  return `가져왔어요 ${count}편`;
+}
+
+const UI_PATH = /(?:file:\/\/\S+)|(?:[A-Za-z]:\\(?:[\w.+-]+\\)+[\w.+-]+)|(?:(?:^|[\s"'`(=])(?:\/(?:workspace|opt|usr|home|Users|tmp|var|private|root|api)(?:\/[\w.+-]+)+))|(?:(?:^|[\s"'`(=])(?:workspace|resource)\/[\w./+-]+)/g;
+
+export function stripUiPaths(value) {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map(stripUiPaths);
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, stripUiPaths(item)]));
+  }
+  return String(value).replace(UI_PATH, (match) => {
+    const lead = match.match(/^[\s"'`(=]/);
+    return lead ? lead[0] : "";
+  }).replace(/[ \t]{2,}/g, " ").replace(/\s+([.,!?])/g, "$1").trim();
+}
+
+export function stripErrorPrefix(value) {
+  return String(value ?? "").replace(/^(?:(?:type)?error:\s*)+/i, "").trim();
+}
+
+const TYPE_ERROR = /cannot read propert|cannot set propert|is not a function|is not an object|undefined is not|null is not|cannot convert undefined|cannot convert null/i;
+
+export function jobsFromListPayload(payload) {
+  if (Array.isArray(payload)) return payload.filter((job) => job && typeof job === "object");
+  if (Array.isArray(payload?.jobs)) return payload.jobs.filter((job) => job && typeof job === "object");
+  return [];
+}
+
+export function projectsFromListPayload(payload) {
+  if (Array.isArray(payload)) return payload.filter((item) => item && typeof item === "object");
+  if (Array.isArray(payload?.projects)) return payload.projects.filter((item) => item && typeof item === "object");
+  return [];
+}
+
+function titleFromValue(value, depth = 0) {
+  if (value == null || depth > 3) return "";
+  if (typeof value === "object") {
+    if (Array.isArray(value)) return titleFromValue(value[0], depth + 1);
+    return titleFromValue(value.topic ?? value.title ?? value.name ?? value.text, depth + 1);
+  }
+  const text = String(value).trim();
+  if (!text || text === "undefined" || text === "null" || text === "[object Object]") return "";
+  return text;
+}
+
+export function displayTitle(...values) {
+  for (const value of values) {
+    const text = titleFromValue(value);
+    if (!text) continue;
+    const cleaned = stripUiPaths(text);
+    if (!cleaned) continue;
+    if (cleaned !== text && /(?:[\\/]|file:)/i.test(text)) continue;
+    return cleaned;
+  }
+  return "";
+}
+
+const LATIN_LABEL = /^[A-Za-z][A-Za-z0-9_ ./:-]*$/;
+
+export const STAGE_LABELS = {
+  script: "대본",
+  "hook-lock": "첫 장면",
+  "image-edit": "그림 고치기",
+  animate: "움직이기",
+  compose: "편집",
+  scene_plan: "첫 장면",
+  assets: "그림 고치기",
+  edit: "편집",
+  research: "조사",
+  proposal: "제안",
+  idea: "아이디어",
+  publish: "올리기"
+};
+
+export const ITEM_LABELS = {
+  script: "대본",
+  research_brief: "조사",
+  proposal_packet: "제안",
+  brief: "브리프",
+  scene_plan: "장면",
+  asset_manifest: "그림",
+  edit_decisions: "편집",
+  render_report: "렌더",
+  final_review: "완성",
+  publish_log: "올리기",
+  decision_log: "결정"
+};
+
+export function displayStageLabel(name, fallback = "단계") {
+  const key = String(name || "").trim();
+  if (!key || key === "unknown") return fallback;
+  if (STAGE_LABELS[key]) return STAGE_LABELS[key];
+  if (LATIN_LABEL.test(key)) return fallback;
+  return key;
+}
+
+export function displayItemLabel(name, fallback = "항목") {
+  const key = String(name || "").trim();
+  if (!key || key === "unknown" || key === "artifact") return fallback;
+  const itemN = key.match(/^Item\s+(\d+)$/i);
+  if (itemN) return `${itemN[1]}번`;
+  const takeN = key.match(/^take\s+(\d+)$/i);
+  if (takeN) return `${takeN[1]}테이크`;
+  if (ITEM_LABELS[key]) return ITEM_LABELS[key];
+  if (STAGE_LABELS[key]) return STAGE_LABELS[key];
+  if (LATIN_LABEL.test(key)) return fallback;
+  return key;
+}
+
+export function frozenRemakeLabel(frozen = false) {
+  return frozen ? "지금은 못 만들어요" : "다시 만들기";
+}
+
+const HEALTH_EN_KO = {
+  ready: "준비",
+  frozen: "멈춤",
+  wait: "대기",
+  waiting: "대기",
+  running: "진행",
+  failed: "실패",
+  error: "실패",
+  done: "완료",
+  complete: "완료",
+  completed: "완료",
+  queued: "대기",
+  draft: "초안",
+  ok: "준비",
+  paused: "멈춤",
+  blocked: "막힘"
+};
+
+export function healthTextKo(text, fallback = "단계") {
+  const raw = String(text || "").trim();
+  if (!raw) return fallback;
+  const parts = raw.split(/\s*[·•|,]\s*/).map((part) => part.trim()).filter(Boolean);
+  const mapped = parts.map((part) => {
+    const key = part.toLowerCase();
+    if (HEALTH_EN_KO[key]) return HEALTH_EN_KO[key];
+    if (/[가-힣]/.test(part) && !/[A-Za-z]/.test(part)) return part;
+    return "";
+  }).filter(Boolean);
+  if (mapped.length) return [...new Set(mapped)].join(" · ");
+  if (/[가-힣]/.test(raw) && !/[A-Za-z]/.test(raw)) return raw;
+  return fallback;
+}
+
+export function keepPaintedGrid(root) {
+  if (!root) return false;
+  return [...(root.children || [])].some((node) => !node.classList?.contains("is-skeleton"));
+}
+
+export const STUDIO_CREATE_MODE_KEY = "studioCreateMode";
+
+export function rememberStudioCreateMode(storage, mode = "single") {
+  try {
+    const store = storage && typeof storage.setItem === "function" ? storage : globalThis.sessionStorage;
+    if (!store) return;
+    if (mode === "batch") store.setItem(STUDIO_CREATE_MODE_KEY, "batch");
+    else store.removeItem(STUDIO_CREATE_MODE_KEY);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+export function writeCreateModeHint(mode) {
+  rememberStudioCreateMode(globalThis.sessionStorage, mode);
+}
+
+export function takeCreateModeHint() {
+  try {
+    const mode = sessionStorage.getItem(STUDIO_CREATE_MODE_KEY);
+    sessionStorage.removeItem(STUDIO_CREATE_MODE_KEY);
+    return mode === "batch" ? "batch" : "";
+  } catch {
+    return "";
+  }
+}
+
+export function displayPipelineLabel(name) {
+  const key = String(name || "").trim();
+  if (key === "ps4-studio") return "보드";
+  if (key === "style_playbook") return "";
+  return displayStageLabel(name, "단계");
+}
+
+export function parseJsonText(text) {
+  const raw = String(text ?? "").replace(/^\uFEFF/, "").trim();
+  const head = raw.slice(0, 256);
+  if (!raw || raw.startsWith("<") || /<!doctype\s+html|<html[\s>]|<!--/i.test(head)) {
+    throw new Error("불러오지 못했습니다.");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("불러오지 못했습니다.");
+  }
+}
+
+export function shortCardUnchanged(prev, next) {
+  if (!prev || !next) return false;
+  const left = shortStatus(prev);
+  const right = shortStatus(next);
+  return prev.id === next.id
+    && left.key === right.key
+    && left.label === right.label
+    && String(prev.topic || "") === String(next.topic || "")
+    && String(prev.updatedAt || "") === String(next.updatedAt || "")
+    && Number(prev.progress || 0) === Number(next.progress || 0)
+    && shortThumbnail(prev) === shortThumbnail(next)
+    && shortDurationSeconds(prev) === shortDurationSeconds(next);
+}
+
+export function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === 20;
+}
+
+export function throwMappedFetchError(error) {
+  if (isAbortError(error)) throw error;
+  throw new Error(friendlyJobError(stripErrorPrefix(error)));
+}
+
+export function settingsSaveFailMessage(error) {
+  if (isAbortError(error)) return "";
+  const text = friendlyJobError(error);
+  if (!text || text === "요청에 실패했습니다.") return "설정을 저장하지 못했습니다.";
+  return text;
+}
+
+export function friendlyJobError(error) {
+  const raw = String(error?.message || error || "");
+  const tagged = String(error || "");
+  const original = stripErrorPrefix(raw);
+  const text = stripUiPaths(original);
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw) || /failed to fetch|networkerror|load failed|network request failed/i.test(original)) {
+    return "연결하지 못했습니다.";
+  }
+  if (/ENOENT|ENOTDIR|no such file/i.test(original)) return "파일을 찾지 못했습니다.";
+  if (/unknown project|project not found/i.test(original)) return "작업을 찾지 못했습니다.";
+  if (/\b404\b/.test(original) || /not found/i.test(original)) return "찾지 못했습니다.";
+  if (error instanceof TypeError || /^typeerror\b/i.test(tagged) || /^typeerror\b/i.test(raw) || TYPE_ERROR.test(original)) {
+    return "지금은 처리할 수 없습니다.";
+  }
+  if (!text) return "요청에 실패했습니다.";
+  if (/[가-힣]/.test(text)) return text;
+  return "요청에 실패했습니다.";
 }
 
 export function isPlaceholderThumbnail(artifact = {}) {
@@ -145,6 +398,8 @@ export function inspectVideoDownloads(job = {}) {
   const picks = [];
   const master = artifacts.find((artifact) => artifact?.url && /(?:^|\/)master\.mp4$/i.test(artifact.name || ""));
   if (master) picks.push({ ...master, label: "마스터", href: href(master) });
+  const final = !master && artifacts.find((artifact) => artifact?.url && /(?:^|\/)final\.mp4$/i.test(artifact.name || ""));
+  if (final) picks.push({ ...final, label: "최종", href: href(final) });
   const parts = artifacts
     .filter((artifact) => artifact?.url && (/(?:^|\/)parts\/part-\d+\.mp4$/i.test(artifact.name || "") || artifact.kind === "part"))
     .sort((left, right) => Number((left.name || "").match(/part-(\d+)/i)?.[1] || 0) - Number((right.name || "").match(/part-(\d+)/i)?.[1] || 0));

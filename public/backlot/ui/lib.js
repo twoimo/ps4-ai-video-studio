@@ -1,9 +1,49 @@
 // Shared helpers for the Backlot UI.
 
+import { friendlyJobError, parseJsonText, stripErrorPrefix, throwMappedFetchError } from "../../shorts-ui.mjs";
+
+const THEME_KEY = "backlot.theme";
+
+export function readStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+export function writeStoredTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme === "light" ? "light" : "dark");
+  } catch {
+    /* private mode / blocked storage */
+  }
+}
+
+export function projectIdFromPath(pathname = "") {
+  const match = String(pathname || "").match(/\/(?:backlot\/)?p\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 export async function getJSON(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
-  return res.json();
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (error) {
+    throwMappedFetchError(error);
+  }
+  if (!res.ok) throw new Error(friendlyJobError("불러오지 못했습니다."));
+  let text;
+  try {
+    text = await res.text();
+  } catch (error) {
+    throwMappedFetchError(error);
+  }
+  try {
+    return parseJsonText(text);
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
 }
 
 export function el(tag, attrs = {}, ...children) {
@@ -38,10 +78,10 @@ export function fmtMoney(v) {
 export function fmtAgo(epochSeconds) {
   if (!epochSeconds) return "";
   const diff = Date.now() / 1000 - epochSeconds;
-  if (diff < 90) return "just now";
-  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
-  return `${Math.round(diff / 86400)}d ago`;
+  if (diff < 90) return "방금";
+  if (diff < 3600) return `${Math.round(diff / 60)}분 전`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}시간 전`;
+  return `${Math.round(diff / 86400)}일 전`;
 }
 
 export function fmtClock(iso) {
@@ -68,7 +108,7 @@ export function subscribe(url, onChange) {
   const source = new EventSource(url);
   source.onmessage = (msg) => {
     try {
-      const data = JSON.parse(msg.data);
+      const data = parseJsonText(msg.data);
       if (data.type !== "change") return;
     } catch {
       return;
@@ -76,7 +116,7 @@ export function subscribe(url, onChange) {
     clearTimeout(timer);
     timer = setTimeout(onChange, 250);
   };
-  source.onerror = () => { /* EventSource auto-reconnects */ };
+  source.onerror = () => { /* reconnect; do not close */ };
   return source;
 }
 

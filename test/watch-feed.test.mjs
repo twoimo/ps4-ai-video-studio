@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   applyWatchTransform,
@@ -10,7 +10,9 @@ import {
   getWatchIndex,
   goWatchIndex,
   pageHeight,
+  pauseWatchFeed,
   playWatchFeed,
+  playWatchMedia,
   selectedWatchSlide,
   sizeWatchFeed,
   stopWatchFeed,
@@ -19,7 +21,7 @@ import {
   wrapWatchFeed
 } from "../public/watch-feed.mjs";
 
-function fakeVideo(time = 4) {
+function fakeVideo(time = 4, options = {}) {
   return {
     paused: false,
     muted: true,
@@ -41,9 +43,14 @@ function fakeVideo(time = 4) {
       return name === "src" ? this.src : null;
     },
     removeAttribute() {},
+    setAttribute() {},
     addEventListener() {},
     play() {
       this.playCalls += 1;
+      if (options.rejectUnmuted && !this.muted) {
+        this.paused = true;
+        return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
+      }
       this.paused = false;
       return Promise.resolve();
     },
@@ -151,6 +158,21 @@ function fakePager({ slides = [], height = 640, video = null } = {}) {
   return root;
 }
 
+test("pauseWatchFeed pauses the player and does not remove it", () => {
+  const video = fakeVideo(4);
+  const root = {
+    querySelector(selector) {
+      return selector === ".watch-player video" || selector === "video" ? video : null;
+    },
+    querySelectorAll() { return [video]; }
+  };
+  pauseWatchFeed(root);
+  assert.equal(video.pauseCalls, 1);
+  assert.equal(video.paused, true);
+  assert.equal(video.currentTime, 4);
+  assert.equal(video.removeCalls || 0, 0);
+});
+
 test("stopWatchFeed pauses every video and removes the node", () => {
   const videos = [fakeVideo(8), fakeVideo(2.5)];
   stopWatchFeed(fakeRoot(videos));
@@ -161,6 +183,30 @@ test("stopWatchFeed pauses every video and removes the node", () => {
   assert.equal(videos[0].paused, true);
   assert.equal(videos[0].removeCalls, 1);
   assert.equal(videos[1].removeCalls, 1);
+});
+
+test("stopWatchFeed epoch ignores a late play after leave", async () => {
+  let resolvePlay;
+  const video = fakeVideo(3);
+  video.play = function play() {
+    this.playCalls += 1;
+    return new Promise((resolve) => {
+      resolvePlay = () => {
+        this.paused = false;
+        resolve();
+      };
+    });
+  };
+  const root = fakePager({
+    slides: [{ dataset: { src: "/a.mp4", jobId: "a" } }],
+    video,
+    height: 640
+  });
+  const pending = playWatchFeed(root);
+  stopWatchFeed(root);
+  resolvePlay();
+  await pending;
+  assert.equal(video.paused, true);
 });
 
 test("syncWatchFeed stops videos when the surface is not watch", () => {
@@ -174,22 +220,34 @@ test("syncWatchFeed stops videos when the surface is not watch", () => {
   assert.equal(videos[0].currentTime, 0);
 });
 
-test("bindWatchFeed closes only on watch-close and ignores letterbox", () => {
+test("bindWatchFeed closes only on watch-close and letterbox tap stops watch", () => {
   const videos = [fakeVideo(3)];
   const root = fakeRoot(videos);
   const backs = [];
   bindWatchFeed(root, (event) => backs.push(event.via));
   const handler = root.listeners.find((item) => item.type === "click").handler;
   handler({ target: { closest: () => null }, via: "letterbox" });
-  assert.equal(backs.length, 0);
-  assert.equal(videos[0].pauseCalls, 0);
-  handler({ target: { closest: (sel) => sel === ".watch-stage" ? {} : null }, via: "stage" });
-  assert.equal(backs.length, 0);
+  assert.deepEqual(backs, ["letterbox"]);
   assert.equal(videos[0].pauseCalls, 1);
-  handler({ target: { closest: (sel) => sel === ".watch-close, .watch-back" || sel === ".watch-close" || sel === ".watch-back" ? {} : null }, via: "close" });
-  assert.deepEqual(backs, ["close"]);
-  assert.equal(videos[0].pauseCalls, 2);
   assert.equal(videos[0].currentTime, 0);
+  videos[0].currentTime = 3;
+  videos[0].paused = false;
+  handler({ target: { closest: (sel) => sel === ".watch-stage" ? {} : null }, via: "stage" });
+  assert.deepEqual(backs, ["letterbox"]);
+  assert.equal(videos[0].pauseCalls, 2);
+  handler({ target: { closest: (sel) => sel === ".watch-close, .watch-back" || sel === ".watch-close" || sel === ".watch-back" ? {} : null }, via: "close" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
+  assert.equal(videos[0].pauseCalls, 3);
+  assert.equal(videos[0].currentTime, 0);
+  videos[0].currentTime = 3;
+  videos[0].paused = false;
+  handler({ target: { closest: (sel) => sel === ".watch-poster" ? {} : null }, via: "poster" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
+  assert.equal(videos[0].pauseCalls, 4);
+  handler({ target: { closest: (sel) => sel === ".watch-meta" ? {} : null }, via: "title" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
+  handler({ target: { parentElement: { closest: (sel) => sel === ".watch-meta" || sel === ".watch-slide-chrome" ? {} : null } }, via: "title-text" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
 });
 
 test("bindWatchFeed already bound plays only while body.watch-open", () => {
@@ -258,6 +316,10 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   assert.match(playFn, /playing/);
   assert.match(feed, /setAttribute\("playsinline"/);
   assert.match(feed, /setAttribute\("webkit-playsinline"/);
+  assert.match(feed, /setAttribute\("x5-playsinline"/);
+  assert.match(feed, /setAttribute\("controlslist", "nodownload"\)/);
+  assert.match(feed, /controlsList = "nodownload"/);
+  assert.match(feed, /addEventListener\("contextmenu"/);
   const video = fakeVideo(1);
   const slides = [
     { dataset: { src: "/a.mp4", jobId: "a", poster: "/a.jpg" } },
@@ -281,13 +343,83 @@ test("playWatchFeed hides the video before reparent when the job changes", async
   assert.equal(video.playCalls, 3);
 });
 
-test("playWatchFeed never assigns muted true", async () => {
+test("playWatchMedia muted fallback is same-turn unmute then remute", async () => {
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
-  assert.equal(feed.includes("muted = true"), false);
+  const mediaFn = feed.slice(feed.indexOf("export function playWatchMedia"), feed.indexOf("function revealAndPlay"));
+  const mutedFn = feed.slice(feed.indexOf("function playMutedThenUnmutePlay"), feed.indexOf("export function playWatchMedia"));
   assert.equal(app.includes("muted = true"), false);
   assert.equal(feed.includes("muted=true"), false);
-  assert.match(feed, /video\.muted = false/);
+  assert.equal(feed.includes("탭해서 재생"), false);
+  assert.equal(feed.includes(".catch(() => {})"), false);
+  assert.match(feed, /export function playWatchMedia/);
+  assert.match(feed, /function playMutedThenUnmutePlay/);
+  assert.match(feed, /function unmuteAndPlay/);
+  assert.match(feed, /function remuteAndPlay/);
+  assert.match(mediaFn, /video\.muted = false/);
+  assert.ok(mediaFn.indexOf("video.play()") < mediaFn.indexOf("playMutedThenUnmutePlay"));
+  assert.match(mutedFn, /video\.muted = true/);
+  assert.match(mutedFn, /finishWatchPlay/);
+  assert.equal(mutedFn.includes("unmuteAndPlay"), false);
+  assert.match(feed, /pointerup/);
+});
+
+test("playWatchMedia remutes and plays when unmute play fails", async () => {
+  let muted = true;
+  let playCalls = 0;
+  const video = {
+    paused: true,
+    volume: 1,
+    preload: "none",
+    src: "",
+    poster: "",
+    currentTime: 0,
+    parentElement: null,
+    dataset: {},
+    readyState: 0,
+    style: { visibility: "", opacity: "" },
+    get muted() { return muted; },
+    set muted(value) { muted = value; },
+    closest() { return null; },
+    getAttribute() { return null; },
+    removeAttribute() {},
+    setAttribute() {},
+    addEventListener() {},
+    play() {
+      playCalls += 1;
+      this.playCalls = playCalls;
+      if (!muted) {
+        this.paused = true;
+        return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
+      }
+      this.paused = false;
+      return Promise.resolve();
+    },
+    pause() { this.paused = true; }
+  };
+  await playWatchMedia(video);
+  assert.equal(playCalls, 2);
+  assert.equal(video.muted, true);
+  assert.equal(video.paused, false);
+});
+
+test("playWatchMedia same-turn muted play stays muted after unmuted reject", async () => {
+  let unmutedFails = 1;
+  const video = fakeVideo(0);
+  video.play = function play() {
+    this.playCalls += 1;
+    if (!this.muted && unmutedFails > 0) {
+      unmutedFails -= 1;
+      this.paused = true;
+      return Promise.reject(Object.assign(new Error("NotAllowedError"), { name: "NotAllowedError" }));
+    }
+    this.paused = false;
+    return Promise.resolve();
+  };
+  await playWatchMedia(video);
+  assert.equal(video.playCalls, 2);
+  assert.equal(video.paused, false);
+  assert.equal(video.muted, true);
 });
 
 test("createWatchPlayer builds one video with createElement", () => {
@@ -466,8 +598,9 @@ test("pointer tap under 10px snaps back and does not change index", () => {
 });
 
 test("hamburger chromeHit does not open inspect and never swallows", () => {
-  const slides = [{ dataset: { jobId: "a" } }];
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
   const tokens = new Set();
+  const opened = [];
   const root = fakePager({ slides, height: 640 });
   root.classList = {
     toggle(name) {
@@ -476,7 +609,8 @@ test("hamburger chromeHit does not open inspect and never swallows", () => {
     },
     contains(name) { return tokens.has(name); }
   };
-  bindWatchFeed(root, () => {});
+  bindWatchFeed(root, () => {}, null, (jobId) => opened.push(jobId));
+  goWatchIndex(root, 1);
   const down = root.listeners.find((item) => item.type === "pointerdown").handler;
   const up = root.listeners.find((item) => item.type === "pointerup").handler;
   const click = root.listeners.find((item) => item.type === "click").handler;
@@ -485,7 +619,8 @@ test("hamburger chromeHit does not open inspect and never swallows", () => {
   up({ clientX: 10, clientY: 20, target: menu });
   click({ target: menu, preventDefault() {}, stopPropagation() {} });
   assert.equal(tokens.has("inspect-open"), false);
-  assert.equal(getWatchIndex(root), 0);
+  assert.equal(getWatchIndex(root), 1);
+  assert.deepEqual(opened, ["b"]);
 });
 
 test("pointer drag swallows the following click", () => {
@@ -510,6 +645,32 @@ test("pointer drag swallows the following click", () => {
   });
   assert.deepEqual(prevented, ["prevent", "stop"]);
   assert.equal(video.pauseCalls, pauses);
+});
+
+test("swipe swallowClick before chrome so landing on close does not leave", () => {
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
+  const backs = [];
+  const root = fakePager({ slides, height: 640 });
+  bindWatchFeed(root, (event) => backs.push(event.via || "back"));
+  const start = root.listeners.find((item) => item.type === "pointerdown").handler;
+  const move = root.listeners.find((item) => item.type === "pointermove").handler;
+  const end = root.listeners.find((item) => item.type === "pointerup").handler;
+  const click = root.listeners.find((item) => item.type === "click").handler;
+  goWatchIndex(root, 0);
+  start({ clientX: 10, clientY: 200, target: { closest: () => null } });
+  move({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  const close = { closest: (sel) => sel.includes("watch-close") || sel.includes("watch-back") ? {} : null };
+  end({ clientX: 10, clientY: 140, target: close });
+  const prevented = [];
+  click({
+    target: close,
+    via: "close",
+    preventDefault() { prevented.push("prevent"); },
+    stopPropagation() { prevented.push("stop"); }
+  });
+  assert.deepEqual(backs, []);
+  assert.deepEqual(prevented, ["prevent", "stop"]);
+  assert.equal(getWatchIndex(root), 1);
 });
 
 test("selectedWatchSlide prefers the real slide over a loop clone", () => {
@@ -548,14 +709,24 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*min-height:\s*100%/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*margin-inline:\s*auto/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]*max-width:\s*var\(--watch-col\)/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-slide[\s\S]*max-width:\s*var\(--watch-col\)/);
+  assert.doesNotMatch(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]{0,80}max-width:\s*100%/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
+  assert.match(css, /#watch-feed \.watch-menu,\s*\.watch-menu/);
+  assert.match(css, /\.watch-menu\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /\.watch-menu\s*\{[^}]*height:\s*44px/);
+  const watchMenuRule = css.slice(css.indexOf("#watch-feed .watch-menu"), css.indexOf("@media (max-width: 860px)", css.indexOf("#watch-feed .watch-menu")));
+  assert.match(watchMenuRule, /\.watch-menu\s*\{[^}]*width:\s*44px/);
+  assert.match(watchMenuRule, /\.watch-menu\s*\{[^}]*height:\s*44px/);
   assert.match(css, /#watch-feed \.watch-menu/);
   assert.equal(css.includes("watch-inspect"), false);
   assert.equal(css.includes("inspect-open"), false);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
   assert.equal(css.includes("translateX(100%)"), false);
-  assert.match(css, /\.watch-close[\s\S]*top:\s*12px/);
-  assert.match(css, /\.watch-close[\s\S]*left:\s*12px/);
+  assert.match(css, /\.watch-close[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*right:\s*auto/);
   assert.match(css, /\.watch-close\s*\{[^}]*background:\s*none/);
   assert.match(css, /\.watch-close\s*\{[^}]*border:\s*0/);
@@ -592,7 +763,16 @@ test("watch-feed module and app wire the transform pager", async () => {
   const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
   const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
   const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
+  assert.match(feed, /export function pauseWatchFeed\(root\)/);
   assert.match(feed, /export function stopWatchFeed\(root\)/);
+  assert.match(feed, /export function stopWatchFeed\(root\) \{[\s\S]*?pager\.swiping = false/);
+  assert.match(feed, /if \(!pager\.swiping\)/);
+  assert.match(app, /function resumeWatchIfVisible/);
+  assert.match(app, /visibilitychange[\s\S]*pauseWatchFeed[\s\S]*resumeWatchIfVisible/);
+  assert.match(app, /addEventListener\("pageshow", resumeWatchIfVisible\)/);
+  assert.match(css, /#watch-feed \.watch-close[\s\S]*z-index:\s*9/);
+  assert.match(feed, /bumpWatchEpoch\(root\)/);
+  assert.match(feed, /isStaleWatch/);
   assert.match(feed, /video\.pause\(\)/);
   assert.match(feed, /video\.currentTime = 0/);
   assert.match(feed, /export function syncWatchFeed/);
@@ -600,13 +780,47 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /if \(root\) root\.hidden = false;\s*sizeWatchFeed\(root\)/);
   assert.match(feed, /mountWatchFeed\(\)/);
   assert.match(feed, /export function bindWatchFeed/);
+  assert.match(feed, /onMaterials/);
+  assert.match(feed, /pager\.onMaterials\?\.\(jobId\)/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
+  assert.match(feed, /function eventElement/);
+  assert.match(feed, /function inWatchPlayer/);
+  assert.match(feed, /closest\("\.watch-poster"\)/);
+  assert.match(feed, /closest\("\.watch-meta"\)/);
+  assert.match(feed, /closest\("\.watch-slide-chrome"\)/);
+  assert.match(feed, /closest\("\.watch-column"\)/);
+  assert.match(feed, /hit\?\.closest\?\.\("\.watch-stage"\)/);
+  assert.match(feed, /playMutedThenUnmutePlay[\s\S]*finishWatchPlay/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
-  assert.match(feed, /\.watch-close, \.watch-back/);
+  assert.match(feed, /\.watch-close, \.watch-back, \.watch-menu, \.watch-materials-toggle, \.watch-sound/);
+  assert.match(feed, /function syncWatchSound/);
+  assert.match(feed, /button\.hidden = !\(video\?\.muted \|\| video\?\.volume === 0\)/);
+  assert.match(feed, /prev === 0 && video\.volume > 0/);
+  assert.match(feed, /function bindWatchFlip/);
+  assert.match(feed, /orientationchange/);
+  assert.match(feed, /closest\?\.\("\.watch-sound"\)/);
+  assert.match(html, /class="watch-sound"/);
+  assert.match(app, /class="watch-sound"/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?top:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?z-index:\s*7/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /\.watch-sound\[hidden\]/);
   assert.equal(feed.includes("letterbox"), false);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
-  assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
+  assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /pagehide/);
+  assert.match(app, /pageHiding = true;\s*replaceClearStudioLayer\(\)/);
+  assert.doesNotMatch(app, /pagehide[\s\S]{0,200}history\.back/);
+  assert.match(app, /function studioLayerDismiss/);
+  assert.match(app, /dataset\.fromPop/);
+  assert.equal(feed.includes("scrollFocusedFieldIntoView"), false);
+  assert.equal(feed.includes("visualViewport"), false);
   assert.match(app, /aria-valuenow/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
   assert.match(feed, /preload = "auto"/);
@@ -650,12 +864,20 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /sizeWatchFeed\(watchFeed\)/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /requestAnimationFrame/);
-  assert.match(app, /orientationchange/);
+  assert.match(app, /bindRotateSettle/);
   assert.match(app, /applyWatchTransform/);
   assert.match(app, /stepWatchFeed/);
   assert.match(app, /function notifyActive/);
   assert.match(app, /function mountWatchFeed/);
   assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
+  assert.match(app, /function pinWatchToVisualViewport/);
+  assert.match(app, /pinOverlaysToVisualViewport/);
+  assert.equal(feed.includes("pinWatchToVisualViewport"), false);
+  assert.equal(feed.includes("pinOverlaysToVisualViewport"), false);
+  assert.equal(feed.includes("scrollFocusIntoPanel"), false);
+  assert.equal(feed.includes("overlayLockY"), false);
+  assert.equal(feed.includes("visualViewport"), false);
+  assert.equal(feed.includes("visualViewport"), false);
   assert.equal(/addEventListener\("resize", \(\) => \{[\s\S]*sizeWatchFeed/.test(app), false);
   assert.match(feed, /setProperty\("--watch-h"/);
   assert.match(feed, /removeProperty\("--watch-h"\)/);
@@ -678,6 +900,7 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /function reparentWatchVideo/);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(feed, /export function moveWatchIndex/);
+  assert.match(feed, /export function moveWatchIndex\(root, index, options\) \{\s*bumpWatchEpoch\(root\);\s*pauseLeftoverMedia\(root\)/);
   assert.match(feed, /export function settleWatchIndex/);
   assert.match(feed, /addEventListener\("wheel"/);
   assert.match(feed, /passive:\s*false/);
@@ -697,6 +920,13 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.equal(css.includes("watch-inspect-dismiss"), false);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(feed, /swallowClick/);
+  const clickFn = feed.slice(feed.indexOf('root.addEventListener("click"'), feed.indexOf('root.addEventListener("pointerdown"'));
+  assert.ok(clickFn.indexOf("pager.swallowClick") < clickFn.indexOf("chromeHit(event)"));
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-slide-chrome[\s\S]*bottom:\s*max\(112px,\s*calc\(env\(safe-area-inset-bottom\) \+ 44px\)\)/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-sound[\s\S]*bottom:\s*max\(68px/);
+  assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
+  assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);
+  assert.doesNotMatch(css, /#watch-feed[\s\S]{0,180}bottom:\s*var\(--vv-bottom/);
   assert.match(feed, /movement < 10/);
   assert.match(feed, /Math\.hypot/);
   const sizeFn = feed.slice(feed.indexOf("export function sizeWatchFeed"), feed.indexOf("export function wrapWatchFeed"));
@@ -813,6 +1043,20 @@ test("watch-open beats the #watch-feed.watch-feed hide rule", async () => {
   assert.match(css, /#watch-feed\.watch-feed[\s\S]*display:\s*none/);
 });
 
+test("first paint #watch hides the grid before JS", async () => {
+  const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
+  assert.equal(html.includes('class="watch-open"'), false);
+  assert.match(boot, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
+  assert.match(boot, /classList\.add\("watch-open"\)/);
+  assert.match(boot, /getElementById\("shorts"\)/);
+  assert.match(boot, /library\.hidden = true/);
+  assert.match(boot, /getElementById\("watch-feed"\)/);
+  assert.match(boot, /feed\.hidden = false/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash\) history\.replaceState\(null, "", location\.pathname \+ location\.search\)/);
+});
+
 test("wheel stays on the watch feed root", () => {
   const slides = [{ dataset: { jobId: "a", src: "/a.mp4" } }, { dataset: { jobId: "b", src: "/b.mp4" } }];
   const root = fakePager({ slides, video: fakeVideo(1), height: 640 });
@@ -863,4 +1107,110 @@ test("listeners before src catch synchronous Android loadeddata", () => {
   assert.ok(handlers.length >= 3);
   assert.equal(video.style.visibility, "visible");
   assert.equal(video.style.opacity, "1");
+});
+
+test("public files have no tap-to-play copy and no credit 402 copy", async () => {
+  const root = join(process.cwd(), "public");
+  const files = [];
+  async function walk(dir) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) await walk(path);
+      else if (/\.(js|mjs|html|css)$/.test(entry.name)) files.push(path);
+    }
+  }
+  await walk(root);
+  assert.ok(files.length > 0);
+  for (const path of files) {
+    const source = await readFile(path, "utf8");
+    assert.equal(source.includes("탭해서 재생"), false, path);
+    assert.equal(source.includes("크레딧 402"), false, path);
+  }
+});
+
+test("watch PiP leftover exits on pause and stop and kicks back on enter", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(feed, /function exitWatchPictureInPicture/);
+  assert.match(feed, /doc\.exitPictureInPicture/);
+  assert.match(feed, /enterpictureinpicture/);
+  assert.match(feed, /leavepictureinpicture/);
+  assert.match(feed, /exitWatchPictureInPicture\(video\);\s*try \{ video\.pause\(\)/);
+  assert.match(feed, /exitWatchPictureInPicture\(video\);\s*video\.pause\(\)/);
+  assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(\)/);
+  assert.match(feed, /classList\?\.contains\("watch-open"\)\) return;\s*try \{ video\.pause\(\)/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+});
+
+test("edge swipe does not rubber-band and lostpointercapture zeros the swipe", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  const slides = [{ dataset: { jobId: "a" } }, { dataset: { jobId: "b" } }];
+  const root = fakePager({ slides, height: 640 });
+  bindWatchFeed(root, () => {});
+  goWatchIndex(root, 0);
+  applyWatchTransform(root, { animate: false, offset: 80 });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*0px,\s*0\)/);
+  applyWatchTransform(root, { animate: false, offset: -80 });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*-80px,\s*0\)/);
+  goWatchIndex(root, 1);
+  applyWatchTransform(root, { animate: false, offset: -80 });
+  assert.match(root.track.style.transform, /translate3d\(0,\s*-640px,\s*0\)/);
+  const start = root.listeners.find((item) => item.type === "pointerdown").handler;
+  const move = root.listeners.find((item) => item.type === "pointermove").handler;
+  const lost = root.listeners.find((item) => item.type === "lostpointercapture");
+  assert.ok(lost);
+  goWatchIndex(root, 0);
+  start({ clientX: 10, clientY: 200, target: { closest: () => null } });
+  move({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  lost.handler({ clientX: 10, clientY: 140, target: { closest: () => null } });
+  assert.equal(getWatchIndex(root), 0);
+  goWatchIndex(root, 1);
+  stopWatchFeed(root);
+  assert.match(root.track.style.transform, /translate3d\(0,\s*0,\s*0\)/);
+  assert.match(feed, /lostpointercapture/);
+  assert.match(feed, /translate3d\(0, 0, 0\)/);
+  assert.match(feed, /dataset\?\.swiping === "1" \|\| pagerOf\(root\)\?\.swiping\) return/);
+  assert.match(css, /#watch-feed[\s\S]{0,280}overscroll-behavior:\s*none/);
+});
+
+test("hardware Back after PiP exits PiP and re-pushes so layers stay", async () => {
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  const pop = app.slice(app.indexOf("function handleStudioPopState"), app.indexOf("function deleteClickSwallowed"));
+  assert.match(pop, /pictureInPictureElement/);
+  assert.match(pop, /exitPictureInPicture/);
+  assert.match(pop, /history\.pushState\(history\.state,\s*"",\s*location\.href\)/);
+  assert.ok(pop.indexOf("pictureInPictureElement") < pop.indexOf('studioLayer === "confirm"'));
+  assert.ok(pop.indexOf("pictureInPictureElement") < pop.indexOf('state.view === "watch"'));
+});
+
+test("watch title blocks Android long-press callout and close does not double openHome", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  assert.match(css, /\.watch-meta\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(feed, /addEventListener\("contextmenu"/);
+  assert.match(feed, /event\.preventDefault\?\.\(\)/);
+  assert.doesNotMatch(feed, /closest\?\.\("\.watch-meta, \.watch-meta h2, \.watch-slide-chrome"\)/);
+  assert.match(app, /function skipStaleHashChange/);
+  assert.match(app, /ignoreNextHashChange/);
+  assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
+});
+
+test("landscape watch close and menu use max top/left or top/right safe-area", async () => {
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-close[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-left\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-left\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-menu[\s\S]*top:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-right\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-top\),\s*env\(safe-area-inset-right\)\)/);
+});
+
+test("landscape watch title chrome clears mute plus swapped safe-area", async () => {
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-slide-chrome[\s\S]*bottom:\s*max\(112px,\s*calc\(env\(safe-area-inset-bottom\) \+ 44px\),\s*calc\(env\(safe-area-inset-right\) \+ 44px\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-slide-chrome[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\),\s*56px\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*\.watch-slide-chrome[\s\S]*padding-right:\s*max\(52px,\s*calc\(44px \+ env\(safe-area-inset-bottom\)\),\s*calc\(44px \+ env\(safe-area-inset-right\)\)\)/);
+  assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
 });

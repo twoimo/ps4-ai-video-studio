@@ -184,6 +184,8 @@ export async function listJobs() {
 
 export async function createJob(input) {
   await ensureWorkspace();
+  const topic = String(input?.topic || "").trim();
+  if (topic.length < 4) throw new Error("영상 주제를 4자 이상 입력하세요.");
   const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   let benchmarkDuration = { recommendedTargetSec: 78, recommendedRangeSec: [54, 91] };
   try {
@@ -199,7 +201,7 @@ export async function createJob(input) {
   const factory = provider === GROK_IMAGINE_PROVIDER;
   const job = {
     id,
-    topic: input.topic.trim(),
+    topic,
     format: factory ? "vertical" : input.format === "landscape" ? "landscape" : "vertical",
     provider,
     ...geminiProfile,

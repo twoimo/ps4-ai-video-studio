@@ -1,0 +1,72 @@
+.studio-chrome { display: grid; grid-template-columns: 1fr 1fr max-content; align-items: center; gap: 8px; margin: 0 10px 8px; padding: 0; padding-top: env(safe-area-inset-top); min-height: 36px; flex: 0 0 auto; position: relative; z-index: 8; }
+.studio-chrome ~ .studio-chrome { display: none; }
+.studio-chrome > .library-brand { justify-self: start; }
+.studio-chrome-actions { display: flex; align-items: center; justify-self: end; gap: 10px; }
+.studio-chips { display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; justify-self: center; gap: 2px 4px; min-width: 0; touch-action: manipulation; }
+.studio-chips[hidden] { display: flex; visibility: hidden; }
+.studio-pipe { display: inline-flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 4px 6px; touch-action: manipulation; }
+.studio-pipe-arrow { color: var(--dim, #606b7d); font-size: 11px; line-height: 1; padding: 0; touch-action: manipulation; }
+.studio-chip { display: inline; margin: -16px 0; padding: 16px 4px; border: 0; border-radius: 0; background: none; color: var(--muted, #8f99aa); font-size: 12px; font-weight: 600; letter-spacing: -.02em; line-height: 1; white-space: nowrap; cursor: pointer; min-width: 0; min-height: 0; touch-action: manipulation; }
+.studio-chip.ok { color: var(--text, #f2f4f8); }
+.studio-chip.warn { color: var(--amber, #f0bd68); }
+.studio-chip.danger { color: var(--danger, #ff786d); }
+.studio-chip.pause { color: var(--dim, #606b7d); }
+.library-brand { display: flex; align-items: center; gap: 8px; min-width: 0; color: inherit; text-decoration: none; }
+.library-brand h1 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; }
+@media (max-width: 860px) {
+  #open-board,
+  #open-template { display: none; }
+  .studio-chrome { grid-template-columns: max-content 1fr max-content; }
+  .library-brand h1 { display: none; }
+}
+.brand-mark { display: grid; place-items: center; width: 24px; height: 24px; aspect-ratio: 1 / 1; flex: 0 0 24px; overflow: hidden; color: var(--accent, #b7f36b); }
+.library-more-toggle,
+.library-board-toggle { list-style: none; cursor: pointer; color: var(--muted, #8f99aa); display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px; line-height: 1.2; border: 0; background: none; text-decoration: none; }
+.library-more-toggle:hover,
+.library-board-toggle:hover { color: var(--text, #f2f4f8); }
+.library-board-toggle { font-size: 13px; font-weight: 600; letter-spacing: -.02em; }
+.library-gear { display: block; width: 18px; height: 18px; }
+.short-skeleton,
+.lib-skeleton,
+.template-skeleton { pointer-events: none; }
+.short-skeleton .short-card-thumb,
+.lib-skeleton,
+.template-skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,.04), rgba(255,255,255,.09), rgba(255,255,255,.04));
+  background-size: 240% 100%;
+}
+.lib-skeleton { min-height: 220px; border-radius: 12px; }
+.template-skeleton { min-height: 160px; border-radius: 8px; }
+html:has(body.overlay-open),
+body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: pan-y; }
+#satellite-menu[hidden] { display: none; }
+#satellite-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) max(env(safe-area-inset-bottom), var(--vv-bottom, 0px)) env(safe-area-inset-left);
+}
+#satellite-menu .overlay-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+#satellite-menu .overlay-panel {
+  position: relative;
+  z-index: 1;
+  width: min(440px, calc(100% - 32px));
+  padding: 20px 18px 22px;
+  border-radius: 16px;
+  background: var(--surface, #11151e);
+  border: 1px solid var(--line, rgba(255,255,255,.09));
+  color: var(--text, #f2f4f8);
+}
+#satellite-menu .draft-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2, #171c27);
+  color: var(--muted, #8f99aa);
+}

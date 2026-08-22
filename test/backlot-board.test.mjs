@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createJob } from "../src/pipeline.mjs";
@@ -7,6 +8,8 @@ import { loadBoardState, listProjects, safeMediaPath, safeProjectDir, STUDIO_RAI
 import { backlotHealth, handleBacklotApi, handleBacklotMedia, handleBacklotPage } from "../src/backlot-server.mjs";
 import { getLockedSpec } from "../src/grok-imagine-spec.mjs";
 import { FACTORY_LOCKS, WORLD_SLOT_IDS } from "../src/grok-imagine-template.mjs";
+import { bindSatelliteMenu, importSatelliteLibrary } from "../public/satellite-menu.mjs";
+import { projectIdFromPath } from "../public/backlot/ui/lib.js";
 
 async function api(path) {
   const url = new URL(`http://backlot.local${path}`);
@@ -72,6 +75,12 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
   const home = await readFile(join(root, "public/index.html"), "utf8");
   const app = await readFile(join(root, "public/app.js"), "utf8");
+  const backlotServer = await readFile(join(root, "src/backlot-server.mjs"), "utf8");
+  assert.match(backlotServer, /"\.webm": "video\/webm"/);
+  assert.match(backlotServer, /"\.mov": "video\/quicktime"/);
+  assert.match(backlotServer, /"\.m4v": "video\/x-m4v"/);
+  assert.match(backlotServer, /"\.mkv": "video\/x-matroska"/);
+  assert.match(backlotServer, /"\.webp": "image\/webp"/);
 
   assert.match(library, /class="lib-grid" id="grid"/);
   assert.match(library, /id="liveBadge"/);
@@ -80,8 +89,19 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(board, /class="wrap work"/);
   assert.match(board, /id="materials"/);
   assert.match(board, /aria-label="재료"/);
+  assert.doesNotMatch(board, /<aside[^>]*id="materials"[^>]*hidden/);
+  assert.match(board, /id="materials"[^>]*>\s*<div class="lib-skeleton is-skeleton"/);
   assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
   assert.ok(board.indexOf('class="wrap" id="app"') < board.indexOf('id="materials"'), "materials follows the original wrap");
+  assert.doesNotMatch(board, /id="app"[^>]*hidden/);
+  assert.doesNotMatch(css, /#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /body:has\([^\)]*materials[^\)]*\)[\s\S]{0,120}#app[\s\S]{0,80}display:\s*none/);
+  assert.match(css, /No materials-page hide/);
+  assert.match(css, /body:has\(#materials\) \.wrap#app/);
+  assert.match(css, /\.materials\s*\{[^}]*safe-area-inset-left/);
+  assert.match(css, /\.materials\s*\{[^}]*safe-area-inset-right/);
+  assert.match(css, /\.materials\s*\{[^}]*safe-area-inset-bottom/);
   assert.match(board, /id="modal"/);
   assert.match(board, /id="player"/);
   assert.match(boardJs, /function renderSlate/);
@@ -97,8 +117,20 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /function renderNoState/);
   assert.match(boardJs, /function renderAwaitingNotice/);
   assert.match(boardJs, /function renderReplayBar/);
+  const parsed = spawnSync("node", ["--check", join(root, "public/backlot/ui/board.js")], { encoding: "utf8" });
+  assert.equal(parsed.status, 0, parsed.stderr);
   assert.match(boardJs, /subscribe\(`\/api\/project\/\$\{encodeURIComponent\(projectId\)\}\/events`/);
   assert.match(libraryJs, /subscribe\("\/api\/library\/events"/);
+  assert.match(libJs, /export function readStoredTheme/);
+  assert.match(libJs, /export function writeStoredTheme/);
+  assert.match(libJs, /function readStoredTheme\(\) \{\s*try \{/);
+  assert.match(libJs, /function writeStoredTheme\(theme\) \{\s*try \{/);
+  assert.match(boardJs, /readStoredTheme\(\)/);
+  assert.match(boardJs, /writeStoredTheme\(currentTheme\)/);
+  assert.match(libraryJs, /readStoredTheme\(\)/);
+  assert.match(libraryJs, /writeStoredTheme\(currentTheme\)/);
+  assert.equal(boardJs.includes("localStorage"), false);
+  assert.equal(libraryJs.includes("localStorage"), false);
   assert.match(libJs, /export function subscribe/);
   assert.match(libJs, /export const STAGE_ICONS/);
   assert.match(css, /\.clapper/);
@@ -126,7 +158,43 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(libraryJs, /href: `\/p\/\$\{p\.project_id\}/);
   assert.doesNotMatch(boardJs, /bindBacklotLeave|pauseBacklotMedia|studio-master|studio-return/);
   assert.doesNotMatch(libJs, /bindBacklotLeave|pauseBacklotMedia/);
-  assert.doesNotMatch(library, /backlot-close|PS4_JUSTDOIT|viewport-fit/);
+  assert.doesNotMatch(library, /backlot-close|viewport-fit/);
+  assert.match(library, /interactive-widget=resizes-content/);
+  assert.match(board, /content="width=device-width, initial-scale=1, interactive-widget=resizes-content"/);
+  assert.match(board, /interactive-widget=resizes-content/);
+  assert.doesNotMatch(board, /viewport-fit/);
+  assert.match(library, /PS4_JUSTDOIT/);
+  assert.match(library, /id="studio-chrome"/);
+  assert.match(library, /id="studio-chips"/);
+  assert.match(library, />대본</);
+  assert.match(library, />그림</);
+  assert.match(library, />움직임</);
+  assert.match(library, />편집</);
+  assert.match(library, />보드</);
+  assert.match(library, />템플릿</);
+  assert.match(library, /href="\/#create">새 영상</);
+  assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(library, /href="\/#settings">설정</);
+  assert.equal(library.includes("aria-label=\"메뉴\""), false);
+  assert.equal(library.includes("그림 · 멈춤"), false);
+  assert.match(library, /src="\/studio-chrome\.mjs"/);
+  assert.match(board, /id="studio-chrome"/);
+  assert.match(board, /id="studio-chips"/);
+  assert.match(board, /id="studio-chips"[\s\S]*data-open-machine[\s\S]*>대본</);
+  assert.match(board, />대본</);
+  assert.match(board, />보드</);
+  assert.match(board, /href="\/#create">새 영상</);
+  assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(board, /href="\/#settings">설정</);
+  assert.equal(board.includes("그림 · 멈춤"), false);
+  assert.match(board, /src="\/studio-chrome\.mjs"/);
+  const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
+  assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
+  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*bindCreateModeHints\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /export function bindCreateModeHints/);
+  assert.match(chrome, /writeCreateModeHint/);
+  assert.doesNotMatch(boardJs, /main\.append\(script\)/);
+  assert.doesNotMatch(boardJs, /if \(script\) main\.append/);
   assert.match(css, /\.wrap\s*\{\s*max-width:\s*1440px/);
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.match(css, /@media \(max-width: 520px\)/);
@@ -136,6 +204,173 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(css, /@media \(max-width: 720px\)/);
   assert.match(css, /Studio extra: materials after the original wrap/);
   assert.ok(css.indexOf(".wrap { max-width: 1440px") < css.indexOf("Studio extra: materials"), "materials CSS is appended after OM");
+  assert.match(css, /Studio extra: full-width wrap/);
+  assert.ok(css.indexOf("Studio extra: materials") < css.indexOf("Studio extra: full-width wrap"), "full-width override follows materials extra");
+  assert.match(css, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
+  assert.doesNotMatch(css, /\.slate \.wordmark\s*\{[^}]*text-transform:\s*uppercase/);
+  assert.match(css, /\.clapper\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
+  assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*scroll-snap-type:\s*none/);
+  assert.match(libraryJs, /el\("h3", \{\}, displayTitle\(p\.title, p\.project_id, "보드"\)\)/);
+  assert.doesNotMatch(libraryJs, /\(p\.title \|\| p\.project_id\)\.toUpperCase\(\)/);
+  assert.match(libraryJs, /script:\s*"대본"/);
+  assert.match(libraryJs, /"hook-lock":\s*"첫 장면"/);
+  assert.match(libraryJs, /"image-edit":\s*"그림 고치기"/);
+  assert.match(libraryJs, /animate:\s*"움직이기"/);
+  assert.match(libraryJs, /compose:\s*"편집"/);
+  assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
+  assert.match(libraryJs, /function stageStatusKo/);
+  assert.match(libraryJs, /stageStatusKo\(s\.status\)/);
+  assert.match(libraryJs, /addEventListener\("contextmenu"/);
+  assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
+  assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(css, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
+  assert.match(css, /\.wrap#app \.slate/);
+  assert.match(css, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
+  assert.match(css, /IBM Plex Sans KR/);
+  assert.match(css, /:root\s*\{[\s\S]*--sans:\s*'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;/);
+  assert.match(css, /#studio-chrome[\s\S]*font-family:\s*var\(--sans\)/);
+  assert.match(css, /#studio-chrome h1\s*\{[^}]*text-overflow:\s*ellipsis/);
+  assert.match(css, /#studio-chrome h1\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /#studio-chrome h1\s*\{[^}]*white-space:\s*nowrap/);
+  assert.equal(css.includes("Inter"), false);
+  assert.match(css, /Isolate shared chrome/);
+  assert.match(css, /#studio-chrome[\s\S]*isolation:\s*isolate/);
+  assert.match(css, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome h1\s*\{[^}]*display:\s*none/);
+  assert.match(css, /#studio-chrome \.studio-chips\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(css, /#studio-chrome \.studio-pipe\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*display:\s*inline/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*padding:\s*16px 4px/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*margin:\s*-16px 0/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*0/);
+  assert.match(css, /#studio-chrome \.studio-chips\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(css, /#studio-chrome \.studio-pipe\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-width:\s*44px/);
+  assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /\.materials textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(css, /\.scene-card \{ max-width: 100%; \}/);
+  assert.match(css, /\.cost \.bar \{ width: min\(150px, 38%\); \}/);
+  assert.doesNotMatch(css, /100vw - 42px/);
+  assert.doesNotMatch(css, /38vw/);
+  assert.doesNotMatch(css, /min-height:\s*100vh/);
+  assert.doesNotMatch(css, /calc\(100vh - 360px\)/);
+  assert.match(css, /min-height:\s*var\(--vv-height,\s*100dvh\)/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.materials\s*\{[^}]*var\(--vv-bottom/);
+  assert.match(css, /\.materials input,\s*\.materials textarea,\s*\.materials select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /\.wrap#app select,\s*\.materials select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
+  assert.equal(css.includes("family=Inter"), false);
+  const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
+  assert.match(heroExtra, /height:\s*auto/);
+  assert.match(heroExtra, /aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(heroExtra, /width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
+  assert.match(boardJs, /onchange: \(e\) => \{ setT\(e\.target\.value\); render\(\); \},\s*\}\),/);
+  assert.match(boardJs, /script:\s*"대본"/);
+  assert.match(boardJs, /"hook-lock":\s*"첫 장면"/);
+  assert.match(boardJs, /"image-edit":\s*"그림 고치기"/);
+  assert.match(boardJs, /animate:\s*"움직이기"/);
+  assert.match(boardJs, /compose:\s*"편집"/);
+  assert.match(boardJs, /"section-title" \}, "장면"/);
+  assert.match(boardJs, /"section-title" \}, "완성 영상"/);
+  assert.match(boardJs, /"section-title" \}, "가져온 클립"/);
+  assert.match(libJs, /return "방금"/);
+  assert.match(libJs, /throwMappedFetchError\(error\)/);
+  assert.match(libJs, /throw new Error\(friendlyJobError\("불러오지 못했습니다\."\)\)/);
+  assert.match(libJs, /parseJsonText\(text\)/);
+  assert.match(libJs, /parseJsonText\(msg\.data\)/);
+  assert.equal(libJs.includes("${res.status} ${url}"), false);
+  assert.equal(libJs.includes("404"), false);
+  assert.match(boardJs, /if \(st\.status === "failed"\) return "실패"/);
+  assert.match(boardJs, /프로젝트를 찾을 수 없습니다/);
+  assert.match(boardJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
+  assert.match(boardJs, /document\.title = displayTitle\(s\.title, "보드"\)/);
+  assert.match(boardJs, /displayTitle\(s\.title, "보드"\)/);
+  assert.equal(boardJs.includes("Backlot — ${s.title}"), false);
+  assert.equal(boardJs.includes("${s.title}"), false);
+  assert.doesNotMatch(libJs, /source\.onerror[\s\S]{0,80}source\.close/);
+  assert.match(boardJs, /function boardUnchanged/);
+  assert.match(boardJs, /if \(boardUnchanged\(state, next\)\) return/);
+  assert.match(libraryJs, /const payload = await getJSON\("\/api\/projects"\)/);
+  assert.match(
+    libraryJs,
+    /if \(!Array\.isArray\(payload\?\.projects\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
+  );
+  assert.match(libraryJs, /projectsFromListPayload\(payload\)/);
+  assert.match(libraryJs, /displayTitle\(p\.title, p\.project_id, "보드"\)/);
+  assert.match(board, /<title>보드<\/title>/);
+  assert.equal(boardJs.includes("PROJECT NOT FOUND"), false);
+  assert.equal(boardJs.includes("String(err)"), false);
+  assert.equal(boardJs.includes("Failed to fetch"), false);
+  assert.equal(boardJs.includes("st.error"), false);
+  assert.equal(boardJs.includes("ENOENT"), false);
+  assert.match(libJs, /friendlyJobError/);
+  assert.match(libJs, /stripErrorPrefix/);
+  assert.equal(libJs.includes("Failed to fetch"), false);
+  assert.match(libJs, /\$\{Math\.round\(diff \/ 60\)\}분 전/);
+  assert.match(libraryJs, /"◈ 확인 필요"/);
+  assert.match(libraryJs, /liveCount \? `\$\{liveCount\} 진행` : "대기"/);
+  assert.match(boardJs, /"◈ 확인 필요"/);
+  assert.match(boardJs, /"진행"/);
+  assert.match(boardJs, /`대기\$\{s\.last_activity/);
+  assert.match(library, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.match(board, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.match(library, /id="satellite-import">가져오기</);
+  assert.match(board, /id="satellite-import">가져오기</);
+  assert.match(library, /src="\/satellite-menu\.mjs"/);
+  assert.match(board, /src="\/satellite-menu\.mjs"/);
+  assert.match(library, /src="\/satellite-boot\.js"/);
+  assert.match(board, /src="\/satellite-boot\.js"/);
+  const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  assert.match(satelliteBoot, /hash === "template"/);
+  assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
+  assert.match(satelliteBoot, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(satelliteBoot, /hash === "create" \|\| hash === "settings" \|\| hash === "machine"/);
+  assert.doesNotMatch(satelliteBoot, /hash === "create" \|\| hash === "batch"/);
+  assert.match(satelliteBoot, /raw === "machine" \|\| raw\.indexOf\("machine\/"\) === 0/);
+  assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
+  assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
+  assert.match(satelliteBoot, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
+  const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
+  assert.match(satellite, /export function resetSatelliteMenu/);
+  assert.match(satellite, /classList\?\.toggle\("overlay-open"/);
+  assert.match(satellite, /pinOverlaysToVisualViewport\(root\)/);
+  assert.match(satellite, /syncOverlayLock/);
+  assert.equal(satellite.includes("scrollIntoView"), false);
+  assert.match(satellite, /\/api\/library\/import/);
+  assert.match(satellite, /method: "POST"/);
+  assert.match(satellite, /resetSatelliteMenu\(root\)/);
+  assert.match(satellite, /#satellite-import-close/);
+  assert.match(satellite, /backToMenu/);
+  assert.match(satellite, /function showSatelliteImportResult/);
+  assert.match(satellite, /importBroughtCopy\(payload\)/);
+  assert.equal(satellite.includes("가져옴 ${imported}"), false);
+  assert.equal(satellite.includes("시드 ${seeded}"), false);
+  assert.equal(satellite.includes("경로 ${roots}"), false);
+  assert.match(satellite, /throwMappedFetchError\(error\)/);
+  assert.match(satellite, /if \(isAbortError\(error\)\) return/);
+  assert.match(satellite, /await request\("\/api\/library\/import", \{ method: "POST" \}[\s\S]*resetSatelliteMenu\(root\);\s*showSatelliteImportResult/);
+  assert.match(library, /id="satellite-import-result"/);
+  assert.match(library, /id="satellite-import-close">닫기</);
+  assert.match(board, /id="satellite-import-result"/);
+  assert.match(board, /id="satellite-import-close">닫기</);
+  assert.match(library, /id="satellite-import-summary"/);
+  assert.match(board, /id="satellite-import-ok">확인</);
+  assert.match(board, /class="lib-skeleton is-skeleton"/);
+  assert.match(board, /id="materials"/);
   assert.doesNotMatch(css, /max-width:\s*440px/);
   assert.doesNotMatch(css, /max-width:\s*400px/);
   assert.doesNotMatch(board, /목록/);
@@ -143,6 +378,12 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(boardJs, /대본 → 그림 → 움직임 → 편집/);
   assert.doesNotMatch(boardJs, /function renderBeginner/);
   assert.doesNotMatch(css, /--bg:\s*#0b0d12/);
+  assert.equal(library.includes("쇼츠"), false);
+  assert.equal(board.includes("쇼츠"), false);
+  assert.equal(library.includes("공장"), false);
+  assert.equal(board.includes("공장"), false);
+  assert.equal(library.includes("402"), false);
+  assert.equal(board.includes("402"), false);
   assert.equal(library.includes("쇼츠 공장"), false);
   assert.equal(board.includes("쇼츠 공장"), false);
   assert.equal(boardJs.includes("쇼츠 공장"), false);
@@ -150,9 +391,43 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const materialsJs = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
   const editor = await readFile(join(root, "public/materials-editor.mjs"), "utf8");
   assert.equal(materialsJs.includes("쇼츠 공장"), false);
+  assert.doesNotMatch(materialsJs, /getElementById\("app"\)/);
+  assert.doesNotMatch(materialsJs, /#app/);
   assert.equal(editor.includes("쇼츠 공장"), false);
   assert.match(materialsJs, /method: "PATCH"/);
   assert.match(materialsJs, /\/run/);
+  assert.match(materialsJs, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
+  assert.match(materialsJs, /영상 주제를 4자 이상 입력하세요/);
+  assert.match(materialsJs, /function toast/);
+  assert.match(materialsJs, /addEventListener\("invalid"/);
+  assert.match(materialsJs, /toast\("영상 주제를 4자 이상 입력하세요\.", "error"\)/);
+  assert.match(materialsJs, /addEventListener\("contextmenu"/);
+  assert.match(materialsJs, /closest\?\.\("\.inspect-files a, a\[download\]"\)/);
+  assert.match(materialsJs, /health\?\.imagine\?\.frozen !== false/);
+  assert.match(materialsJs, /button\?\.inert/);
+  assert.match(materialsJs, /button\.inert = true/);
+  assert.match(materialsJs, /button\.disabled = true/);
+  assert.match(materialsJs, /bindFocusScroll\(root\)/);
+  assert.match(materialsJs, /from "\/studio-chrome\.mjs"/);
+  assert.match(editor, /enterkeyhint="done"/);
+  assert.match(editor, /autocomplete="off"/);
+  assert.match(editor, /spellcheck="false"/);
+  assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
+  assert.match(boardJs, /function pauseBoardVideos/);
+  assert.match(boardJs, /querySelectorAll\("video, audio"\)/);
+  assert.match(boardJs, /history\.pushState\(\{ studioLayer: layer \}/);
+  assert.match(boardJs, /pushBoardLayer\("modal"\)/);
+  assert.match(boardJs, /dataset\.fromPop/);
+  assert.match(boardJs, /addEventListener\("popstate"/);
+  assert.match(boardJs, /if \(wasOpen\) pauseBoardVideos\(\)/);
+  assert.match(css, /\.theme-toggle,\s*\.modal-close\s*\{[^}]*min-width:\s*44px/);
+  assert.match(css, /\.theme-toggle,\s*\.modal-close\s*\{[^}]*min-height:\s*44px/);
+  assert.match(boardJs, /function exclusiveBoardMedia/);
+  assert.match(boardJs, /addEventListener\("play"/);
+  assert.match(boardJs, /visibilitychange/);
+  assert.match(boardJs, /pagehide/);
+  assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
+  assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
 
   const page = await handleBacklotPage(new Request("http://backlot.local/backlot"), new URL("http://backlot.local/backlot"));
   assert.ok(page);
@@ -178,6 +453,34 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
 
   const alias = await handleBacklotPage(new Request("http://backlot.local/p/demo"), new URL("http://backlot.local/p/demo"));
   assert.match(await alias.text(), /id="app"/);
+
+  for (const path of ["/backlot", "/backlot/", "/p/demo", "/p/demo/", "/backlot/p/demo", "/backlot/p/demo/"]) {
+    const head = await handleBacklotPage(new Request(`http://backlot.local${path}`, { method: "HEAD" }), new URL(`http://backlot.local${path}`));
+    assert.ok(head, path);
+    assert.equal(head.status, 200, path);
+    assert.equal(head.headers.get("content-type"), "text/html; charset=utf-8");
+  }
+  assert.match(boardJs, /projectIdFromPath\(location\.pathname\)/);
+  assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
+  assert.match(libraryJs, /불러오지 못함/);
+  assert.match(libraryJs, /function failLibrary/);
+  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\.is-skeleton\)"\)/);
+  assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
+  assert.match(libraryJs, /render\(\)\.catch\(failLibrary\)/);
+  assert.match(boardJs, /function failBoard/);
+  assert.match(boardJs, /function initBoard/);
+  assert.match(boardJs, /if \(!app\) return/);
+  assert.match(boardJs, /if \(state \|\| app\.querySelector\("\.slate, \.rail, \.main-col"\)\) return/);
+  assert.match(boardJs, /refresh\(\)\.catch\(failBoard\)/);
+  assert.match(libraryJs, /function initLibrary/);
+  assert.match(libraryJs, /if \(!app\) return/);
+  assert.equal(boardJs.includes("String(err)"), false);
+  assert.match(libraryJs, /empty\.textContent = friendlyJobError\(error\)/);
+  assert.equal(libraryJs.includes("보드를 불러오지 못했습니다"), false);
+  assert.match(libJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
+  assert.match(libraryJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
+  assert.match(materialsJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
+  assert.doesNotMatch(libraryJs, /불러오는 중/);
 });
 
 test("OpenMontage-shaped projects and path escape stay defensive", async () => {
@@ -224,6 +527,196 @@ test("OpenMontage-shaped projects and path escape stay defensive", async () => {
   }
 });
 
+test("/p and /backlot/p parse to the same project id", () => {
+  assert.equal(projectIdFromPath("/p/demo"), "demo");
+  assert.equal(projectIdFromPath("/p/demo/"), "demo");
+  assert.equal(projectIdFromPath("/backlot/p/demo"), "demo");
+  assert.equal(projectIdFromPath("/backlot/p/demo/"), "demo");
+  assert.equal(projectIdFromPath("/backlot"), "");
+});
+
+test("satellite import resets the menu then paints the result card", async () => {
+  const title = { textContent: "가져오기" };
+  const actions = { hidden: false };
+  const result = { hidden: true };
+  const summary = { textContent: "" };
+  const overlay = { hidden: true };
+  const nodes = {
+    "#satellite-menu-title": title,
+    "#satellite-menu-actions": actions,
+    "#satellite-import-result": result,
+    "#satellite-import-summary": summary,
+    "#satellite-menu": overlay
+  };
+  const root = { querySelector(sel) { return nodes[sel] || null; } };
+  await importSatelliteLibrary(root, async (url, init) => {
+    assert.equal(url, "/api/library/import");
+    assert.equal(init.method, "POST");
+    return { ok: true, text: async () => JSON.stringify({ imported: ["a"], seeded: [], roots: ["/x"] }) };
+  });
+  assert.equal(overlay.hidden, false);
+  assert.equal(actions.hidden, true);
+  assert.equal(result.hidden, false);
+  assert.equal(summary.textContent, "가져왔어요 1편");
+});
+
+test("satellite import abort does not paint the result sheet", async () => {
+  const title = { textContent: "가져오기" };
+  const actions = { hidden: false };
+  const result = { hidden: true };
+  const summary = { textContent: "" };
+  const overlay = { hidden: true };
+  const listeners = {};
+  const nodes = {
+    "#satellite-menu-title": title,
+    "#satellite-menu-actions": actions,
+    "#satellite-import-result": result,
+    "#satellite-import-summary": summary,
+    "#satellite-menu": overlay,
+    "#satellite-import": {
+      addEventListener(type, fn) {
+        if (type === "click") listeners.click = fn;
+      }
+    }
+  };
+  const root = {
+    dataset: {},
+    querySelector(sel) { return nodes[sel] || null; },
+    querySelectorAll() { return []; }
+  };
+  const abort = new Error("aborted");
+  abort.name = "AbortError";
+  bindSatelliteMenu(root, async () => { throw abort; });
+  await listeners.click({ preventDefault() {} });
+  assert.equal(overlay.hidden, false);
+  assert.equal(actions.hidden, false);
+  assert.equal(result.hidden, true);
+  assert.equal(summary.textContent, "");
+});
+
+test("library long-press blocks contextmenu and the board rail stays visible", async () => {
+  const root = process.cwd();
+  const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
+  assert.match(chrome, /export function hideExtraStudioChrome/);
+  assert.match(libraryJs, /addEventListener\("contextmenu"/);
+  assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
+  assert.match(libraryJs, /event\.preventDefault\(\)/);
+  assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
+  assert.match(libraryJs, /function stageStatusKo/);
+  assert.match(libraryJs, /stageStatusKo\(s\.status\)/);
+  assert.doesNotMatch(libraryJs, /RAIL_STATUS\[s\.status\] \|\| s\.status/);
+  assert.match(libraryJs, /script:\s*"대본"/);
+  assert.match(libraryJs, /displayPipelineLabel\(p\.pipeline_type\)/);
+  assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
+  assert.match(libraryJs, /displayStageLabel\(p\.active_stage\)/);
+  assert.match(boardJs, /displayPipelineLabel\(pipelineType\)/);
+  assert.match(boardJs, /pipelineType !== "style_playbook"/);
+  assert.doesNotMatch(boardJs, /s\.style_playbook \? el\("span", \{ class: "chip" \}/);
+  assert.match(boardJs, /onclick: closeModal \}, "닫기"/);
+  assert.doesNotMatch(boardJs, /ESC · CLOSE/);
+  assert.doesNotMatch(boardJs, /ESC · 닫기/);
+  assert.match(boardJs, /displayItemLabel/);
+  assert.match(boardJs, /displayStageLabel\(st\.name\)/);
+  assert.match(libraryJs, /completed:\s*"완료"/);
+  assert.match(libraryJs, /function stageStatusKo/);
+  assert.match(libraryJs, /stageStatusKo\(s\.status\)/);
+  assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.materials \.inspect-files a\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  const railName = css.replace(/@media \(max-width:\s*900px\)[\s\S]*/, "");
+  assert.match(railName, /\.stage \.name\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+  assert.match(satelliteBoot, /hash === "template"/);
+  assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
+  assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
+  assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(chrome, /export function leaveSatelliteIfNeeded/);
+});
+
+test("board bfcache closes the modal, disables PiP, and blocks pull-to-refresh", async () => {
+  const root = process.cwd();
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  assert.match(boardJs, /disablepictureinpicture/);
+  assert.match(boardJs, /video\.disablePictureInPicture = true/);
+  assert.match(boardJs, /addEventListener\("pageshow"/);
+  assert.match(boardJs, /if \(!event\.persisted\) return/);
+  assert.match(boardJs, /closeModal\(\)/);
+  assert.match(boardJs, /pauseBoardVideos\(\)/);
+  assert.match(css, /z-index:\s*1;/);
+  assert.doesNotMatch(css, /z-index:\s*90/);
+  assert.match(css, /html, body \{\s*overscroll-behavior-y:\s*none/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("library empty Korean, fail clears skeletons, and hero uses an auto 9:16 box", async () => {
+  const root = process.cwd();
+  const library = await readFile(join(root, "public/backlot/index.html"), "utf8");
+  const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
+  assert.match(library, /아직 보드가 없습니다/);
+  assert.doesNotMatch(library, /No projects yet/);
+  assert.match(library, /id="empty"[^>]*hidden/);
+  assert.match(libraryJs, /function syncLibraryEmpty/);
+  assert.match(libraryJs, /dataset\?\.busy === "1"/);
+  assert.match(libraryJs, /querySelector\("\.is-skeleton"\)/);
+  assert.match(libraryJs, /querySelector\("\.lib-card:not\(\.is-skeleton\)"\)/);
+  assert.doesNotMatch(libraryJs, /querySelector\("\.lib-card, \.lib-skeleton"\)/);
+  assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
+  assert.match(ui, /key === "ps4-studio"\) return "보드"/);
+  const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
+  assert.match(heroExtra, /height:\s*auto/);
+  assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("library posters are 9:16, cost wraps, and materials save stays opaque", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const materials = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
+  const library = await readFile(join(root, "public/backlot/index.html"), "utf8");
+  const board = await readFile(join(root, "public/backlot/board.html"), "utf8");
+  assert.match(css, /\.wrap:not\(#app\) \.lib-poster\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(css, /\.cost\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /\.cost\s*\{[^}]*max-width:\s*100%/);
+  assert.match(css, /\.cost \.bar\s*\{[^}]*max-width:\s*100%/);
+  assert.match(css, /\.materials \.inspect-save:disabled[\s\S]{0,80}opacity:\s*1/);
+  assert.match(materials, /저장 중…/);
+  assert.match(materials, /button\.textContent = "저장 중…"/);
+  assert.match(library, /href="\/#create">새 영상</);
+  assert.match(board, /href="\/#create">새 영상</);
+  assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(css, /Studio extra: filmstrip 9:16 overflow/);
+  assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*max-height:\s*118px/);
+  assert.match(css, /\.filmstrip \.thumb\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /Studio extra: board aside overflow/);
+  assert.match(css, /\.board\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*320px\)/);
+  assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*visible/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overflow-y:\s*hidden/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overscroll-behavior-y:\s*none/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*touch-action:\s*pan-x/);
+  assert.match(css, /\.lib-grid:has\(\.is-skeleton\) \+ #empty/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {
   const spec = getLockedSpec();
   assert.equal(spec.tally.N, 288);
@@ -232,4 +725,82 @@ test("template spec JSON still carries N=288, slots, locks, and live_action do-n
   const live = spec.types.find((type) => type.id === "live_action");
   assert.equal(live.factory, "do-not-clone");
   assert.equal(JSON.stringify(spec).includes("쇼츠 공장"), false);
+});
+
+test("library swallows long-press, materials holds IME toast, and board keep ignores skeletons", async () => {
+  const root = process.cwd();
+  const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  const materials = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
+  const ui = await readFile(join(root, "public/shorts-ui.mjs"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  assert.match(libraryJs, /function armClickSwallow/);
+  assert.match(libraryJs, /armClickSwallow\(card\)/);
+  assert.match(libraryJs, /keepPaintedGrid\(grid\)/);
+  assert.match(boardJs, /keepPaintedGrid\(app\)/);
+  assert.match(boardJs, /\$\{index \+ 1\}번/);
+  assert.match(boardJs, /\$\{i \+ 1\}테이크/);
+  assert.match(boardJs, /\$\{card\.takes\.length\}테이크/);
+  assert.doesNotMatch(boardJs, /`T\$\{card\.takes\.length\}`/);
+  assert.doesNotMatch(boardJs, /`Item \$\{index \+ 1\}`/);
+  assert.doesNotMatch(boardJs, /`take \$\{i \+ 1\}`/);
+  assert.match(ui, /export function keepPaintedGrid/);
+  assert.match(ui, /classList\?\.contains\("is-skeleton"\)/);
+  assert.match(materials, /toast\.held/);
+  assert.match(materials, /function flushHeldToast/);
+  assert.match(materials, /keyCode === 229/);
+  assert.match(materials, /isComposing/);
+  assert.match(materials, /ime-open/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("materials overflow stays visible, filmstrip pans sideways, slate is N테이크", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
+  assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*visible/);
+  assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overflow-y:\s*hidden/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*overscroll-behavior-y:\s*none/);
+  assert.match(css, /\.filmstrip\s*\{[^}]*touch-action:\s*pan-x/);
+  assert.match(boardJs, /\$\{card\.takes\.length\}테이크/);
+  assert.doesNotMatch(boardJs, /`T\$\{card\.takes\.length\}`/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("inspect-stack overflow-x is visible and satellite #batch rewrites to /#create", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  const library = await readFile(join(root, "public/backlot/index.html"), "utf8");
+  const board = await readFile(join(root, "public/backlot/board.html"), "utf8");
+  assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*visible/);
+  assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(satelliteBoot, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.doesNotMatch(satelliteBoot, /hash === "create" \|\| hash === "batch"/);
+  assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("sticky 저장 sits at bottom 0 and satellite import clears the batch hint", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
+  assert.match(css, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(satellite, /rememberStudioCreateMode\(globalThis\.sessionStorage, "single"\)/);
+  assert.match(satellite, /export async function importSatelliteLibrary[\s\S]*rememberStudioCreateMode\(globalThis\.sessionStorage, "single"\)/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
 });

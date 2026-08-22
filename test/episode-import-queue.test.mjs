@@ -9,6 +9,7 @@ import {
   discoverEpisodeDrop,
   ensureLibraryEpisodes,
   findJobForSlug,
+  importPublicView,
   loadSeedCatalog,
   matchesEpisodeSlug,
   seedJobRecord
@@ -119,6 +120,34 @@ test("empty library gets seed cards; dropped masters attach once", async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+test("import keeps webm mov m4v mkv and webp types", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-types-"));
+  const jobsDir = join(root, "jobs");
+  const drops = join(root, "imports");
+  await mkdir(join(drops, "playground-cistern"), { recursive: true });
+  await writeFile(join(drops, "playground-cistern", "master.webm"), "webm-master");
+  await writeFile(join(drops, "playground-cistern", "thumbnail.webp"), "webp-thumb");
+  const result = await ensureLibraryEpisodes({
+    root,
+    jobsDir,
+    workspaceDir: root,
+    extraRoots: [drops]
+  });
+  const job = findJobForSlug(result.jobs, "playground-cistern");
+  assert.ok(existsSync(join(jobsDir, job.id, "master.webm")));
+  assert.ok(existsSync(join(jobsDir, job.id, "master.mp4")));
+  assert.ok(existsSync(join(jobsDir, job.id, "thumbnail.webp")));
+  assert.equal(job.artifacts.some((item) => item.name === "master.webm"), true);
+  assert.equal(job.artifacts.some((item) => item.name === "thumbnail.webp"), true);
+  const source = await readFile(join(process.cwd(), "src/episode-import.mjs"), "utf8");
+  assert.match(source, /\.webm/);
+  assert.match(source, /\.mov/);
+  assert.match(source, /\.m4v/);
+  assert.match(source, /\.mkv/);
+  assert.match(source, /\.webp/);
+  await rm(root, { recursive: true, force: true });
+});
+
 test("imported jpg wins over 1x1 placeholder png on the card", async () => {
   const root = await mkdtemp(join(tmpdir(), "ps4-thumb-"));
   const jobsDir = join(root, "jobs");
@@ -170,8 +199,8 @@ test("serial grok queue starts one job and holds the next", async () => {
   assert.deepEqual(queue.snapshot().waiting, ["b"]);
   assert.equal(jobs.b.status, "queued");
   assert.equal(jobs.b.queuePosition, 1);
-  assert.match(jobs.b.message, /대기열 1번/);
-  assert.equal(shortStatus(jobs.b).label, "대기 1");
+  assert.match(jobs.b.message, /대기 1번/);
+  assert.equal(shortStatus(jobs.b).label, "대기 1번");
 
   finish.a(true);
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -219,6 +248,20 @@ test("factory queue persists waiting and skips completed on restore", async () =
   await rm(root, { recursive: true, force: true });
 });
 
+test("import public view omits roots and catalog", async () => {
+  const view = importPublicView({
+    imported: ["seed-a"],
+    seeded: ["seed-a", "seed-b"],
+    catalog: { episodes: [{ slug: "a" }], dropRoots: ["/secret"] },
+    roots: ["/workspace/imports"],
+    jobs: [{ id: "seed-a" }]
+  });
+  assert.deepEqual(view, { imported: ["seed-a"], seeded: ["seed-a", "seed-b"], count: 2 });
+  assert.equal("catalog" in view, false);
+  assert.equal("roots" in view, false);
+  assert.equal("jobs" in view, false);
+});
+
 test("studio keeps import control and seed episode copy", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   const app = await readFile(join(process.cwd(), "public", "app.js"), "utf8");
@@ -229,6 +272,10 @@ test("studio keeps import control and seed episode copy", async () => {
   assert.equal(html.includes("playground-cistern"), false);
   assert.equal(html.includes("workspace/imports"), false);
   assert.match(app, /\/api\/library\/import/);
+  assert.match(app, /importBroughtCopy\(payload\)/);
+  assert.equal(app.includes("가져옴"), false);
+  assert.equal(app.includes("시드 ${"), false);
+  assert.equal(app.includes("경로 ${"), false);
   assert.match(app, /libraryIndex/);
   assert.equal(html.includes("id=\"short-overlay\""), false);
   assert.equal(app.includes("#short-overlay"), false);

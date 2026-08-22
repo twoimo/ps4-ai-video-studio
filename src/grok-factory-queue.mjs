@@ -36,7 +36,7 @@ export function createGrokFactoryQueue({
       await updateJob(jobId, {
         status: "queued",
         stage: "대기",
-        message: `공장 대기열 ${index + 1}번 · 한 번에 하나만 실행합니다`,
+        message: `대기 ${index + 1}번`,
         queuePosition: index + 1
       }).catch(() => {});
     }

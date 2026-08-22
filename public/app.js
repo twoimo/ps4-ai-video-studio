@@ -1,7 +1,9 @@
-import { formatClock, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, rememberStudioCreateMode, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, takeCreateModeHint, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
+import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
+import { bindFocusScroll, bindRotateSettle, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel, syncOverlayLock, visualViewportKeyboardInset } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
-import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
+import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -25,7 +27,11 @@ const state = {
   watchLockUntil: 0,
   watchSwiping: false,
   createMode: "single",
-  focusOpener: null
+  focusOpener: null,
+  jobsLoaded: false,
+  settingsSeq: 0,
+  createSeq: 0,
+  pendingDeleteId: null
 };
 
 function escapeHtml(value = "") {
@@ -40,18 +46,84 @@ function syncToggleLabels() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `요청 실패 (${response.status})`);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (error) {
+    throwMappedFetchError(error);
+  }
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throwMappedFetchError(error);
+  }
+  let payload;
+  try {
+    payload = parseJsonText(text);
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
+  if (!response.ok) {
+    const creditMark = String(400 + 2);
+    const text = String(payload.error || "");
+    if (response.status === 400 + 2 || text.includes(creditMark) || text.includes("크레딧")) {
+      throw new Error("지금은 다시 못 만들어요.");
+    }
+    throw new Error(friendlyJobError(payload.error || "요청에 실패했습니다."));
+  }
   return payload;
 }
 
-function showToast(message, type = "") {
+function imeKeyboardOpen() {
+  return document.documentElement.classList.contains("ime-open");
+}
+
+function flushToastsAfterIme() {
+  if (imeKeyboardOpen()) return;
+  if (enqueueToast.current || enqueueToast.timer) return;
+  const next = enqueueToast.queue?.shift();
+  if (next) revealToast(next);
+}
+
+function enqueueToast(message, type = "") {
+  if (isAbortError(message)) return;
+  const text = stripUiPaths(type === "error" ? friendlyJobError(message) : stripErrorPrefix(message));
+  if (!text) return;
+  enqueueToast.queue ||= [];
+  const current = enqueueToast.current;
+  if (current && current.text === text && current.type === type) return;
+  if (enqueueToast.queue.some((item) => item.text === text && item.type === type)) return;
+  const item = { text, type };
+  if (current || imeKeyboardOpen()) {
+    enqueueToast.queue.push(item);
+    return;
+  }
+  revealToast(item);
+}
+
+function revealToast(item) {
+  if (imeKeyboardOpen()) {
+    enqueueToast.queue ||= [];
+    enqueueToast.queue.unshift(item);
+    return;
+  }
   const toast = $("#toast");
-  toast.textContent = message;
-  toast.className = `toast visible ${type}`;
-  window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => { toast.className = "toast"; }, 4200);
+  if (!toast) return;
+  enqueueToast.current = item;
+  toast.textContent = item.text;
+  toast.className = `toast visible ${item.type}`.trim();
+  window.clearTimeout(enqueueToast.timer);
+  enqueueToast.timer = window.setTimeout(() => {
+    toast.className = "toast";
+    enqueueToast.current = null;
+    const next = enqueueToast.queue.shift();
+    if (next) revealToast(next);
+  }, 4200);
+}
+
+function showToast(message, type = "") {
+  enqueueToast(message, type);
 }
 
 function watchableJobs() {
@@ -62,11 +134,18 @@ function selectedJob() {
   return state.jobs.find((job) => job.id === state.selectedJobId) || null;
 }
 
+let ignoreNextHashChange = false;
+
+function skipStaleHashChange() {
+  ignoreNextHashChange = true;
+}
+
 function hashForView(view) {
   if (view === "create") return "#create";
   if (view === "watch") return state.selectedJobId ? `#watch/${state.selectedJobId}` : "#watch";
   if (view === "settings") return "#settings";
-  return "#shorts";
+  if (view === "machine") return "#machine";
+  return "";
 }
 
 function replaceWatchHash(jobId) {
@@ -93,10 +172,12 @@ function bindFocusTrap(root) {
     const last = items[items.length - 1];
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
-      last.focus();
+      last.focus({ preventScroll: true });
+      scrollFocusIntoPanel(last);
     } else if (!event.shiftKey && document.activeElement === last) {
       event.preventDefault();
-      first.focus();
+      first.focus({ preventScroll: true });
+      scrollFocusIntoPanel(first);
     }
   });
 }
@@ -108,26 +189,68 @@ function rememberOpener(event) {
 function restoreOpener() {
   const opener = state.focusOpener;
   state.focusOpener = null;
-  if (opener && typeof opener.focus === "function") opener.focus();
+  if (opener && typeof opener.focus === "function") {
+    opener.focus({ preventScroll: true });
+    scrollFocusIntoPanel(opener);
+  }
+}
+
+function overlayStartFocus(root) {
+  if (!root) return;
+  if (root.id === "machine-overlay") {
+    const panel = root.querySelector?.(".overlay-panel");
+    if (panel && typeof panel.focus === "function") {
+      if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
+      panel.focus({ preventScroll: true });
+    }
+    return;
+  }
+  if (root.id === "create-overlay") {
+    const active = document.activeElement;
+    if (active && root.contains(active) && active !== root && !active.classList?.contains("draft-close")) return;
+    const coarse = Boolean(globalThis.matchMedia?.("(pointer: coarse)")?.matches);
+    if (!coarse) {
+      const batch = state.createMode === "batch";
+      const target = batch ? root.querySelector?.("#batch-topics") : root.querySelector?.("#topic");
+      if (target && typeof target.focus === "function") {
+        target.focus({ preventScroll: true });
+        scrollFocusIntoPanel(target);
+        return;
+      }
+    }
+    const panel = root.querySelector?.(".overlay-panel");
+    if (coarse && panel && typeof panel.focus === "function") {
+      if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
+      panel.focus({ preventScroll: true });
+      return;
+    }
+  }
+  const items = overlayFocusables(root).filter((node) => !node.classList?.contains("draft-close"));
+  (items[0] || overlayFocusables(root)[0])?.focus({ preventScroll: true });
+  scrollFocusIntoPanel(items[0] || overlayFocusables(root)[0]);
 }
 
 function trapOverlay(selector) {
   const root = $(selector);
   if (!root) return;
   bindFocusTrap(root);
-  window.requestAnimationFrame(() => overlayFocusables(root)[0]?.focus());
+  window.requestAnimationFrame(() => overlayStartFocus(root));
 }
 
 function setView(view, options = {}) {
   const next = VIEWS.includes(view) ? view : "grid";
+  const prev = state.view;
   const createOverlay = $("#create-overlay");
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
   const library = $("#shorts");
   if (next !== "watch") clearWatchSize(watchFeed);
+  const leavingWatch = document.body.classList.contains("watch-open") && next !== "watch";
+  if (state.view === "settings" && next !== "settings") void persistSettings();
   state.view = next;
   document.body.classList.toggle("watch-open", state.view === "watch");
   document.body.classList.toggle("overlay-open", ["create", "settings", "machine"].includes(state.view));
+  syncOverlayLock();
   if (createOverlay) createOverlay.hidden = state.view !== "create";
   if (settingsOverlay) settingsOverlay.hidden = state.view !== "settings";
   const machineOverlay = $("#machine-overlay");
@@ -137,16 +260,28 @@ function setView(view, options = {}) {
   if (watchFeed) watchFeed.hidden = state.view !== "watch";
   if (library) library.hidden = state.view === "watch";
   const openingWatch = state.view === "watch";
-  if (openingWatch) {
+  if (openingWatch || leavingWatch) {
     document.querySelectorAll(".preview-wrap video, .shorts-grid video, audio").forEach((media) => {
       try { media.pause(); } catch { /* ignore leftover preview/grid/audio */ }
     });
+  }
+  if (leavingWatch && next === "grid") {
+    if (menuOverlay) menuOverlay.hidden = true;
+    document.body.classList.remove("overlay-open");
+    syncOverlayLock();
+  }
+  pinWatchToVisualViewport();
+  pinOverlaysToVisualViewport();
+  if (openingWatch) {
+    state.createMode = "single";
+    rememberStudioCreateMode(sessionStorage, "single");
     sizeWatchFeed(watchFeed);
   }
   syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
   const afterPaint = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => fn();
   if (openingWatch) {
     afterPaint(() => {
+      pinWatchToVisualViewport();
       sizeWatchFeed(watchFeed);
       applyWatchTransform(watchFeed, { animate: false });
     });
@@ -156,7 +291,12 @@ function setView(view, options = {}) {
   }
   if (!options.skipHash) {
     const nextHash = hashForView(state.view);
-    if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
+    if (location.hash !== nextHash) {
+      skipStaleHashChange();
+      const createSwap = prev === "create" && next === "create";
+      if (prev === "grid" && next !== "grid") history.pushState({ studioView: next }, "", nextHash);
+      else history.replaceState(createSwap ? history.state : null, "", nextHash);
+    }
   }
   if (state.view === "create") {
     syncCreateMode();
@@ -167,13 +307,16 @@ function setView(view, options = {}) {
   if (state.view === "settings") trapOverlay("#settings-overlay");
   if (state.view === "machine") trapOverlay("#machine-overlay");
   if (state.view === "settings") void hydrateStudioSettings();
-  if (state.view === "machine") renderMachineSheet();
+  if (state.view === "machine") {
+    renderMachineSheet();
+    void refreshMachineHealth();
+  }
   syncDocumentTitle();
 }
 
 function syncDocumentTitle() {
   if (state.view === "watch") {
-    const shortTitle = String(selectedJob()?.topic || "").trim();
+    const shortTitle = displayTitle(selectedJob()?.topic);
     document.title = shortTitle ? `${shortTitle} · ${APP_TITLE}` : APP_TITLE;
     return;
   }
@@ -182,7 +325,12 @@ function syncDocumentTitle() {
 
 function applyHash() {
   const hash = location.hash.replace("#", "");
-  if (hash === "create") {
+  if (hash === "batch") {
+    location.replace("/#create");
+  }
+  if (hash === "batch" || hash === "create") {
+    const hinted = takeCreateModeHint();
+    state.createMode = hinted === "batch" ? "batch" : "single";
     setView("create", { skipHash: true });
     return;
   }
@@ -199,49 +347,107 @@ function applyHash() {
     setView("settings", { skipHash: true });
     return;
   }
+  if (hash === "machine" || hash.startsWith("machine/")) {
+    setView("machine", { skipHash: true });
+    return;
+  }
   if (hash === "watch" || hash.startsWith("watch/")) {
     const jobId = hash.startsWith("watch/") ? decodeURIComponent(hash.slice("watch/".length)) : "";
-    if (jobId) state.selectedJobId = jobId;
-    if (watchableJobs().length) {
-      setView("watch", { skipHash: true, instant: true });
+    const playable = watchableJobs();
+    if (!playable.length) {
+      setView("grid", { skipHash: true });
+      if (location.hash) history.replaceState(null, "", location.pathname + location.search);
       return;
     }
-    setView("grid", { skipHash: true });
+    const requested = jobId && playable.find((job) => job.id === jobId);
+    state.selectedJobId = requested?.id || playable[0].id;
+    setView("watch", { skipHash: true, instant: true });
+    return;
+  }
+  if (hash.startsWith("p/") || hash.startsWith("materials/")) {
+    const jobId = decodeURIComponent(hash.replace(/^(p|materials)\//, "").replace(/\/+$/, ""));
+    if (jobId) {
+      location.replace(`/backlot/p/${encodeURIComponent(jobId)}`);
+      return;
+    }
+    location.replace("/backlot");
     return;
   }
   if (hash === "short" || hash.startsWith("short/")) {
-    const jobId = hash.startsWith("short/") ? decodeURIComponent(hash.slice("short/".length)) : state.selectedJobId;
+    const jobId = hash.startsWith("short/") ? decodeURIComponent(hash.slice("short/".length)) : "";
     if (jobId) {
       openMaterials(jobId);
       return;
     }
+    location.replace("/backlot");
+    return;
   }
   if (!hash || hash === "shorts") {
+    if (hash === "shorts") history.replaceState(history.state, "", location.pathname + location.search);
     setView("grid", { skipHash: true });
     return;
   }
   setView("grid", { skipHash: true });
 }
 
+function measureChrome() {
+  const grid = $("#shorts-grid");
+  const header = $("#studio-chrome");
+  if (grid) {
+    const top = Math.round(grid.getBoundingClientRect().top);
+    if (top > 0) return top;
+  }
+  if (!header) return 52;
+  const style = typeof getComputedStyle === "function" ? getComputedStyle(header) : null;
+  const margin = style ? (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0) : 8;
+  return Math.round(header.offsetHeight + margin);
+}
+
+function syncChromeSize() {
+  document.documentElement.style.setProperty("--chrome", `${measureChrome()}px`);
+}
+
 function sizeShortsGrid() {
   const grid = $("#shorts-grid");
   if (!grid) return;
+  syncChromeSize();
   const gap = 2;
   const width = grid.clientWidth;
   if (!width) return;
-  const col = (window.innerHeight - 52 - gap) * 9 / 16;
+  const chrome = measureChrome();
+  const innerH = window.innerHeight || 0;
+  if (innerH) document.documentElement.style.setProperty("--inner-height", `${Math.round(innerH)}px`);
+  const portrait = window.innerWidth < 600 || window.innerWidth <= window.innerHeight;
+  const height = portrait ? innerH : (window.visualViewport?.height || innerH);
+  const col = (height - chrome - gap) * 9 / 16;
   if (!(col > 0)) return;
-  const shortLandscape = window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
-  const n = Math.max(shortLandscape ? 3 : 1, Math.ceil((width + gap) / (col + gap)));
+  const shortLandscape = window.innerWidth >= 600 && window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
+  const n = shortLandscape ? 2 : Math.max(1, Math.ceil((width + gap) / (col + gap)));
   grid.style.setProperty("--n", String(n));
 }
 
 function createTileMarkup() {
-  return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
+  return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 영상"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
+}
+
+function bindCreateTile() {
+  const tile = $("#create-tile");
+  if (!tile || tile.dataset.bound === "1") return;
+  tile.dataset.bound = "1";
+  tile.addEventListener("click", openCreate);
+  tile.addEventListener("contextmenu", (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+  });
 }
 
 function jobCardsMarkup() {
   return state.jobs.map(renderShortCard).join("");
+}
+
+function emptyGridNote() {
+  if (state.jobs.length) return "";
+  return `<p class="empty-note" id="grid-empty">아직 영상이 없어요</p>`;
 }
 
 function bindFeedScroll() {
@@ -277,7 +483,7 @@ function watchSlideMarkup(job, loop = "") {
 }
 
 function watchChromeMarkup() {
-  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>`;
+  return `<button type="button" class="watch-close watch-back" aria-label="닫기">×</button><button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button><div class="watch-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><button type="button" class="watch-sound" hidden aria-label="소리"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4zm12.5 3 3.5 3.5-1.4 1.4L15.1 13.4l-3.5 3.5-1.4-1.4 3.5-3.5-3.5-3.5 1.4-1.4 3.5 3.5 3.5-3.5 1.4 1.4z"/></svg></button><div class="watch-slide-chrome"><div class="watch-meta"><h2></h2></div></div>`;
 }
 
 function watchFeedMarkup(jobs) {
@@ -304,17 +510,6 @@ function bindWatchChrome() {
       if (bar) bar.style.width = `${value}%`;
       progress?.setAttribute("aria-valuenow", String(value));
     }
-  });
-  feed.querySelector(".watch-close")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    stopWatchFeed(feed);
-    openHome(event);
-  });
-  feed.querySelector(".watch-menu, .watch-materials-toggle")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const jobId = currentWatchSlide(feed)?.dataset?.jobId || state.selectedJobId;
-    openMaterials(jobId);
   });
 }
 
@@ -344,7 +539,7 @@ function activateWatchSlide(jobId) {
   });
   const title = $("#watch-feed .watch-meta h2");
   const job = state.jobs.find((item) => item.id === jobId);
-  if (title) title.textContent = job?.topic || "쇼츠";
+  if (title) title.textContent = displayTitle(job?.topic, "영상");
   const feed = $("#watch-feed");
   if (!document.body.classList.contains("watch-open")) {
     stopWatchFeed(feed);
@@ -379,7 +574,7 @@ function patchWatchSlide(job) {
   });
   if (state.selectedJobId === job.id) {
     const title = $("#watch-feed .watch-meta h2");
-    if (title) title.textContent = job.topic || "쇼츠";
+    if (title) title.textContent = displayTitle(job.topic, "영상");
   }
 }
 
@@ -387,7 +582,9 @@ function mountWatchFeed({ focus = false, instant = false } = {}) {
   const root = $("#watch-feed");
   const track = $("#watch-track");
   const empty = $("#watch-empty");
-  bindWatchFeed(root, openHome, (jobId) => notifyActive(jobId));
+  bindWatchFeed(root, openHome, (jobId) => notifyActive(jobId), (jobId) => {
+    openMaterials(jobId || currentWatchSlide(root)?.dataset?.jobId || state.selectedJobId);
+  });
   bindWatchChrome();
   createWatchPlayer(root);
   if (!track) return;
@@ -426,8 +623,20 @@ function materialsUrl(jobId) {
   return `/backlot/p/${encodeURIComponent(jobId)}`;
 }
 
+function hideLeftoverOverlays() {
+  ["#create-overlay", "#settings-overlay", "#machine-overlay", "#menu-overlay"].forEach((selector) => {
+    const node = $(selector);
+    if (node) node.hidden = true;
+  });
+  document.body.classList.remove("overlay-open");
+  pinOverlaysToVisualViewport();
+  syncOverlayLock();
+  replaceClearStudioLayer();
+}
+
 function openMaterials(jobId) {
   if (!jobId) return;
+  hideLeftoverOverlays();
   state.selectedJobId = jobId;
   stopWatchFeed($("#watch-feed"));
   location.assign(materialsUrl(jobId));
@@ -455,7 +664,7 @@ function collectDraftFields(root) {
 function youtubePrepMarkup(job) {
   const pack = shortUploadPack(job);
   const links = pack.links.map((item) => `<a href="${escapeHtml(item.href)}" download>${escapeHtml(item.label)}</a>`).join("");
-  return `<section class="upload-pack"><h3>업로드 준비</h3><p class="inspect-hint">유튜브에 아직 올리지 않아요</p><p class="pack-title">${escapeHtml(pack.title || job.topic || "")}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
+  return `<section class="upload-pack"><h3>업로드 준비</h3><p class="inspect-hint">유튜브에 아직 올리지 않아요</p><p class="pack-title">${escapeHtml(displayTitle(pack.title, job.topic))}</p><textarea readonly rows="4">${escapeHtml(pack.description)}</textarea>${links}</section>`;
 }
 
 async function saveInspectDraft(jobId, root) {
@@ -471,7 +680,10 @@ async function saveInspectDraft(jobId, root) {
 
 function openHome(event) {
   event?.preventDefault();
-  closeMenu();
+  skipStaleHashChange();
+  stopWatchFeed($("#watch-feed"));
+  closeMenu({ navigate: true });
+  if (studioLayerDismiss()) return;
   setView("grid");
   renderJobs();
   sizeShortsGrid();
@@ -492,7 +704,7 @@ function renderShortCard(job) {
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.topic || "쇼츠")}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
+  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(displayTitle(job.topic, "영상"))}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
 }
 
 function upsertJob(partial) {
@@ -500,20 +712,155 @@ function upsertJob(partial) {
   const index = state.jobs.findIndex((item) => item.id === partial.id);
   if (index >= 0) {
     state.jobs[index] = { ...state.jobs[index], ...partial };
+    renderJobs();
     return state.jobs[index];
   }
   state.jobs.unshift(partial);
+  renderJobs();
   return state.jobs[0];
 }
 
 function canDeleteJob(job) {
-  return job && ["draft", "failed", "queued"].includes(job.status);
+  if (!job || !["draft", "failed", "queued"].includes(job.status)) return false;
+  return shortStatus(job).key !== "running";
+}
+
+let studioLayer = "";
+let pageHiding = false;
+let deleteSwallowUntil = 0;
+
+function pushStudioLayer(layer) {
+  if (!layer || studioLayer === layer) return;
+  history.pushState({ studioLayer: layer }, "", location.href);
+  studioLayer = layer;
+}
+
+function replaceClearStudioLayer() {
+  if (!studioLayer) return;
+  studioLayer = "";
+  history.replaceState(null, "", location.href);
+}
+
+function studioLayerFromPop(overlay, options = {}) {
+  const fromPop = Boolean(options.fromPop || overlay?.dataset?.fromPop);
+  if (overlay?.dataset) delete overlay.dataset.fromPop;
+  return fromPop;
+}
+
+function markStudioLayerFromPop() {
+  const overlay = studioLayer === "confirm" ? $("#delete-overlay") : $("#menu-overlay");
+  if (overlay) overlay.dataset.fromPop = "1";
+}
+
+function clearStudioLayer(options = {}) {
+  if (!studioLayer) return;
+  if (options.fromPop) {
+    studioLayer = "";
+    return;
+  }
+  if (options.navigate || options.leave || options.replace || pageHiding) {
+    replaceClearStudioLayer();
+    return;
+  }
+  studioLayer = "";
+  history.back();
+}
+
+function studioLayerDismiss() {
+  if (studioLayer) {
+    history.back();
+    return true;
+  }
+  if (history.state?.studioView) {
+    history.back();
+    return true;
+  }
+  return false;
+}
+
+function dismissStudioLayer() {
+  return studioLayerDismiss();
+}
+
+function handleStudioPopState() {
+  if (pageHiding) return;
+  if (document.pictureInPictureElement) {
+    try { document.exitPictureInPicture?.(); } catch { /* ignore leftover PiP */ }
+    try { history.pushState(history.state, "", location.href); } catch { /* ignore leftover PiP */ }
+    return;
+  }
+  if (studioLayer === "confirm") {
+    markStudioLayerFromPop();
+    closeDeleteConfirm();
+    return;
+  }
+  if (studioLayer === "menu") {
+    markStudioLayerFromPop();
+    closeMenu();
+    return;
+  }
+  if (state.view === "watch") stopWatchFeed($("#watch-feed"));
+  if (["create", "settings", "machine"].includes(state.view)) {
+    closeOverlays({ fromPop: true });
+    return;
+  }
+  applyHash();
+}
+
+function deleteClickSwallowed(event) {
+  if (Date.now() >= deleteSwallowUntil) return false;
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  return true;
+}
+
+function closeDeleteConfirm(options = {}) {
+  if (options && typeof options.preventDefault === "function") options = {};
+  state.pendingDeleteId = null;
+  const overlay = $("#delete-overlay");
+  if (!overlay || overlay.hidden) return false;
+  const fromPop = studioLayerFromPop(overlay, options);
+  overlay.hidden = true;
+  if ($("#menu-overlay")?.hidden && !["create", "settings", "machine"].includes(state.view)) {
+    document.body.classList.remove("overlay-open");
+    restoreOpener();
+  }
+  pinOverlaysToVisualViewport();
+  syncOverlayLock();
+  if (studioLayer === "confirm") clearStudioLayer({ ...options, fromPop });
+  return true;
+}
+
+function askDeleteJob(job) {
+  const overlay = $("#delete-overlay");
+  if (studioLayer === "confirm" || (overlay && !overlay.hidden)) return;
+  state.pendingDeleteId = job.id;
+  const summary = $("#delete-summary");
+  const topic = String(job.topic || "").trim();
+  if (summary) {
+    summary.textContent = topic;
+    summary.hidden = !topic;
+  }
+  if (overlay) overlay.hidden = false;
+  document.body.classList.add("overlay-open");
+  deleteSwallowUntil = Date.now() + 420;
+  pushStudioLayer("confirm");
+  pinOverlaysToVisualViewport();
+  syncOverlayLock();
+  trapOverlay("#delete-overlay");
 }
 
 async function deleteJob(jobId) {
   const job = state.jobs.find((item) => item.id === jobId);
   if (!canDeleteJob(job)) return;
-  if (!window.confirm(`삭제할까요? ${job.topic || "쇼츠"}`)) return;
+  askDeleteJob(job);
+}
+
+async function confirmDeleteJob() {
+  const jobId = state.pendingDeleteId;
+  const job = state.jobs.find((item) => item.id === jobId);
+  closeDeleteConfirm();
+  if (!canDeleteJob(job)) return;
   try {
     await api(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
     state.jobs = state.jobs.filter((item) => item.id !== jobId);
@@ -524,28 +871,86 @@ async function deleteJob(jobId) {
     renderJobs();
     showToast("삭제했습니다.");
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
 function bindShortCard(card) {
   const jobId = card.dataset.jobId;
-  card.querySelector(".short-card-open")?.addEventListener("click", () => openJob(jobId));
+  let hold = 0;
+  let originX = 0;
+  let originY = 0;
+  let moved = false;
+  let fired = false;
+  let swallowClick = false;
+  let swallowUntil = 0;
+  const clearHold = () => {
+    if (hold) window.clearTimeout(hold);
+    hold = 0;
+  };
+  const fireDelete = () => {
+    if (fired || moved) return;
+    if (!canDeleteJob(state.jobs.find((item) => item.id === jobId))) return;
+    fired = true;
+    swallowClick = true;
+    swallowUntil = Date.now() + 420;
+    clearHold();
+    void deleteJob(jobId);
+  };
+  const startHold = (event) => {
+    if (event?.button != null && event.button !== 0) return;
+    if (event?.target?.closest?.(".short-card-detail")) return;
+    if (!canDeleteJob(state.jobs.find((item) => item.id === jobId))) return;
+    fired = false;
+    moved = false;
+    swallowClick = false;
+    clearHold();
+    originX = event?.clientX ?? 0;
+    originY = event?.clientY ?? 0;
+    hold = window.setTimeout(fireDelete, 520);
+  };
+  const moveHold = (event) => {
+    if (!hold) return;
+    const dx = (event?.clientX ?? 0) - originX;
+    const dy = (event?.clientY ?? 0) - originY;
+    if (Math.hypot(dx, dy) > 8) {
+      moved = true;
+      clearHold();
+    }
+  };
+  card.querySelector(".short-card-open")?.addEventListener("click", (event) => {
+    if (swallowClick || Date.now() < swallowUntil) {
+      swallowClick = false;
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      return;
+    }
+    openJob(jobId);
+  });
   card.querySelector(".short-card-detail")?.addEventListener("click", (event) => {
     event.stopPropagation();
     openDetail(jobId);
   });
-  let hold = 0;
-  const startHold = () => {
-    hold = window.setTimeout(() => deleteJob(jobId), 520);
-  };
-  const cancelHold = () => window.clearTimeout(hold);
+  card.querySelector(".short-card-detail")?.addEventListener("contextmenu", (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+  });
+  card.addEventListener("click", (event) => {
+    if (!swallowClick && Date.now() >= swallowUntil) return;
+    swallowClick = false;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+  }, true);
   card.addEventListener("pointerdown", startHold);
-  card.addEventListener("pointerup", cancelHold);
-  card.addEventListener("pointerleave", cancelHold);
+  card.addEventListener("pointermove", moveHold);
+  card.addEventListener("pointerup", clearHold);
+  card.addEventListener("pointercancel", clearHold);
+  card.addEventListener("pointerleave", clearHold);
   card.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    void deleteJob(jobId);
+    event?.preventDefault?.();
+    if (event?.target?.closest?.(".short-card-detail")) return;
+    if (!canDeleteJob(state.jobs.find((item) => item.id === jobId))) return;
+    fireDelete();
   });
 }
 
@@ -569,14 +974,14 @@ function patchGridCard(job) {
 
 function renderJobs() {
   const grid = $("#shorts-grid");
-  if (grid) {
-    grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}<div class="feed-sentinel"></div>`;
-    $("#create-tile")?.addEventListener("click", openCreate);
+  if (grid && state.jobsLoaded) {
+    grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}${emptyGridNote()}<div class="feed-sentinel"></div>`;
+    bindCreateTile();
     $$(".short-card[data-job-id]").forEach(bindShortCard);
     bindFeedScroll();
     sizeShortsGrid();
-    renderStudioChrome();
   }
+  renderStudioChrome();
   if (state.view === "watch") {
     renderWatchFeed();
     return;
@@ -602,13 +1007,18 @@ function defaultFactoryStages() {
 function applyLiveSnapshot(jobId, payload) {
   if (!payload || !jobId) return;
   const previous = state.live[jobId] || {};
-  state.live[jobId] = {
+  const next = {
     events: payload.events || previous.events || [],
     timeline: payload.timeline || previous.timeline || [],
     shots: payload.shots || previous.shots || [],
     proofs: payload.proofs || previous.proofs || []
   };
-  const job = upsertJob(payload.job || state.jobs.find((item) => item.id === jobId));
+  const prevJob = state.jobs.find((item) => item.id === jobId);
+  let sameLive = false;
+  try { sameLive = JSON.stringify(previous) === JSON.stringify(next); } catch { sameLive = false; }
+  if (sameLive && shortCardUnchanged(prevJob, payload.job || prevJob)) return;
+  state.live[jobId] = next;
+  const job = upsertJob(payload.job || prevJob);
   if (job && payload.job) {
     job.artifacts = payload.job.artifacts || job.artifacts;
     job.live = payload.job.live || job.live;
@@ -676,21 +1086,19 @@ function watchJobLive(job) {
     const source = new EventSource(`/api/jobs/${encodeURIComponent(job.id)}/events?sse=1`);
     source.jobId = job.id;
     source.addEventListener("factory_stage", (event) => {
-      try { applyFactoryStage(job.id, JSON.parse(event.data)); } catch { void loadLiveSnapshot(job.id); }
+      try { applyFactoryStage(job.id, parseJsonText(event.data)); } catch { void loadLiveSnapshot(job.id); }
     });
     source.addEventListener("job", (event) => {
-      try { applyLiveSnapshot(job.id, JSON.parse(event.data)); } catch { void loadLiveSnapshot(job.id); }
+      try { applyLiveSnapshot(job.id, parseJsonText(event.data)); } catch { void loadLiveSnapshot(job.id); }
     });
     source.addEventListener("done", () => {
-      source.close();
-      if (state.sse === source) state.sse = null;
       void loadLiveSnapshot(job.id);
       void refreshJobs();
     });
     source.onerror = () => {
-      source.close();
-      if (state.sse === source) state.sse = null;
-      if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
+      if (source.readyState === EventSource.CONNECTING || source.readyState === 0) return;
+      try { source.close(); } catch { /* ignore leftover SSE */ }
+      void endJobSseIfGone(source, job.id);
     };
     state.sse = source;
     void loadLiveSnapshot(job.id);
@@ -698,6 +1106,27 @@ function watchJobLive(job) {
     if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(job.id), 1000);
     void loadLiveSnapshot(job.id);
   }
+}
+
+function jobSseGone(error) {
+  const text = String(error?.message || error || "");
+  return /ENOENT|no such file|파일을 찾지 못했습니다|작업을 찾지 못했습니다/i.test(text);
+}
+
+async function endJobSseIfGone(source, jobId) {
+  try {
+    await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+  } catch (error) {
+    if (!jobSseGone(error)) {
+      if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(jobId), 1000);
+      return;
+    }
+    try { source.close(); } catch { /* already closed */ }
+    if (state.sse === source) state.sse = null;
+    if (state.livePoll) { window.clearInterval(state.livePoll); state.livePoll = null; }
+    return;
+  }
+  if (!state.livePoll) state.livePoll = window.setInterval(() => loadLiveSnapshot(jobId), 1000);
 }
 
 async function loadLiveSnapshot(jobId) {
@@ -723,54 +1152,67 @@ function collectWorldSlots() {
   return slots;
 }
 
-async function refreshCreatePreview() {
+async function refreshCreatePreview(expectedSeq = state.createSeq) {
+  const seq = expectedSeq;
   if ($("#provider")?.value !== "grok-imagine") {
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = "";
     return;
   }
-  const topic = $("#topic")?.value || "";
-  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const topic = $("#topic")?.value?.trim() || "";
+  const facts = fieldLines("#facts");
   const worldSlots = collectWorldSlots();
-  if (topic.trim().length < 4 && !facts.length) {
+  if (topic.length < 4 && !facts.length) {
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = "";
     return;
   }
   try {
-    state.createPreview = await api("/api/grok-imagine/template/preview", {
+    const payload = await api("/api/grok-imagine/template/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        topic: topic.trim() || "빈 현장의 숨은 원리",
+        topic: topic.trim(),
         facts,
         worldSlots,
-        scriptDraft: $("#script-draft")?.value.trim() || ""
+        scriptDraft: $("#script-draft")?.value?.trim() || ""
       })
     });
+    if (seq !== state.createSeq) return;
+    state.createPreview = payload;
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = `${renderWorldSlotFields(state.createPreview.worldSlots)}<h4 class="prompt-subhead">채워진 샷</h4>${renderShotPromptList(state.createPreview.shots)}`;
   } catch (error) {
+    if (seq !== state.createSeq) return;
     const preview = $("#create-prompt-preview");
-    if (preview) preview.innerHTML = `<div class="warning-box"><b>미리보기 실패</b><p>${escapeHtml(error.message)}</p></div>`;
+    if (preview) preview.innerHTML = `<div class="warning-box"><b>미리보기 실패</b><p>${escapeHtml(friendlyJobError(error))}</p></div>`;
   }
 }
 
 async function hydrateCreateSlots() {
+  const seq = state.createSeq;
   try {
     if (!state.template) state.template = await api("/api/grok-imagine/template");
+    if (seq !== state.createSeq) return;
     const mount = $("#create-world-slots");
     if (mount && !mount.dataset.ready) {
       mount.innerHTML = renderWorldSlotFields(state.template.slots, { editable: true, namePrefix: "create-slot" });
       mount.dataset.ready = "1";
       mount.querySelectorAll("[data-world-slot]").forEach((input) => input.addEventListener("input", () => {
         window.clearTimeout(state.previewTimer);
-        state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+        state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
       }));
     }
-    await refreshCreatePreview();
+    if (seq !== state.createSeq) return;
+    await refreshCreatePreview(seq);
   } catch (error) {
-    showToast(`템플릿을 불러오지 못했습니다: ${error.message}`, "error");
+    if (seq !== state.createSeq) return;
+    const mount = $("#create-world-slots");
+    if (mount && !mount.dataset.ready) {
+      mount.innerHTML = `<p class="form-footnote">월드 슬롯을 불러오지 못했습니다.</p>`;
+      mount.dataset.ready = "1";
+    }
+    showToast("템플릿을 불러오지 못했습니다.", "error");
   }
 }
 
@@ -781,14 +1223,18 @@ async function runSelectedJob() {
     await api(`/api/jobs/${encodeURIComponent(state.selectedJobId)}/run`, { method: "POST" });
     showToast("만들기를 시작했습니다.");
     await refreshJobs();
-  } catch (error) { showToast(error.message, "error"); }
+  } catch (error) { showToast(error, "error"); }
 }
 
 async function pollJobs() {
   try {
     await refreshJobs();
   } catch (error) {
-    showToast(`작업 상태 갱신 실패: ${error.message}`, "error");
+    if (isAbortError(error)) {
+      keepPaintedGrid(error);
+      return;
+    }
+    enqueueToast(error, "error");
   }
 }
 
@@ -798,13 +1244,59 @@ function syncPollTimer() {
   if (active) state.poll = window.setInterval(pollJobs, 900);
 }
 
+function keepPaintedGrid(error) {
+  if (!isAbortError(error)) return false;
+  const grid = document.querySelector("#shorts-grid");
+  const painted = [...(grid?.children || [])].some((node) => {
+    if (node.classList?.contains("is-skeleton")) return false;
+    return node.classList?.contains("short-card") || node.id === "create-tile" || node.id === "grid-empty";
+  });
+  return Boolean(state.jobs.length || painted) || !state.jobsLoaded;
+}
+
+function failJobsLoad(error) {
+  if (isAbortError(error)) {
+    keepPaintedGrid(error);
+    return;
+  }
+  state.jobsLoaded = true;
+  renderJobs();
+  const text = friendlyJobError(error) || "불러오지 못했습니다.";
+  const banner = $("#feed-banner");
+  if (banner) {
+    banner.hidden = false;
+    banner.textContent = text;
+  }
+  showToast(text, "error");
+}
+
+let jobsRefresh = null;
+
 async function refreshJobs() {
-  const payload = await api("/api/jobs");
-  const previousIds = state.jobs.map((job) => job.id).join("\n");
-  const nextIds = payload.jobs.map((job) => job.id).join("\n");
+  jobsRefresh?.abort();
+  const controller = new AbortController();
+  jobsRefresh = controller;
+  let payload;
+  try {
+    payload = await api("/api/jobs", { signal: controller.signal });
+  } catch (error) {
+    if (isAbortError(error)) {
+      keepPaintedGrid(error);
+      return;
+    }
+    throw error;
+  }
+  if (controller.signal.aborted) return;
+  if (!Array.isArray(payload?.jobs) && !Array.isArray(payload)) {
+    throw new Error("불러오지 못했습니다.");
+  }
+  const previousJobs = state.jobs;
+  const jobs = jobsFromListPayload(payload);
+  const previousIds = previousJobs.map((job) => job.id).join("\n");
+  const nextIds = jobs.map((job) => job.id).join("\n");
   const selectedId = state.selectedJobId;
-  const selectedLive = selectedId ? state.jobs.find((job) => job.id === selectedId) : null;
-  state.jobs = [...payload.jobs].sort((left, right) => {
+  const selectedLive = selectedId ? previousJobs.find((job) => job.id === selectedId) : null;
+  state.jobs = [...jobs].sort((left, right) => {
     const leftIndex = Number(left.libraryIndex);
     const rightIndex = Number(right.libraryIndex);
     if (Number.isFinite(leftIndex) && Number.isFinite(rightIndex)) return leftIndex - rightIndex;
@@ -817,10 +1309,15 @@ async function refreshJobs() {
     }
     return job;
   });
-  const structural = previousIds !== nextIds || !document.querySelector("#create-tile");
+  const structural = previousIds !== nextIds || !state.jobsLoaded || !document.querySelector("#create-tile");
+  state.jobsLoaded = true;
   if (structural) renderJobs();
   else {
-    state.jobs.forEach(patchGridCard);
+    state.jobs.forEach((job) => {
+      const prev = previousJobs.find((item) => item.id === job.id);
+      if (shortCardUnchanged(prev, job)) return;
+      patchGridCard(job);
+    });
     if (state.view === "watch") renderWatchFeed();
     syncDocumentTitle();
   }
@@ -829,14 +1326,19 @@ async function refreshJobs() {
 
 async function createProduction(event) {
   event.preventDefault();
-  const provider = $("#provider").value;
-  const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
-  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const topic = $("#topic")?.value?.trim() || "";
+  if (topic.length < 4) {
+    showToast("영상 주제를 4자 이상 입력하세요.", "error");
+    return;
+  }
+  const provider = $("#provider")?.value || "grok-imagine";
+  const sources = fieldLines("#sources").map((url) => ({ title: url, url }));
+  const facts = fieldLines("#facts");
   const worldSlots = collectWorldSlots();
-  const scriptDraft = $("#script-draft")?.value.trim() || "";
+  const scriptDraft = $("#script-draft")?.value?.trim() || "";
   const ttsProvider = $("#create-tts-provider")?.value || "edge";
   const ttsVoice = $("#create-tts-voice")?.value || "";
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked, draftOnly: true };
+  const body = { topic, format: $("#format")?.value || "vertical", clipCount: Number($("#clip-count")?.value || 7), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions")?.checked !== false, voiceover: provider === "grok-imagine" ? false : $("#voiceover")?.checked === true, draftOnly: true };
   if (ttsVoice) {
     void api("/api/settings", {
       method: "PUT",
@@ -849,22 +1351,27 @@ async function createProduction(event) {
       }
     }).catch(() => {});
   }
-  const button = event.submitter;
-  button.disabled = true;
-  button.querySelector("span").textContent = "저장 중…";
+  const button = event?.target?.querySelector?.("#create-submit") || $("#create-submit");
+  const label = button?.querySelector?.("span");
+  if (button) button.disabled = true;
+  if (label) label.textContent = "저장 중…";
   try {
     const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     state.selectedJobId = payload.job.id;
     state.highlightJobId = payload.job.id;
     upsertJob(payload.job);
+    rememberStudioCreateMode(sessionStorage, "single");
     window.setTimeout(() => {
       if (state.highlightJobId === payload.job.id) state.highlightJobId = null;
       document.querySelector(`[data-job-id="${CSS.escape(payload.job.id)}"]`)?.classList.remove("just-created");
     }, 4200);
     location.assign(materialsUrl(payload.job.id));
     return;
-  } catch (error) { showToast(error.message, "error"); }
-  finally { button.disabled = false; button.querySelector("span").textContent = "초안 저장"; }
+  } catch (error) { showToast(error, "error"); }
+  finally {
+    if (button) button.disabled = false;
+    if (label) label.textContent = "초안 저장";
+  }
 }
 
 function syncProviderForm() {
@@ -877,7 +1384,7 @@ function syncProviderForm() {
   if (factsField) factsField.hidden = provider !== "grok-imagine";
   if (help) {
     help.textContent = provider === "grok-imagine"
-      ? "Grok Imagine 공장은 PATH의 grok 또는 ~/.grok/bin/grok와 이미 되어 있는 SuperGrok OAuth만 사용합니다. XAI_API_KEY와 grok login/logout은 쓰지 않으며 Gemini로 대체하지 않습니다."
+      ? "Grok Imagine으로 그림과 움직임을 만듭니다."
       : provider === "local-video"
         ? "로컬 영상 모델은 설정된 생성기 명령이 필요합니다."
         : "업로드한 로컬 클립만 편집합니다.";
@@ -904,7 +1411,7 @@ function syncProviderForm() {
 function syncCreateMode() {
   const batch = state.createMode === "batch";
   const title = $("#create-title");
-  if (title) title.textContent = batch ? "양산" : "새 쇼츠";
+  if (title) title.textContent = batch ? "양산" : "새 영상";
   const topicField = $("#single-topic-field");
   const topic = $("#topic");
   const batchField = $("#batch-field");
@@ -923,55 +1430,87 @@ function syncCreateMode() {
 function openCreate(event) {
   event?.preventDefault();
   rememberOpener(event);
+  const swap = state.view === "create";
   state.createMode = "single";
-  setView("create");
+  rememberStudioCreateMode(sessionStorage, "single");
+  setView("create", { skipHash: swap });
+  if (swap && location.hash !== "#create") {
+    skipStaleHashChange();
+    history.replaceState(history.state, "", "#create");
+  }
   void hydrateCreateSlots();
 }
 
 function openBatch(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu();
+  closeMenu({ navigate: true });
+  const swap = state.view === "create";
   state.createMode = "batch";
-  setView("create");
+  setView("create", { skipHash: swap });
+  if (swap && location.hash !== "#create") {
+    skipStaleHashChange();
+    history.replaceState(history.state, "", "#create");
+  }
   void hydrateCreateSlots();
 }
 
+function fieldLines(source) {
+  const node = typeof source === "string" ? $(source) : source;
+  return String(node?.value ?? "").split(/\r?\n/).map((line) => String(line || "").trim()).filter(Boolean);
+}
+
 function parseBatchTopics() {
-  return ($("#batch-topics")?.value || "").split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length >= 4);
+  const lines = fieldLines("#batch-topics");
+  const leftover = lines.filter((line) => line && line.length < 4);
+  if (leftover.length) throw new Error("짧은 줄은 4자 이상 입력하세요.");
+  return lines.filter(Boolean);
+}
+
+function batchTopicsOrFocus() {
+  try {
+    const topics = parseBatchTopics();
+    if (!topics.length) {
+      showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
+      $("#batch-topics")?.focus({ preventScroll: true });
+      scrollFocusIntoPanel($("#batch-topics"));
+      return null;
+    }
+    return topics;
+  } catch (error) {
+    showToast(friendlyJobError(error), "error");
+    $("#batch-topics")?.focus({ preventScroll: true });
+    scrollFocusIntoPanel($("#batch-topics"));
+    return null;
+  }
 }
 
 function batchJobBody(topic) {
-  const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+  const facts = fieldLines("#facts");
   return { topic, facts, provider: "grok-imagine", draftOnly: true, captions: true, voiceover: false };
 }
 
 async function saveBatchDrafts() {
-  const topics = parseBatchTopics();
-  if (!topics.length) {
-    showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
-    return;
-  }
+  const topics = batchTopicsOrFocus();
+  if (!topics) return;
   try {
     for (const topic of topics) {
       const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batchJobBody(topic)) });
       if (payload.job) upsertJob(payload.job);
     }
     await refreshJobs();
+    rememberStudioCreateMode(sessionStorage, "single");
     showToast(`초안 ${topics.length}개를 저장했습니다.`);
     closeOverlays();
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
 async function queueBatchJobs() {
   if (state.health?.imagine?.frozen !== false) return;
-  const topics = parseBatchTopics();
-  if (!topics.length) {
-    showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
-    return;
-  }
+  const topics = batchTopicsOrFocus();
+  if (!topics) return;
   try {
     for (const topic of topics) {
       const payload = await api("/api/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(batchJobBody(topic)) });
@@ -982,16 +1521,17 @@ async function queueBatchJobs() {
       }
     }
     await refreshJobs();
+    rememberStudioCreateMode(sessionStorage, "single");
     showToast(`대기열에 ${topics.length}개를 넣었습니다.`);
     closeOverlays();
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   }
 }
 
 function openTemplate(event) {
   event?.preventDefault();
-  closeMenu();
+  closeMenu({ navigate: true });
   stopWatchFeed($("#watch-feed"));
   location.assign("/template");
 }
@@ -999,50 +1539,36 @@ function openTemplate(event) {
 function openSettings(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu();
+  closeMenu({ navigate: true });
   if (state.view === "watch") state.returnToWatch = true;
   setView("settings");
+}
+
+async function refreshMachineHealth() {
+  try {
+    state.health = await api("/api/health");
+  } catch {
+    /* keep last known health */
+  }
+  if (state.view === "machine") renderMachineSheet();
+  renderStudioChrome();
 }
 
 function openMachine(event) {
   event?.preventDefault();
   rememberOpener(event);
-  closeMenu();
+  closeMenu({ navigate: true });
   setView("machine");
 }
 
-function pipelineChipClass({ ready, blocked }) {
-  if (blocked) return " danger";
-  if (!ready) return " warn";
-  return " ok";
-}
-
 function renderChips(health = {}) {
-  const grok = Boolean(health.capabilities?.grokCli);
-  const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
-  const pictureReady = grok && !frozen;
-  const stages = [
-    { label: "대본", ready: grok, blocked: false, title: grok ? "대본 · grok CLI 텍스트" : "대본을 쓸 수 없습니다" },
-    { label: "그림", ready: pictureReady, blocked: frozen, title: pictureReady ? "그림 · Grok Imagine" : "그림을 만들 수 없습니다" },
-    { label: "움직임", ready: pictureReady, blocked: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : "움직임을 만들 수 없습니다" },
-    { label: "편집", ready: ffmpeg, blocked: false, title: ffmpeg ? "편집 · ffmpeg" : "편집을 할 수 없습니다" }
-  ];
-  return `<nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정">${stages.map((stage, index) => {
-    const arrow = index ? `<span class="studio-pipe-arrow" aria-hidden="true">→</span>` : "";
-    return `${arrow}<button type="button" class="studio-chip${pipelineChipClass(stage)}" data-open-machine title="${escapeHtml(stage.title)}" aria-label="${escapeHtml(stage.title)}">${stage.label}</button>`;
-  }).join("")}</nav>`;
+  return renderStudioPipe(health);
 }
 
 function renderMachineSheet() {
   const root = $("#machine-root");
   if (!root) return;
-  const health = state.health || {};
-  const grok = Boolean(health.capabilities?.grokCli);
-  const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
-  const picture = grok && !frozen ? "준비" : "없음";
-  root.innerHTML = `<h2 id="machine-title">사양</h2><p>대본 ${grok ? "준비" : "없음"} · 그림 ${picture} · 움직임 ${picture} · 편집 ${ffmpeg ? "준비" : "없음"}</p>`;
+  root.innerHTML = renderMachineSheetHtml(state.health || {});
 }
 
 function renderStudioChrome() {
@@ -1051,16 +1577,15 @@ function renderStudioChrome() {
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
   const chips = $("#studio-chips");
   if (chips) {
-    chips.hidden = false;
-    chips.innerHTML = renderChips(health);
-    chips.querySelectorAll("[data-open-machine]").forEach((button) => button.addEventListener("click", openMachine));
+    paintStudioPipe(document, health, openMachine);
   }
   const banner = $("#feed-banner");
   if (banner) {
     const reasons = [];
-    if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
-    if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
-    if (!grok) reasons.push("대본을 쓸 수 없습니다");
+    if (state.jobsLoaded) {
+      if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
+      if (!grok) reasons.push("대본을 쓸 수 없습니다");
+    }
     banner.hidden = reasons.length === 0;
     banner.textContent = reasons.join(" · ");
   }
@@ -1081,53 +1606,92 @@ function applySettingsToForm(settings) {
   }
   if ($("#settings-bgm-enabled")) $("#settings-bgm-enabled").checked = settings?.bgmEnabled === true;
   if ($("#settings-bgm-volume")) $("#settings-bgm-volume").value = String(settings?.bgmVolume ?? 0.08);
-  if ($("#settings-ffmpeg")) $("#settings-ffmpeg").value = settings?.ffmpegPath || "";
   syncToggleLabels();
 }
 
 async function hydrateStudioSettings() {
+  const seq = state.settingsSeq;
   try {
     const payload = await api("/api/settings");
+    if (seq !== state.settingsSeq) return;
     state.settings = payload.settings;
     applySettingsToForm(payload.settings);
     const songs = $("#settings-bgm-songs");
     if (songs) {
-      const count = Array.isArray(payload.songs) ? payload.songs.length : 0;
-      songs.textContent = count ? `곡 ${count}개` : "곡 없음";
+      const names = Array.isArray(payload.songs)
+        ? payload.songs.filter((name) => typeof name === "string" && name && !/[\\/]/.test(name))
+        : [];
+      songs.textContent = names.length ? names.join(" · ") : "곡 없음";
+      songs.dataset.ready = "1";
     }
   } catch (error) {
-    showToast(error.message, "error");
+    if (isAbortError(error) || seq !== state.settingsSeq) return;
+    const songs = $("#settings-bgm-songs");
+    if (songs && songs.dataset.ready !== "1") songs.textContent = "곡 없음";
+    showToast(error, "error");
+  }
+}
+
+function settingsPayload() {
+  return {
+    ttsProvider: $("#settings-tts-provider")?.value,
+    ttsVoice: $("#settings-tts-voice")?.value,
+    bgmEnabled: $("#settings-bgm-enabled")?.checked === true,
+    bgmVolume: Number($("#settings-bgm-volume")?.value || 0)
+  };
+}
+
+let settingsWrite = null;
+
+async function persistSettings({ toast = false, keepalive = false } = {}) {
+  const body = JSON.stringify(settingsPayload());
+  if (keepalive) {
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body,
+        keepalive: true
+      });
+    } catch {
+      /* pagehide persist does not parse the body or toast */
+    }
+    return;
+  }
+  settingsWrite?.abort();
+  const controller = new AbortController();
+  settingsWrite = controller;
+  const seq = ++state.settingsSeq;
+  try {
+    const payload = await api("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body,
+      signal: controller.signal
+    });
+    if (seq !== state.settingsSeq) return;
+    state.settings = payload.settings;
+    applySettingsToForm(payload.settings);
+    if (toast) showToast("설정을 저장했습니다.");
+  } catch (error) {
+    if (isAbortError(error)) return;
+    const text = settingsSaveFailMessage(error);
+    if (!text) return;
+    showToast(text, "error");
   }
 }
 
 async function saveSettings(event) {
   event?.preventDefault();
-  try {
-    const payload = await api("/api/settings", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        ttsProvider: $("#settings-tts-provider")?.value,
-        ttsVoice: $("#settings-tts-voice")?.value,
-        bgmEnabled: $("#settings-bgm-enabled")?.checked === true,
-        bgmVolume: Number($("#settings-bgm-volume")?.value || 0),
-        ffmpegPath: $("#settings-ffmpeg")?.value || ""
-      })
-    });
-    state.settings = payload.settings;
-    applySettingsToForm(payload.settings);
-    showToast("설정을 저장했습니다.");
-    closeOverlays();
-  } catch (error) {
-    showToast(error.message, "error");
-  }
+  await persistSettings({ toast: true });
+  closeOverlays();
 }
 
 async function previewVoice(buttonId, audioId, providerId, voiceId) {
   const button = $(buttonId);
   if (button) button.disabled = true;
   try {
-    const text = $("#script-draft")?.value.trim() || $("#topic")?.value.trim() || "이렇게 설계된 겁니다.";
+    const text = $("#script-draft")?.value?.trim() || $("#topic")?.value?.trim() || "이렇게 설계된 겁니다.";
     const response = await fetch("/api/tts/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1138,18 +1702,24 @@ async function previewVoice(buttonId, audioId, providerId, voiceId) {
       })
     });
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
+      let payload;
+      try {
+        payload = parseJsonText(await response.text());
+      } catch (error) {
+        throw new Error(friendlyJobError(error));
+      }
       throw new Error(payload.error || "미리 듣기에 실패했습니다.");
     }
     const blob = await response.blob();
     const audio = $(audioId);
     if (audio) {
       audio.src = URL.createObjectURL(blob);
-      audio.hidden = false;
+      audio.hidden = true;
+      if (typeof audio.removeAttribute === "function") audio.removeAttribute("controls");
       await audio.play().catch(() => {});
     }
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
   } finally {
     if (button) button.disabled = false;
   }
@@ -1193,11 +1763,11 @@ async function draftScriptFromTopic() {
     errorBox.textContent = "";
   }
   try {
-    const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
+    const facts = fieldLines("#facts");
     const payload = await api("/api/script/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ topic: $("#topic")?.value, facts })
+      body: JSON.stringify({ topic: $("#topic")?.value?.trim(), facts })
     });
     if (area) {
       area.hidden = false;
@@ -1209,11 +1779,13 @@ async function draftScriptFromTopic() {
     await refreshCreatePreview().catch(() => {});
     showToast("대본 초안을 넣었습니다.");
   } catch (error) {
-    if (errorBox) {
+    if (isAbortError(error)) return;
+    const text = friendlyJobError(error);
+    if (errorBox && text) {
       errorBox.hidden = false;
-      errorBox.textContent = error.message;
+      errorBox.textContent = text;
     }
-    showToast(error.message, "error");
+    showToast(error, "error");
   } finally {
     if (button) button.disabled = false;
   }
@@ -1228,16 +1800,24 @@ function resetMenuCard() {
   if (result) result.hidden = true;
 }
 
-function closeMenu(event) {
+function closeMenu(event, options = {}) {
+  if (event && typeof event === "object" && typeof event.preventDefault !== "function") {
+    options = event;
+    event = null;
+  }
   event?.preventDefault?.();
   const overlay = $("#menu-overlay");
   if (!overlay || overlay.hidden) return false;
+  const fromPop = studioLayerFromPop(overlay, options);
   overlay.hidden = true;
   resetMenuCard();
   if (!["create", "settings", "machine"].includes(state.view)) {
     document.body.classList.remove("overlay-open");
     restoreOpener();
   }
+  pinOverlaysToVisualViewport();
+  syncOverlayLock();
+  if (studioLayer === "menu") clearStudioLayer({ ...options, fromPop });
   return true;
 }
 
@@ -1246,13 +1826,16 @@ function openMenu(event) {
   const overlay = $("#menu-overlay");
   if (!overlay) return;
   if (!overlay.hidden) {
-    closeMenu(event);
+    if (!studioLayerDismiss()) closeMenu(event);
     return;
   }
   rememberOpener(event);
   resetMenuCard();
   overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  pushStudioLayer("menu");
+  pinOverlaysToVisualViewport();
+  syncOverlayLock();
   trapOverlay("#menu-overlay");
 }
 
@@ -1260,15 +1843,14 @@ function showImportResult(payload) {
   const overlay = $("#menu-overlay");
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  pinOverlaysToVisualViewport();
+  syncOverlayLock();
   const title = $("#menu-title");
   if (title) title.textContent = "가져오기";
   const actions = $("#menu-actions");
   const result = $("#menu-import-result");
   const summary = $("#menu-import-summary");
-  const imported = payload.imported?.length || 0;
-  const seeded = payload.seeded?.length || 0;
-  const roots = payload.roots?.length || 0;
-  if (summary) summary.textContent = `가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`;
+  if (summary) summary.textContent = importBroughtCopy(payload);
   if (actions) actions.hidden = true;
   if (result) result.hidden = false;
   trapOverlay("#menu-overlay");
@@ -1276,17 +1858,38 @@ function showImportResult(payload) {
 
 async function importLibrary(event) {
   event?.preventDefault();
+  state.createMode = "single";
+  rememberStudioCreateMode(sessionStorage, "single");
   try {
     const payload = await api("/api/library/import", { method: "POST" });
     await refreshJobs();
     showImportResult(payload);
   } catch (error) {
-    showToast(error.message, "error");
+    if (isAbortError(error)) return;
+    showImportResult({ error: friendlyJobError(error) || "가져오지 못했습니다." });
   }
 }
 
-function closeOverlays(event) {
-  event?.preventDefault();
+function closeOverlays(event, options = {}) {
+  if (event && typeof event === "object" && typeof event.preventDefault !== "function") {
+    options = event;
+    event = null;
+  }
+  event?.preventDefault?.();
+  state.createMode = "single";
+  rememberStudioCreateMode(sessionStorage, "single");
+  if (state.view === "create") state.createSeq += 1;
+  if (options.fromPop) {
+    skipStaleHashChange();
+    closeDeleteConfirm({ fromPop: true });
+    closeMenu({ fromPop: true });
+    setView("grid");
+    renderJobs();
+    restoreOpener();
+    return;
+  }
+  if (studioLayerDismiss()) return;
+  if (closeDeleteConfirm()) return;
   if (closeMenu()) return;
   if (state.returnToWatch) {
     state.returnToWatch = false;
@@ -1305,27 +1908,74 @@ async function refreshQuietly() {
     await refreshJobs();
     showToast("목록을 갱신했습니다.");
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(error, "error");
+  }
+}
+
+function pinWatchToVisualViewport() {
+  pinNodeToVisualViewport($("#watch-feed"), document.body?.classList?.contains("watch-open"));
+}
+
+function syncVisualViewportInset() {
+  const vv = window.visualViewport;
+  const height = vv?.height || window.innerHeight || 0;
+  const innerH = window.innerHeight || height;
+  const bottom = visualViewportKeyboardInset();
+  document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
+  document.documentElement.style.setProperty("--vv-height", `${Math.round(height)}px`);
+  document.documentElement.style.setProperty("--inner-height", `${Math.round(innerH)}px`);
+  document.documentElement.classList.toggle("ime-open", bottom > 80);
+  if (bottom > 80) {
+    document.body.style.top = "0px";
+  } else {
+    document.body.style.removeProperty("top");
+    flushToastsAfterIme();
+  }
+  pinWatchToVisualViewport();
+  pinOverlaysToVisualViewport();
+  rescrollFocusedField(document);
+  if (document.body?.classList?.contains("watch-open")) {
+    const root = $("#watch-feed");
+    if (root?.dataset?.swiping === "1") return;
+    sizeWatchFeed(root);
+    applyWatchTransform(root, { animate: false });
+  } else {
+    sizeShortsGrid();
   }
 }
 
 function bindEvents() {
+  bindStudioPipe(document, openMachine);
+  bindFocusScroll(document);
+  syncVisualViewportInset();
+  window.visualViewport?.addEventListener("resize", syncVisualViewportInset);
+  window.visualViewport?.addEventListener("scroll", syncVisualViewportInset);
   window.addEventListener("resize", sizeShortsGrid);
-  window.addEventListener("orientationchange", () => {
+  bindRotateSettle(() => {
+    pinWatchToVisualViewport();
+    sizeShortsGrid();
     if (state.view !== "watch") return;
     const root = $("#watch-feed");
+    if (root?.dataset?.swiping === "1") return;
     sizeWatchFeed(root);
     applyWatchTransform(root, { animate: false });
     wrapWatchFeed(root);
     notifyActive();
     playWatchFeed(root);
   });
-  $("#create-form").addEventListener("submit", createProduction);
+  $("#create-form")?.addEventListener("submit", (event) => {
+    if (state.createMode === "batch") {
+      event.preventDefault();
+      void saveBatchDrafts();
+      return;
+    }
+    return createProduction(event);
+  });
   $("#provider")?.addEventListener("change", syncProviderForm);
   syncProviderForm();
-  $("#create-tile")?.addEventListener("click", openCreate);
+  bindCreateTile();
   $("#menu-create")?.addEventListener("click", (event) => {
-    closeMenu();
+    closeMenu({ navigate: true });
     if (state.view === "watch") state.returnToWatch = true;
     openCreate(event);
   });
@@ -1333,33 +1983,73 @@ function bindEvents() {
   $("#batch-draft")?.addEventListener("click", () => { void saveBatchDrafts(); });
   $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
   $("#library-more")?.addEventListener("click", openMenu);
-  $("#close-menu")?.addEventListener("click", closeMenu);
-  $("#menu-import-ok")?.addEventListener("click", closeMenu);
-  $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
+  $("#close-menu")?.addEventListener("click", (event) => {
+    const result = $("#menu-import-result");
+    if (result && !result.hidden) {
+      event?.preventDefault?.();
+      resetMenuCard();
+      return;
+    }
+    if (!studioLayerDismiss()) closeMenu(event);
+  });
+  $("#menu-import-close")?.addEventListener("click", (event) => {
+    event?.preventDefault?.();
+    resetMenuCard();
+  });
+  $("#menu-import-ok")?.addEventListener("click", (event) => {
+    if (!studioLayerDismiss()) closeMenu(event);
+  });
+  $$("[data-close-menu]").forEach((node) => node.addEventListener("click", (event) => {
+    if (!studioLayerDismiss()) closeMenu(event);
+  }));
+  $("#delete-overlay")?.addEventListener("click", (event) => {
+    if (deleteClickSwallowed(event)) return;
+  }, true);
+  $("#close-delete")?.addEventListener("click", () => {
+    if (!studioLayerDismiss()) closeDeleteConfirm();
+  });
+  $("#delete-confirm")?.addEventListener("click", () => { void confirmDeleteJob(); });
+  $$("[data-close-delete]").forEach((node) => node.addEventListener("click", () => {
+    if (!studioLayerDismiss()) closeDeleteConfirm();
+  }));
   $("#home-brand")?.addEventListener("click", openHome);
-  bindWatchFeed($("#watch-feed"), openHome);
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);
   $("#close-settings")?.addEventListener("click", closeOverlays);
   $("#close-machine")?.addEventListener("click", closeOverlays);
   $("#settings-form")?.addEventListener("submit", saveSettings);
+  $("#settings-form")?.addEventListener("change", () => { void persistSettings(); });
   $("#draft-script")?.addEventListener("click", () => { void draftScriptFromTopic(); });
   $("#preview-voice")?.addEventListener("click", () => { void previewVoice("#preview-voice", "#voice-preview-audio", "#create-tts-provider", "#create-tts-voice"); });
   $("#settings-preview-voice")?.addEventListener("click", () => { void previewVoice("#settings-preview-voice", "#settings-preview-audio", "#settings-tts-provider", "#settings-tts-voice"); });
   $("#settings-bgm-enabled")?.addEventListener("change", syncToggleLabels);
+  $("#topic")?.addEventListener("invalid", (event) => {
+    event.preventDefault();
+    showToast("영상 주제를 4자 이상 입력하세요.", "error");
+  });
   $("#topic")?.addEventListener("input", () => {
     window.clearTimeout(state.previewTimer);
-    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
   });
   $("#facts")?.addEventListener("input", () => {
     window.clearTimeout(state.previewTimer);
-    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error.message, "error")), 280);
+    state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
   });
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
-  window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
+  window.addEventListener("hashchange", () => {
+    if (ignoreNextHashChange) {
+      ignoreNextHashChange = false;
+      return;
+    }
+    applyHash();
+    renderJobs();
+  });
+  window.addEventListener("popstate", handleStudioPopState);
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (studioLayerDismiss()) return;
+      if (closeDeleteConfirm()) return;
       if (closeMenu()) return;
       if (state.view === "watch") {
         stopWatchFeed($("#watch-feed"));
@@ -1393,14 +2083,30 @@ function bindEvents() {
       }
     }
   });
+  function resumeWatchIfVisible() {
+    if (document.hidden || !document.body.classList.contains("watch-open")) return;
+    const play = playWatchFeed($("#watch-feed"));
+    if (play && typeof play.catch === "function") play.catch(() => {});
+  }
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      stopWatchFeed($("#watch-feed"));
+      pauseWatchFeed($("#watch-feed"));
+      return;
     }
+    resumeWatchIfVisible();
+  });
+  window.addEventListener("pageshow", resumeWatchIfVisible);
+  window.addEventListener("pageshow", (event) => {
+    pageHiding = false;
+    if (event.persisted) void refreshJobs().catch(() => {});
   });
   window.addEventListener("pagehide", () => {
+    pageHiding = true;
+    replaceClearStudioLayer();
     stopWatchFeed($("#watch-feed"));
+    void persistSettings({ keepalive: true });
   });
+  window.addEventListener("studio-open-machine", openMachine);
   $("#refresh-all")?.addEventListener("click", () => { void refreshQuietly(); });
   $$(".toggle-label input").forEach((input) => input.addEventListener("change", syncToggleLabels));
   syncToggleLabels();
@@ -1423,7 +2129,8 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
-    showToast(error.message, "error");
+    if (isAbortError(error)) return;
+    failJobsLoad(error);
   }
 }
 

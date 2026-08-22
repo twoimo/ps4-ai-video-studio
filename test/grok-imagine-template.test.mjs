@@ -40,6 +40,11 @@ test("locked 2026-08-21 template returns slots, skeleton, and locks", () => {
   assert.ok(template.locks.every((lock) => lock.editable === false));
   assert.match(template.document, /everyday_thing/);
   assert.match(template.document, /FORBIDDEN/);
+  assert.equal(template.title, "잠긴 프롬프트");
+  assert.match(template.document, /^# 잠긴 프롬프트/m);
+  assert.match(template.document, /^## 잠금/m);
+  assert.equal(template.document.includes("공장 잠금"), false);
+  assert.equal(template.document.includes("Grok Imagine 공장"), false);
 });
 
 test("slot overrides fill prompts but cannot rewrite locked rules", () => {
@@ -103,6 +108,12 @@ test("createJob stores editable world slot overrides", async () => {
   await rm(join(process.cwd(), "workspace", "jobs", job.id), { recursive: true, force: true });
 });
 
+test("createJob rejects a topic shorter than 4 characters", async () => {
+  await assert.rejects(() => createJob({ topic: "짧", provider: "local", draftOnly: true }), /4자/);
+  await assert.rejects(() => createJob({ topic: "  이  ", provider: "local", draftOnly: true }), /4자/);
+  await assert.rejects(() => createJob({ provider: "local", draftOnly: true }), /4자/);
+});
+
 test("studio HTML exposes a prompt template surface", async () => {
   const html = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   const page = await readFile(join(process.cwd(), "public", "template", "index.html"), "utf8");
@@ -113,15 +124,49 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(html.includes("id=\"template-overlay\""), false);
   assert.equal(html.includes("id=\"short-overlay\""), false);
   assert.match(page, /class="template-studio" id="template-page"/);
+  assert.match(page, /class="studio-chrome" id="studio-chrome"/);
+  assert.equal(page.split('class="studio-chrome"').length - 1, 1);
+  assert.equal(page.includes("쇼츠"), false);
+  assert.equal(page.includes("공장"), false);
+  assert.equal(page.includes("402"), false);
+  assert.match(page, /id="studio-chips"/);
   assert.match(page, /id="template-root"/);
+  assert.match(page, /class="template-skeleton"/);
+  assert.match(page, /src="\/studio-chrome\.mjs"/);
+  assert.match(page, /class="template-back"[^>]*href="\/"/);
   assert.match(page, /src="\/template\/template\.js"/);
   assert.match(js, /renderLockedSpec/);
   assert.match(js, /document\.title = `템플릿 · \$\{APP_TITLE\}`/);
+  assert.match(js, /title\.textContent = "템플릿을 불러오지 못했습니다"/);
+  assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
+  assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
+  assert.match(js, /title\.hidden = true/);
+  assert.match(page, /class="template-back"[^>]*aria-label="닫기"/);
+  assert.match(js, /raw === "template"/);
+  assert.match(js, /location\.replace\("\/template"\)/);
+  assert.match(js, /raw === "watch" \|\| raw\.startsWith\("watch\/"\)/);
+  assert.match(js, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
+  assert.match(specJs, /<h2>잠긴 프롬프트<\/h2>/);
+  assert.match(specJs, /<h3>잠금<\/h3>/);
+  assert.equal(specJs.includes("<h3>FACTORY_LOCKS</h3>"), false);
+  assert.doesNotMatch(specJs, /<h2>\$\{escapeSpecHtml\(spec\.title\)\}<\/h2>/);
+  assert.ok(js.includes("템플릿을 불러오지 못했습니다"), "fail fallback leaves 불러오는 중");
+  assert.match(js, /friendlyJobError/);
+  assert.match(js, /throwMappedFetchError/);
+  assert.match(js, /parseJsonText\(await response\.text\(\)\)/);
+  assert.equal(js.includes(".json().catch(() => ({}))"), false);
+  assert.equal(js.includes("Failed to fetch"), false);
+  assert.equal(js.includes("요청 실패"), false);
   assert.match(specJs, /id="spec-corpus"/);
   assert.match(specJs, /id="spec-types"/);
   assert.match(specJs, /id="spec-skeleton"/);
   assert.match(specJs, /id="spec-locks"/);
   assert.match(specJs, /슬롯 값은 새 쇼츠 초안에서만 채울 수 있습니다/);
+  assert.doesNotMatch(specJs, /Factory stays/);
+  assert.doesNotMatch(specJs, /ignore early_if \+ offtopic/);
+  assert.doesNotMatch(specJs, /class="spec-lede">\$\{escapeSpecHtml\(spec\.eraRule/);
+  assert.doesNotMatch(specJs, /class="spec-lede">\$\{escapeSpecHtml\(spec\.graphicsGrammar/);
+  assert.doesNotMatch(specJs, /class="spec-lede">\$\{escapeSpecHtml\(captions\.rule/);
   assert.equal(specJs.includes("editable: true"), false);
   assert.match(html, /id="open-template"[^>]*href="\/template"/);
   assert.match(html, /id="open-template-menu"[^>]*href="\/template"/);
@@ -135,7 +180,39 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(app.includes("공장 시작"), false);
   assert.equal(page.includes("watch-inspect"), false);
   assert.equal(js.includes("watch-inspect"), false);
-  assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
+  assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*var\(--vv-height,\s*100dvh\)/);
+  assert.match(css, /\.template-studio\s*\{[^}]*padding:\s*0 0 max\(48px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(css, /\.template-back\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /\.template-back\s*\{[^}]*height:\s*44px/);
+  assert.match(css, /#template-title\[hidden\]\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.template-studio\s*\{[^}]*padding:\s*16px/);
+  assert.match(css, /\.template-studio \.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
+  assert.match(css, /body\.template-page \.library-board-toggle\[href="\/backlot"\]/);
+  assert.match(css, /body\.template-page \.library-board-toggle\[href="\/template"\]/);
+  assert.match(css, /\.template-root\s*\{[^}]*max-width:\s*none/);
+  assert.match(css, /\.template-root \.slot-card[\s\S]*width:\s*100%[\s\S]*max-width:\s*none/);
+  assert.doesNotMatch(css, /max-width:\s*min\(1120px/);
+  assert.equal(page.includes("그림 · 멈춤"), false);
+  assert.match(page, />대본</);
+  assert.match(page, />보드</);
+  assert.match(page, />템플릿</);
+  assert.match(page, /href="\/#create">새 영상</);
+  assert.match(page, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(page, /href="\/#settings">설정</);
+  assert.match(page, /id="satellite-import">가져오기</);
+  assert.match(page, /src="\/satellite-menu\.mjs"/);
+  assert.match(page, /src="\/satellite-boot\.js"/);
+  assert.match(page, /id="satellite-import-result"/);
+  assert.match(page, /id="satellite-import-summary"/);
+  assert.match(page, /id="satellite-import-close">닫기</);
+  assert.match(page, /id="satellite-import-ok">확인</);
+  assert.match(page, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.match(specJs, /specKv\("같은 현장"/);
+  assert.match(specJs, /specKv\("실제 크기"/);
+  assert.match(specJs, /specKv\("장난감"/);
+  assert.match(specJs, /specKv\("막대 없음"/);
+  assert.match(specJs, /specKv\("홀드 속 움직임"/);
+  assert.equal(page.includes("aria-label=\"메뉴\""), false);
   assert.equal(css.includes("body.template-open"), false);
   assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(page.includes("쇼츠 공장"), false);
@@ -148,14 +225,25 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(html.includes("크레딧 402"), false);
   assert.equal(app.includes("크레딧 402"), false);
 
+  const pageSrc = await readFile(join(process.cwd(), "src", "template-page.mjs"), "utf8");
+  assert.match(pageSrc, /request\.method !== "GET" && request.method !== "HEAD"/);
+  assert.match(pageSrc, /text\/html; charset=utf-8/);
+
   const response = await handleTemplatePage(new Request("http://studio.local/template"), new URL("http://studio.local/template"));
   assert.ok(response);
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
   const served = await response.text();
   assert.match(served, /id="template-page"/);
   assert.match(served, /src="\/template\/template\.js\?v=/);
   assert.doesNotMatch(served, /id="template-overlay"/);
   assert.doesNotMatch(served, /role="dialog"/);
+
+  const head = await handleTemplatePage(new Request("http://studio.local/template", { method: "HEAD" }), new URL("http://studio.local/template"));
+  assert.ok(head);
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(await head.text(), "");
 });
 
 test("locked spec API payload has the 288 corpus and every factory lock", () => {
@@ -176,4 +264,28 @@ test("locked spec API payload has the 288 corpus and every factory lock", () => 
   assert.match(spec.documents.spec, /mature_explainer 253/);
   assert.match(spec.documents.template, /FORBIDDEN/);
   assert.equal(JSON.stringify(spec).includes("쇼츠 공장"), false);
+});
+
+test("template Back is 44px, hides the locked title, and bounces #watch", async () => {
+  const page = await readFile(join(process.cwd(), "public", "template", "index.html"), "utf8");
+  const js = await readFile(join(process.cwd(), "public", "template", "template.js"), "utf8");
+  const css = await readFile(join(process.cwd(), "public", "styles.css"), "utf8");
+  const satelliteBoot = await readFile(join(process.cwd(), "public", "satellite-boot.js"), "utf8");
+  assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
+  assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
+  assert.equal(page.split('class="studio-chrome"').length - 1, 1);
+  assert.equal(page.includes("쇼츠"), false);
+  assert.equal(page.includes("공장"), false);
+  assert.equal(page.includes("402"), false);
+  assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
+  assert.match(js, /title\.hidden = true/);
+  assert.match(js, /raw === "template"/);
+  assert.match(js, /location\.replace\("\/template"\)/);
+  assert.match(js, /raw === "watch" \|\| raw\.startsWith\("watch\/"\)/);
+  assert.match(js, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
+  assert.match(css, /\.template-back\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/);
+  assert.match(css, /\.template-studio\s*\{[^}]*var\(--vv-bottom,\s*0px\)/);
+  assert.match(satelliteBoot, /hash === "template"/);
+  assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
+  assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
 });

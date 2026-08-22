@@ -29,12 +29,13 @@ import { backlotHealth, handleBacklot, handleBacklotApi } from "./backlot-server
 import { handleTemplatePage } from "./template-page.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
-import { compareLibraryJobs, ensureLibraryEpisodes } from "./episode-import.mjs";
+import { compareLibraryJobs, ensureLibraryEpisodes, importPublicView } from "./episode-import.mjs";
+import { stripPublicPaths } from "./public-copy.mjs";
 import { studioDocsHtml, studioOpenApi } from "./openapi.mjs";
 import { draftScriptFromTopic } from "./studio-script.mjs";
 import { EDGE_VOICES, chirpConfigured, readStudioSettings, settingsPublicView, writeStudioSettings } from "./studio-settings.mjs";
 import { synthesizeStudioTts } from "./studio-tts.mjs";
-import { ensureSongDirectories, listBgmFiles } from "./studio-bgm.mjs";
+import { ensureSongDirectories, listBgmPublicNames } from "./studio-bgm.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -58,8 +59,18 @@ function hashJson(value) {
 await ensureWorkspace();
 await ensureLibraryEpisodes().catch((error) => console.error(`library seed failed: ${error.message}`));
 
+function publicPayload(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const next = { ...data };
+  if ("jobs" in next) next.jobs = stripPublicPaths(next.jobs);
+  if ("job" in next) next.job = stripPublicPaths(next.job);
+  if ("error" in next) next.error = stripPublicPaths(next.error);
+  if (next.service === "ps4-ai-video-studio") return stripPublicPaths(next);
+  return next;
+}
+
 function json(data, status = 200) {
-  return Response.json(data, { status, headers: { "cache-control": "no-store" } });
+  return Response.json(publicPayload(data), { status, headers: { "cache-control": "no-store" } });
 }
 
 function errorResponse(error, status = 400) {
@@ -236,6 +247,9 @@ function contentType(path) {
     ".mp4": "video/mp4",
     ".webm": "video/webm",
     ".mov": "video/quicktime",
+    ".m4v": "video/x-m4v",
+    ".mkv": "video/x-matroska",
+    ".webp": "image/webp",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
@@ -661,7 +675,7 @@ function annotateFactoryQueue(jobs = []) {
         ...job,
         status: job.status === "queued" ? "queued" : job.status,
         queuePosition: waiting + 1,
-        message: job.message || `공장 대기열 ${waiting + 1}번 · 한 번에 하나만 실행합니다`
+        message: job.message || `대기 ${waiting + 1}번`
       };
     }
     return job;
@@ -734,7 +748,7 @@ async function health() {
   return {
     ok: true,
     service: "ps4-ai-video-studio",
-    browser,
+    browser: { connected: Boolean(browser.connected) },
     capabilities: {
       ffmpeg: command("ffmpeg"),
       ffprobe: command("ffprobe"),
@@ -742,7 +756,7 @@ async function health() {
       geminiApiKey: Boolean(process.env.GEMINI_API_KEY),
       localVideoGenerator: Boolean(String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()),
       grokCli: Boolean(resolveGrokBinary()),
-      ytDlp
+      ytDlp: { installed: Boolean(ytDlp.installed) }
     },
     analysis: existsSync(ANALYSIS_PATH),
     rlmAnalysis: existsSync(join(ROOT, "data/rlm-benchmark-analysis.json")),
@@ -764,7 +778,7 @@ async function handleApi(request, url) {
   }
   if (path === "/api/settings" && request.method === "GET") {
     await ensureSongDirectories();
-    return json({ settings: settingsPublicView(await readStudioSettings()), songs: await listBgmFiles() });
+    return json({ settings: settingsPublicView(await readStudioSettings()), songs: await listBgmPublicNames() });
   }
   if (path === "/api/settings" && request.method === "PUT") {
     try {
@@ -846,7 +860,7 @@ async function handleApi(request, url) {
   if (path === "/api/library/import" && request.method === "POST") {
     const result = await ensureLibraryEpisodes();
     return json({
-      ...result,
+      ...importPublicView(result),
       jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())).sort(compareLibraryJobs),
       factoryQueue: grokQueue.snapshot()
     });
@@ -1064,7 +1078,7 @@ async function handleApi(request, url) {
         if (!files.length) throw new Error("업로드할 영상 파일을 선택하세요.");
         for (const file of files) {
           const extension = extname(file.name).toLowerCase();
-          if (!VIDEO_EXTENSIONS.has(extension) || (file.type && !file.type.startsWith("video/"))) throw new Error("MP4, MOV, WebM 영상만 업로드할 수 있습니다.");
+          if (!VIDEO_EXTENSIONS.has(extension) || (file.type && !file.type.startsWith("video/"))) throw new Error("MP4, MOV, WebM, M4V, MKV 영상만 업로드할 수 있습니다.");
           if (file.size > MAX_UPLOAD_BYTES) throw new Error("클립 하나의 최대 크기는 250MB입니다.");
         }
         const jobDir = join(JOBS_DIR, jobId);

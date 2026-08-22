@@ -1,5 +1,21 @@
 const pagers = new WeakMap();
 const watchPlayers = new WeakMap();
+const watchEpochs = new WeakMap();
+
+function watchEpochOf(root) {
+  return root ? (watchEpochs.get(root) || 0) : 0;
+}
+
+function bumpWatchEpoch(root) {
+  if (!root) return 0;
+  const next = watchEpochOf(root) + 1;
+  watchEpochs.set(root, next);
+  return next;
+}
+
+function isStaleWatch(root, epoch) {
+  return Boolean(root) && watchEpochOf(root) !== epoch;
+}
 
 function pagerOf(root) {
   if (!root) return null;
@@ -94,9 +110,13 @@ export function applyWatchTransform(root, { animate = false, offset = 0 } = {}) 
   const pager = pagerOf(root);
   const h = pageHeight(root);
   if (!track?.style || !pager || !(h > 0)) return;
-  const y = -pager.index * h + offset;
-  const count = watchSlides(root).length;
-  if (count) track.style.height = `${count * h}px`;
+  const slides = watchSlides(root);
+  const last = Math.max(0, slides.length - 1);
+  let nextOffset = offset;
+  if (pager.index <= 0 && nextOffset > 0) nextOffset = 0;
+  if (pager.index >= last && nextOffset < 0) nextOffset = 0;
+  const y = -pager.index * h + nextOffset;
+  if (slides.length) track.style.height = `${slides.length * h}px`;
   track.style.transition = animate ? "transform 160ms ease-out" : "none";
   track.style.transform = `translate3d(0, ${y}px, 0)`;
 }
@@ -110,6 +130,8 @@ export function goWatchIndex(root, index, { animate = false } = {}) {
 }
 
 export function moveWatchIndex(root, index, options) {
+  bumpWatchEpoch(root);
+  pauseLeftoverMedia(root);
   return goWatchIndex(root, index, options);
 }
 
@@ -123,12 +145,21 @@ function attachWatchVideo(video) {
   if (typeof video.setAttribute === "function") {
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
+    video.setAttribute("x5-playsinline", "");
+    video.setAttribute("controlslist", "nodownload");
   }
   video.playsInline = true;
+  video.controlsList = "nodownload";
   video.loop = true;
   video.preload = "auto";
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  if (typeof video.addEventListener === "function" && video.dataset && !video.dataset.watchContext) {
+    video.dataset.watchContext = "1";
+    video.addEventListener("contextmenu", (event) => {
+      event?.preventDefault?.();
+    });
+  }
   return video;
 }
 
@@ -142,6 +173,7 @@ function ensureWatchPlayer(root) {
   if (video) {
     attachWatchVideo(video);
     watchPlayers.set(root, video);
+    bindWatchSound(root, video);
     return video;
   }
   if (typeof document === "undefined" || typeof document.createElement !== "function") {
@@ -150,6 +182,7 @@ function ensureWatchPlayer(root) {
   video = document.createElement("video");
   attachWatchVideo(video);
   watchPlayers.set(root, video);
+  bindWatchSound(root, video);
   const stage = root.querySelector?.(".watch-player .watch-stage") || root.querySelector?.(".watch-stage");
   if (stage) {
     if (!video.parentElement) stage.appendChild(video);
@@ -176,7 +209,57 @@ export function createWatchPlayer(root) {
   return ensureWatchPlayer(root);
 }
 
+function exitWatchPictureInPicture(video) {
+  const doc = globalThis.document;
+  if (video && doc?.pictureInPictureElement === video) {
+    try { doc.exitPictureInPicture?.(); } catch { /* ignore leftover PiP */ }
+  }
+  if (!video) return;
+  video.playsInline = true;
+  if (typeof video.setAttribute === "function") {
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+  }
+}
+
+function bindWatchPictureInPicture(root, onBack) {
+  const video = root ? watchPlayers.get(root) || root.querySelector?.("video") : null;
+  if (!video || video.dataset?.pipBound === "1") return;
+  if (video.dataset) video.dataset.pipBound = "1";
+  video.addEventListener?.("enterpictureinpicture", () => {
+    exitWatchPictureInPicture(video);
+    stopWatchFeed(root);
+    onBack?.();
+  });
+  video.addEventListener?.("leavepictureinpicture", () => {
+    if (globalThis.document?.body?.classList?.contains("watch-open")) return;
+    try { video.pause(); } catch { /* ignore leftover PiP */ }
+  });
+}
+
+export function pauseWatchFeed(root) {
+  pauseLeftoverMedia(root);
+  const video = watchPlayerVideo(root);
+  if (!video) return;
+  exitWatchPictureInPicture(video);
+  try { video.pause(); } catch { /* ignore leftover playback */ }
+}
+
 export function stopWatchFeed(root) {
+  bumpWatchEpoch(root);
+  const pager = root ? pagerOf(root) : null;
+  if (pager) {
+    pager.swiping = false;
+    pager.dx = 0;
+    pager.dy = 0;
+    pager.velocity = 0;
+  }
+  if (root?.dataset) delete root.dataset.swiping;
+  const track = watchTrack(root);
+  if (track?.style) {
+    track.style.transition = "none";
+    track.style.transform = "translate3d(0, 0, 0)";
+  }
   pauseLeftoverMedia(root);
   const videos = [];
   const held = root ? watchPlayers.get(root) : null;
@@ -187,6 +270,7 @@ export function stopWatchFeed(root) {
     }
   }
   for (const video of videos) {
+    exitWatchPictureInPicture(video);
     video.pause();
     video.currentTime = 0;
     if (typeof video.removeAttribute === "function") video.removeAttribute("src");
@@ -195,6 +279,8 @@ export function stopWatchFeed(root) {
     else video.parentElement?.removeChild?.(video);
   }
   if (root) watchPlayers.delete(root);
+  const sound = root?.querySelector?.(".watch-sound");
+  if (sound) sound.hidden = true;
 }
 
 function revealWatchVideo(video) {
@@ -204,29 +290,113 @@ function revealWatchVideo(video) {
   return video;
 }
 
-function revealAndPlay(video, jobId) {
+function playResult(play) {
+  return play && typeof play.then === "function" ? play : Promise.resolve(play);
+}
+
+function syncWatchSound(root, video) {
+  const button = root?.querySelector?.(".watch-sound");
+  if (!button) return;
+  button.hidden = !(video?.muted || video?.volume === 0);
+}
+
+function bindWatchSound(root, video) {
+  if (!video) return;
+  if (video.dataset?.soundBound !== "1") {
+    if (video.dataset) video.dataset.soundBound = "1";
+    video.__watchVolume = video.volume;
+    video.addEventListener?.("volumechange", () => {
+      const prev = video.__watchVolume;
+      video.__watchVolume = video.volume;
+      if (prev === 0 && video.volume > 0) {
+        video.muted = false;
+        if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+      }
+      syncWatchSound(root, video);
+    });
+    video.addEventListener?.("play", () => syncWatchSound(root, video));
+  }
+  syncWatchSound(root, video);
+}
+
+function finishWatchPlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) {
+    try { video.pause(); } catch { /* ignore stale play */ }
+    return video;
+  }
+  bindWatchSound(root, video);
+  return revealWatchVideo(video);
+}
+
+function remuteAndPlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
+  video.muted = true;
+  if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
+  let play;
+  try {
+    play = video.play();
+  } catch {
+    return Promise.resolve(finishWatchPlay(video, root, epoch));
+  }
+  return playResult(play).then(() => finishWatchPlay(video, root, epoch)).catch(() => finishWatchPlay(video, root, epoch));
+}
+
+function unmuteAndPlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
+  revealWatchVideo(video);
+  video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  let play;
+  try {
+    play = video.play();
+  } catch {
+    return remuteAndPlay(video, root, epoch);
+  }
+  return playResult(play).then(() => finishWatchPlay(video, root, epoch)).catch(() => remuteAndPlay(video, root, epoch));
+}
+
+function playMutedThenUnmutePlay(video, root, epoch) {
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
+  video.muted = true;
+  if (typeof video.setAttribute === "function") video.setAttribute("muted", "");
+  let mutedPlay;
+  try {
+    mutedPlay = video.play();
+  } catch {
+    return remuteAndPlay(video, root, epoch);
+  }
+  return playResult(mutedPlay).then(() => finishWatchPlay(video, root, epoch)).catch(() => remuteAndPlay(video, root, epoch));
+}
+
+export function playWatchMedia(video, root, epoch) {
+  if (!video || typeof video.play !== "function") return Promise.resolve(video);
+  if (isStaleWatch(root, epoch)) return Promise.resolve(video);
+  video.muted = false;
+  if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+  let play;
+  try {
+    play = video.play();
+  } catch {
+    return playMutedThenUnmutePlay(video, root, epoch);
+  }
+  return playResult(play).then(() => finishWatchPlay(video, root, epoch)).catch(() => playMutedThenUnmutePlay(video, root, epoch));
+}
+
+function revealAndPlay(video, jobId, root, epoch) {
+  if (isStaleWatch(root, epoch)) return;
   if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
   revealWatchVideo(video);
-  const play = video.play();
-  if (play && typeof play.then === "function") {
-    play.then(() => revealWatchVideo(video)).catch(() => {});
-  }
-  return play;
+  return playWatchMedia(video, root, epoch);
 }
 
 export function playWatchFeed(target) {
   if (target && typeof target.play === "function" && typeof target.querySelector !== "function") {
-    target.muted = false;
-    if (typeof target.removeAttribute === "function") target.removeAttribute("muted");
     attachWatchVideo(target);
-    revealWatchVideo(target);
-    const play = target.play();
-    if (play && typeof play.then === "function") {
-      play.then(() => revealWatchVideo(target)).catch(() => {});
-    }
-    return play;
+    return playWatchMedia(target);
   }
   const root = target;
+  const epoch = watchEpochOf(root);
+  if (isStaleWatch(root, epoch)) return Promise.resolve();
   const slides = watchSlides(root);
   const activeSlide = slides[currentIndex(root)];
   const jobId = activeSlide?.dataset?.jobId;
@@ -238,7 +408,7 @@ export function playWatchFeed(target) {
   video.volume = 1;
   video.preload = "auto";
   if (jobId && video.dataset?.jobId === jobId) {
-    return revealAndPlay(video, jobId);
+    return revealAndPlay(video, jobId, root, epoch);
   }
   if (video.style) {
     video.style.visibility = "hidden";
@@ -250,7 +420,7 @@ export function playWatchFeed(target) {
   attachWatchVideo(video);
   if (activeSlide?.dataset?.poster) video.poster = activeSlide.dataset.poster;
   const src = activeSlide?.dataset?.src || activeSlide?.dataset?.videoUrl;
-  const reveal = () => revealAndPlay(video, jobId);
+  const reveal = () => revealAndPlay(video, jobId, root, epoch);
   if (typeof video.addEventListener === "function") {
     video.addEventListener("loadeddata", reveal, { once: true });
     video.addEventListener("canplay", reveal, { once: true });
@@ -258,12 +428,8 @@ export function playWatchFeed(target) {
   }
   if (src && video.getAttribute?.("src") !== src) video.src = src;
   if (video.dataset) video.dataset.jobId = jobId || "";
-  if ((video.readyState || 0) >= 2) revealWatchVideo(video);
-  const play = video.play();
-  if (play && typeof play.then === "function") {
-    play.then(() => revealWatchVideo(video)).catch(() => {});
-  }
-  return play;
+  if ((video.readyState || 0) >= 2 && !isStaleWatch(root, epoch)) revealWatchVideo(video);
+  return playWatchMedia(video, root, epoch);
 }
 
 export function clearWatchSize(root) {
@@ -338,15 +504,39 @@ function settleWatchPager(root) {
   settleWatchIndex(root, { animate: false });
 }
 
+function eventElement(event) {
+  const node = event?.target;
+  if (node && typeof node.closest === "function") return node;
+  const parent = node?.parentElement;
+  return parent && typeof parent.closest === "function" ? parent : null;
+}
+
 function chromeHit(event) {
-  const closest = event.target?.closest?.bind(event.target);
+  const node = eventElement(event);
+  const closest = node?.closest?.bind(node);
   if (!closest) return false;
   return Boolean(
     closest(".watch-close")
     || closest(".watch-back")
     || closest(".watch-menu")
     || closest(".watch-materials-toggle")
-    || closest(".watch-close, .watch-back, .watch-menu, .watch-materials-toggle")
+    || closest(".watch-sound")
+    || closest(".watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-sound")
+  );
+}
+
+function inWatchPlayer(event) {
+  const node = eventElement(event);
+  const closest = node?.closest?.bind(node);
+  if (!closest) return false;
+  return Boolean(
+    closest(".watch-stage")
+    || closest("video")
+    || closest(".watch-poster")
+    || closest(".watch-meta")
+    || closest(".watch-slide-chrome")
+    || closest(".watch-slide")
+    || closest(".watch-column")
   );
 }
 
@@ -370,10 +560,31 @@ function bindWatchResize(root) {
   observer.observe(root);
 }
 
-export function bindWatchFeed(root, onBack, onActive) {
+function bindWatchFlip(root) {
+  if (!root || root.dataset?.flipBound === "1") return;
+  if (root.dataset) root.dataset.flipBound = "1";
+  let aspect = (globalThis.innerWidth || 1) / Math.max(1, globalThis.innerHeight || 1);
+  const replay = () => {
+    if (root.dataset?.swiping === "1" || pagerOf(root)?.swiping) return;
+    if (!globalThis.document?.body?.classList?.contains("watch-open")) return;
+    const next = (globalThis.innerWidth || 1) / Math.max(1, globalThis.innerHeight || 1);
+    const flipped = Math.abs(next - aspect) >= 0.02;
+    aspect = next;
+    sizeWatchFeed(root);
+    applyWatchTransform(root, { animate: false });
+    if (!flipped) return;
+    wrapWatchFeed(root);
+    playWatchFeed(root);
+  };
+  globalThis.addEventListener?.("orientationchange", replay);
+  globalThis.addEventListener?.("resize", replay);
+}
+
+export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   if (!root) return;
   const pager = pagerOf(root);
   if (onActive) pager.onActive = onActive;
+  if (onMaterials) pager.onMaterials = onMaterials;
   if (root.dataset?.watchBound === "1") {
     if (globalThis.document?.body?.classList?.contains("watch-open")) {
       playWatchFeed(root);
@@ -385,17 +596,43 @@ export function bindWatchFeed(root, onBack, onActive) {
   if (root.dataset) root.dataset.watchBound = "1";
   ensureWatchColumn(root);
   createWatchPlayer(root);
+  bindWatchPictureInPicture(root, onBack);
   bindWatchResize(root);
+  bindWatchFlip(root);
   const track = watchTrack(root);
+  root.addEventListener("contextmenu", (event) => {
+    event.preventDefault?.();
+    event.stopPropagation?.();
+  });
   root.addEventListener("click", (event) => {
-    if (chromeHit(event)) {
+    if (pager.swallowClick) {
       pager.swallowClick = false;
-      if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      return;
+    }
+    if (chromeHit(event)) {
+      const hit = eventElement(event);
+      if (hit?.closest?.(".watch-sound")) {
         event.preventDefault?.();
         event.stopPropagation?.();
+        const video = watchPlayerVideo(root);
+        if (video) {
+          video.muted = false;
+          if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
+          void playWatchMedia(video, root, watchEpochOf(root));
+        }
+        syncWatchSound(root, video);
         return;
       }
-      const close = event.target?.closest?.(".watch-close, .watch-back");
+      if (hit?.closest?.(".watch-menu, .watch-materials-toggle")) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        const jobId = currentWatchSlide(root)?.dataset?.jobId;
+        pager.onMaterials?.(jobId);
+        return;
+      }
+      const close = hit?.closest?.(".watch-close, .watch-back");
       if (close) {
         stopWatchFeed(root);
         onBack?.(event);
@@ -403,22 +640,23 @@ export function bindWatchFeed(root, onBack, onActive) {
       }
       return;
     }
-    if (pager.swallowClick) {
-      pager.swallowClick = false;
-      event.preventDefault?.();
-      event.stopPropagation?.();
+    if (!inWatchPlayer(event)) {
+      stopWatchFeed(root);
+      onBack?.(event);
       return;
     }
-    if (!event.target.closest(".watch-stage") && !event.target.closest("video")) return;
+    const hit = eventElement(event);
+    if (!hit?.closest?.(".watch-stage") && !hit?.closest?.("video") && !hit?.closest?.(".watch-poster")) {
+      return;
+    }
     const video = watchPlayerVideo(root);
     if (!video) return;
     if (video.paused) {
-      revealWatchVideo(video);
-      const play = globalThis.document?.body?.classList?.contains("watch-open") ? playWatchFeed(root) : null;
-      if (play && typeof play.then === "function") {
-        play.then(() => revealWatchVideo(video)).catch(() => {});
+      if (globalThis.document?.body?.classList?.contains("watch-open")) {
+        playWatchFeed(root);
+      } else {
+        stopWatchFeed(root);
       }
-      if (!play) stopWatchFeed(root);
     } else {
       video.pause();
     }
@@ -442,10 +680,6 @@ export function bindWatchFeed(root, onBack, onActive) {
   });
   root.addEventListener("pointermove", (event) => {
     if (!pager.swiping) return;
-    if (chromeHit(event)) {
-      pager.swallowClick = false;
-      return;
-    }
     const x = event.clientX || 0;
     const y = event.clientY || 0;
     const now = Date.now();
@@ -458,12 +692,10 @@ export function bindWatchFeed(root, onBack, onActive) {
     applyWatchTransform(root, { animate: false, offset: pager.dy });
   });
   const endPointer = (event, cancel = false) => {
-    if (chromeHit(event)) {
-      pager.swallowClick = false;
-      setSwiping(root, pager, false);
+    if (!pager.swiping) {
+      if (chromeHit(event)) pager.swallowClick = false;
       return;
     }
-    if (!pager.swiping) return;
     setSwiping(root, pager, false);
     const movement = Math.hypot(pager.dx, pager.dy);
     if (cancel || movement < 10) {
@@ -480,6 +712,7 @@ export function bindWatchFeed(root, onBack, onActive) {
   };
   root.addEventListener("pointerup", (event) => endPointer(event, false));
   root.addEventListener("pointercancel", (event) => endPointer(event, true));
+  root.addEventListener("lostpointercapture", (event) => endPointer(event, true));
   root.addEventListener("wheel", (event) => {
     if (pager.swiping || root.dataset?.swiping === "1") return;
     const dy = event.deltaY || 0;

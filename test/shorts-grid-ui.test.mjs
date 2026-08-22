@@ -6,7 +6,19 @@ import {
   channelOneLiner,
   DEFAULT_CREATE_PROVIDER,
   formatClock,
+  friendlyJobError,
+  importBroughtCopy,
+  jobsFromListPayload,
+  parseJsonText,
+  displayTitle,
+  displayItemLabel,
+  displayPipelineLabel,
+  displayStageLabel,
+  frozenRemakeLabel,
+  healthTextKo,
+  projectsFromListPayload,
   inspectVideoDownloads,
+  isAbortError,
   isPlaceholderThumbnail,
   isWatchableShort,
   shortDurationSeconds,
@@ -14,10 +26,16 @@ import {
   shortPreview,
   shortStatus,
   shortStatusLabel,
+  settingsSaveFailMessage,
+  shortCardUnchanged,
   shortThumbnail,
-  shortUploadPack
+  shortUploadPack,
+  stripErrorPrefix,
+  stripUiPaths,
+  throwMappedFetchError
 } from "../public/shorts-ui.mjs";
-import { collectInspectPayload, renderMaterialsPanel } from "../public/materials-editor.mjs";
+import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
+import { machineSheetHtml, renderMachineSheetHtml, pipelineStages, PIPE_EDIT_MISSING, PIPE_PAUSED, PIPE_SCRIPT_MISSING } from "../public/studio-pipe.mjs";
 
 const publicDir = join(process.cwd(), "public");
 
@@ -25,7 +43,7 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(DEFAULT_CREATE_PROVIDER, "grok-imagine");
   assert.equal(shortStatusLabel({ status: "queued", provider: "local" }), "초안");
   assert.equal(shortStatus({ status: "queued", provider: "grok-imagine" }).label, "생성중");
-  assert.equal(shortStatus({ status: "queued", provider: "grok-imagine", queuePosition: 2 }).label, "대기 2");
+  assert.equal(shortStatus({ status: "queued", provider: "grok-imagine", queuePosition: 2 }).label, "대기 2번");
   assert.equal(shortStatus({ status: "running" }).label, "생성중");
   assert.equal(shortStatus({ status: "verifying" }).label, "생성중");
   assert.equal(shortStatus({ status: "completed" }).label, "완료");
@@ -65,6 +83,69 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(isWatchableShort(refuge), true);
   assert.match(shortPreview(playground).videoUrl, /\/artifacts\/(master|chat|final)\.mp4$/);
   assert.match(shortPreview(refuge).videoUrl, /\/artifacts\/(master|chat|final)\.mp4$/);
+  assert.equal(importBroughtCopy({ imported: ["a", "b"], seeded: ["b"] }), "가져왔어요 2편");
+  assert.equal(importBroughtCopy({ count: 13 }), "가져왔어요 13편");
+  assert.equal(importBroughtCopy({ error: "가져오지 못했습니다." }), "가져오지 못했습니다.");
+  assert.equal(importBroughtCopy({ imported: ["a"], seeded: [], roots: ["/secret"], catalog: { episodes: [] } }), "가져왔어요 1편");
+  assert.equal(stripUiPaths("실패 /workspace/jobs/demo/master.mp4"), "실패");
+  assert.equal(stripUiPaths("404 /api/projects"), "404");
+  assert.equal(friendlyJobError("ENOENT: no such file /opt/homebrew/bin/ffmpeg"), "파일을 찾지 못했습니다.");
+  assert.equal(friendlyJobError("404 /api/jobs/x"), "찾지 못했습니다.");
+  assert.equal(friendlyJobError("영상 주제를 4자 이상 입력하세요."), "영상 주제를 4자 이상 입력하세요.");
+  assert.equal(friendlyJobError("ECONNREFUSED"), "요청에 실패했습니다.");
+  assert.equal(stripErrorPrefix("Error: 연결하지 못했습니다."), "연결하지 못했습니다.");
+  assert.equal(stripErrorPrefix("TypeError: Failed to fetch"), "Failed to fetch");
+  assert.equal(friendlyJobError("Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(friendlyJobError("Error: Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(friendlyJobError("TypeError: Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(friendlyJobError("unknown project: demo"), "작업을 찾지 못했습니다.");
+  assert.equal(friendlyJobError("Error: unknown project: demo"), "작업을 찾지 못했습니다.");
+  assert.equal(friendlyJobError(new TypeError("Cannot read properties of undefined (reading 'map')")), "지금은 처리할 수 없습니다.");
+  assert.equal(friendlyJobError("TypeError: Cannot read properties of undefined (reading 'map')"), "지금은 처리할 수 없습니다.");
+  assert.equal(friendlyJobError("Cannot read properties of undefined (reading 'map')"), "지금은 처리할 수 없습니다.");
+  const abort = new Error("aborted");
+  abort.name = "AbortError";
+  assert.equal(isAbortError(abort), true);
+  assert.throws(() => throwMappedFetchError(abort), (error) => error === abort);
+  assert.throws(() => throwMappedFetchError(new TypeError("Failed to fetch")), /연결하지 못했습니다/);
+  assert.equal(settingsSaveFailMessage(abort), "");
+  assert.deepEqual(jobsFromListPayload(undefined), []);
+  assert.deepEqual(jobsFromListPayload({}), []);
+  assert.deepEqual(jobsFromListPayload({ jobs: null }), []);
+  assert.equal(jobsFromListPayload({ jobs: [{ id: "a" }] })[0].id, "a");
+  assert.equal(jobsFromListPayload([{ id: "b" }])[0].id, "b");
+  assert.deepEqual(projectsFromListPayload(undefined), []);
+  assert.deepEqual(projectsFromListPayload({}), []);
+  assert.deepEqual(projectsFromListPayload({ projects: null }), []);
+  assert.equal(projectsFromListPayload({ projects: [{ project_id: "a" }] })[0].project_id, "a");
+  assert.equal(projectsFromListPayload([{ project_id: "b" }])[0].project_id, "b");
+  assert.deepEqual(parseJsonText('{"ok":true}'), { ok: true });
+  assert.throws(() => parseJsonText(""), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("{"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("not-json"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("<!DOCTYPE html><html><body>x</body></html>"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("<html><body>x</body></html>"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("<!-- comment --><html>"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("\uFEFF<!DOCTYPE html>"), /불러오지 못했습니다/);
+  assert.equal(displayTitle(undefined), "");
+  assert.equal(displayTitle("undefined"), "");
+  assert.equal(displayTitle(null, "보드"), "보드");
+  assert.equal(displayTitle("undefined", "보드"), "보드");
+  assert.equal(displayTitle("한강 갑문", "보드"), "한강 갑문");
+  assert.equal(displayTitle({ topic: "한강 갑문" }), "한강 갑문");
+  assert.equal(displayTitle({ title: "보드 제목" }), "보드 제목");
+  assert.equal(displayTitle({}), "");
+  assert.equal(displayTitle("[object Object]", "보드"), "보드");
+  assert.equal(displayTitle({ topic: { title: "중첩" } }), "중첩");
+  assert.equal(displayTitle("/workspace/jobs/foo", "보드"), "보드");
+  assert.equal(displayTitle("workspace/jobs/foo/master.mp4", "보드"), "보드");
+  assert.equal(displayTitle("file:///tmp/clip.mp4", "보드"), "보드");
+  assert.equal(displayTitle("/workspace/jobs/foo"), "");
+  assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "draft", topic: "abcd" }), true);
+  assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "running", topic: "abcd" }), false);
+  assert.equal(settingsSaveFailMessage("ECONNREFUSED"), "설정을 저장하지 못했습니다.");
+  assert.equal(settingsSaveFailMessage("Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(settingsSaveFailMessage(new TypeError("x is not a function")), "지금은 처리할 수 없습니다.");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -78,7 +159,10 @@ test("short cards map status, hook still, and duration", () => {
 test("studio HTML is a shorts grid first with factory default create", async () => {
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
   const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
   const home = html.slice(html.indexOf('id="shorts"'), html.indexOf('id="create-overlay"'));
   const shortsIndex = html.indexOf('id="shorts"');
   const gridIndex = html.indexOf('id="shorts-grid"');
@@ -98,46 +182,115 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /id="settings-overlay"/);
   assert.equal(html.includes("id=\"close-short\""), false);
   assert.match(html, /목소리 미리 듣기/);
+  assert.match(html, /id="voice-preview-audio" hidden>/);
+  assert.match(html, /id="settings-preview-audio" hidden>/);
+  assert.doesNotMatch(html, /id="voice-preview-audio"[^>]*controls/);
+  assert.doesNotMatch(html, /id="settings-preview-audio"[^>]*controls/);
+  assert.match(app, /removeAttribute\("controls"\)/);
   assert.equal(html.includes("완벽"), false);
-  assert.match(html, /option value="grok-imagine" selected/);
+  assert.match(html, /option value="grok-imagine" selected>Grok Imagine</);
+  assert.equal(html.includes("Grok Imagine 공장"), false);
   assert.match(html, /<details class="advanced-create"/);
   assert.match(html, /<summary>고급<\/summary>/);
+  const advanced = html.slice(html.indexOf('<details class="advanced-create"'), html.indexOf("</details>", html.indexOf('<details class="advanced-create"')));
+  assert.match(advanced, /Grok Imagine으로 그림과 움직임을 만듭니다\./);
+  assert.equal(/PATH|OAuth|Gemini|공장/.test(advanced), false);
+  assert.match(app, /Grok Imagine으로 그림과 움직임을 만듭니다\./);
+  assert.equal(/PATH의 grok|SuperGrok OAuth|Gemini로 대체/.test(app), false);
   assert.equal((home.match(/id="create-tile"/g) || []).length, 1);
-  assert.match(home, /id="create-tile"[^>]*aria-label="새 쇼츠"/);
+  assert.match(home, /id="create-tile"[^>]*aria-label="새 영상"/);
   assert.equal(home.includes("short-card-body"), false);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.library\s*\{[^}]*padding:\s*8px 0 0/);
-  assert.match(css, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
+  assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overscroll-behavior:\s*none/);
+  assert.match(css, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*touch-action:\s*pan-y/);
+  assert.match(css, /body\s*\{[^}]*overscroll-behavior:\s*none/);
+  assert.match(chromeCss, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(chromeCss, /html:has\(body\.overlay-open\),\s*body\.overlay-open\s*\{[^}]*touch-action:\s*pan-y/);
+  assert.match(css, /@import url\('\.\/studio-chrome\.css'\)/);
   assert.match(css, /--rows:\s*1/);
-  assert.match(css, /--thumb-h:\s*calc\(\(100dvh - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /--chrome:\s*calc\(52px \+ env\(safe-area-inset-top, 0px\)\)/);
+  assert.match(css, /--thumb-h:\s*calc\(\(var\(--vv-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
   assert.match(css, /--col:\s*calc\(var\(--thumb-h\) \* 9 \/ 16\)/);
-  assert.match(css, /--n:\s*4/);
   assert.equal(css.includes("round(up"), false);
-  assert.match(css, /grid-template-columns:\s*repeat\(var\(--n\),\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /grid-template-columns:\s*repeat\(var\(--n,\s*1\),\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /grid-auto-rows:\s*auto/);
   assert.match(css, /\.shorts-grid\s*\{[^}]*overflow:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*width:\s*100%/);
-  assert.match(css, /\.short-card-thumb\s*\{[^}]*height:\s*auto/);
+  assert.match(css, /\.short-card-thumb\s*\{[^}]*height:\s*var\(--thumb-h\)/);
+  assert.match(css, /\.short-card-thumb\s*\{[^}]*max-height:\s*var\(--thumb-h\)/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border-radius:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border:\s*0/);
+  assert.match(css, /\.short-card-thumb\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*60/);
   assert.match(css, /\.watch-feed\s*\{[^}]*container-type:\s*size/);
   assert.match(css, /100cqh/);
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
   assert.equal(css.includes("grid-template-rows: repeat(var(--n)"), false);
-  assert.equal(/repeat\(auto-fill,\s*minmax\(min\(100%,\s*var\(--col\)\),\s*1fr\)\)/.test(css), false);
+  assert.match(css, /repeat\(var\(--n,\s*1\),\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(html, /class="short-card short-skeleton is-skeleton"/);
+  assert.equal((html.match(/class="short-card short-skeleton is-skeleton"/g) || []).length, 8);
+  assert.match(app, /jobsLoaded/);
+  assert.match(app, /from "\.\/studio-pipe\.mjs"/);
+  assert.match(app, /from "\.\/studio-chrome\.mjs"/);
+  assert.match(pipe, /export function pipelineStages/);
+  assert.match(pipe, /export function renderMachineSheetHtml[\s\S]*pipelineStages\(health\)/);
+  assert.match(pipe, /export function machineSheetHtml/);
+  assert.match(chrome, /renderMachineSheetHtml\(health\)/);
+  assert.match(pipe, /export function renderStudioPipe/);
+  assert.match(chrome, /export function paintStudioPipe/);
+  assert.match(chrome, /addEventListener\("studio-open-machine", defaultOpenMachine\)/);
+  assert.match(chrome, /bindStudioPipe\(document\);\s*bindFocusScroll\(document\);\s*bindCreateModeHints\(document\);\s*void hydrateStudioChrome\(document\);/);
+  assert.match(chrome, /--vv-bottom/);
+  assert.match(chrome, /visualViewport/);
+  assert.match(chrome, /export function visualViewportKeyboardInset/);
+  assert.match(chrome, /outerHeight \|\| 0, globalThis\.screen\?\.height/);
+  assert.match(chrome, /classList\?\.toggle\("ime-open", bottom > 80\)/);
+  assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(chrome, /export function leaveSatelliteIfNeeded/);
+  assert.match(chrome, /export function bindCreateModeHints/);
+  assert.match(chrome, /writeCreateModeHint/);
+  assert.match(chrome, /satellite !== "leave"/);
+  assert.match(chrome, /armSatelliteHistory\(\)/);
+  assert.match(chrome, /export function pinOverlaysToVisualViewport/);
+  assert.match(chrome, /export function pinNodeToVisualViewport/);
+  assert.match(chrome, /export function pinOverlayTop/);
+  assert.match(chrome, /node\.style\.top = open \? "0px" : ""/);
+  assert.match(chrome, /pinOverlayTop\(node, open\)/);
+  assert.match(chrome, /export function scrollFocusedFieldIntoView/);
+  assert.match(chrome, /export function scrollFocusIntoPanel/);
+  assert.match(chrome, /export function rescrollFocusedField/);
+  assert.match(chrome, /overlayLockY/);
+  assert.match(chrome, /export function restoreOverlayLockY/);
+  assert.match(chrome, /behavior:\s*"instant"/);
+  assert.match(chrome, /export function syncOverlayLock/);
+  assert.match(chrome, /--vv-height/);
+  assert.match(chrome, /node\.style\.left = `\$\{Math\.round\(vv\.offsetLeft \|\| 0\)\}px`/);
+  assert.match(chrome, /node\.style\.width = `\$\{Math\.round\(vv\.width\)\}px`/);
+  assert.match(chrome, /\.studio-overlay, #satellite-menu/);
+  assert.match(chrome, /scrollTop/);
+  assert.equal(chrome.includes("scrollIntoView"), false);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
   assert.equal(css.includes("short-card-body"), false);
   assert.match(app, /setView\("grid"\)/);
   assert.match(app, /import .*shortStatus.*from "\.\/shorts-ui\.mjs"/);
   assert.match(app, /const fallback = escapeHtml\(status\.label\)/);
   assert.equal(app.includes("(job.topic || \"쇼츠\").slice(0, 2)"), false);
   assert.equal(app.includes("short-card-body"), false);
-  assert.match(app, /aria-label="새 쇼츠"/);
-  assert.match(app, /aria-label="\$\{escapeHtml\(job\.topic \|\| "쇼츠"\)\}"/);
+  assert.match(app, /aria-label="새 영상"/);
+  assert.match(app, /aria-label="\$\{escapeHtml\(displayTitle\(job\.topic, "영상"\)\)\}"/);
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
-  assert.match(app, /Math\.max\(shortLandscape \? 3 : 1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
-  assert.match(app, /innerHeight - 52 - gap/);
+  assert.match(app, /innerWidth >= 600 && window\.innerWidth > window\.innerHeight/);
+  assert.match(app, /const n = shortLandscape \? 2 : Math\.max\(1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
+  assert.match(app, /function measureChrome/);
+  assert.match(app, /getBoundingClientRect\(\)\.top/);
+  assert.match(app, /setProperty\("--chrome"/);
+  assert.match(app, /const height = portrait \? innerH : \(window\.visualViewport\?\.height \|\| innerH\)/);
+  assert.match(app, /height - chrome - gap/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /addEventListener\("resize"/);
   assert.match(app, /sizeShortsGrid\(\)/);
@@ -164,20 +317,100 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /function deleteJob/);
   assert.match(app, /method: "DELETE"/);
   assert.match(app, /contextmenu/);
+  assert.match(app, /Math\.hypot\(dx, dy\) > 8/);
+  assert.match(app, /pointermove/);
+  assert.match(app, /pointercancel/);
+  assert.match(app, /if \(fired \|\| moved\) return/);
+  assert.match(app, /swallowClick = true/);
+  assert.match(app, /Date\.now\(\) \+ 420/);
+  assert.match(app, /if \(swallowClick \|\| Date\.now\(\) < swallowUntil\)/);
+  assert.match(app, /closest\?\.\("\.short-card-detail"\)/);
+  assert.match(app, /\.short-card-detail"\)\?\.addEventListener\("contextmenu"/);
+  assert.match(app, /history\.pushState\(\{ studioLayer: layer \}/);
+  assert.match(app, /history\.pushState\(\{ studioView:/);
+  assert.match(app, /pushStudioLayer\("confirm"\)/);
+  assert.match(app, /pushStudioLayer\("menu"\)/);
+  assert.match(app, /function replaceClearStudioLayer/);
+  assert.match(app, /history\.replaceState\(null, "", location\.href\)/);
+  assert.match(app, /options\.navigate \|\| options\.leave \|\| options\.replace \|\| pageHiding/);
+  assert.match(app, /closeMenu\(\{ navigate: true \}\)/);
+  assert.match(app, /hideLeftoverOverlays[\s\S]*replaceClearStudioLayer\(\)/);
+  assert.match(app, /prev === "grid" && next !== "grid"/);
+  assert.match(app, /addEventListener\("popstate"/);
+  assert.match(app, /studioLayer === "confirm"/);
+  assert.match(app, /studioLayer === "menu"/);
+  assert.match(app, /function studioLayerDismiss/);
+  assert.match(app, /history\.state\?\.studioView/);
+  assert.match(app, /function handleStudioPopState/);
+  assert.match(app, /function markStudioLayerFromPop/);
+  assert.match(app, /dataset\.fromPop/);
+  assert.match(app, /markStudioLayerFromPop\(\);\s*closeDeleteConfirm\(\)/);
+  assert.match(app, /markStudioLayerFromPop\(\);\s*closeMenu\(\)/);
+  assert.match(app, /handleStudioPopState[\s\S]*state\.view === "watch"[\s\S]*stopWatchFeed/);
+  assert.match(app, /closeOverlays\(\{ fromPop: true \}\)/);
+  assert.match(app, /if \(state\.view === "watch"\) stopWatchFeed\(\$\("#watch-feed"\)\);\s*if \(\["create", "settings", "machine"\]\.includes\(state\.view\)\) \{\s*closeOverlays\(\{ fromPop: true \}\);\s*return;\s*\}\s*applyHash\(\)/);
+  assert.match(app, /addEventListener\("popstate", handleStudioPopState\)/);
+  assert.match(app, /if \(studioLayerDismiss\(\)\) return;/);
+  assert.match(app, /history\.back\(\)/);
+  assert.match(app, /if \(!canDeleteJob\(state\.jobs\.find\(\(item\) => item\.id === jobId\)\)\) return/);
+  assert.match(app, /shortStatus\(job\)\.key !== "running"/);
+  assert.match(app, /function dismissStudioLayer/);
+  assert.match(app, /studioLayer === "confirm" \|\| \(overlay && !overlay\.hidden\)\) return/);
+  assert.match(app, /pageHiding = true;\s*replaceClearStudioLayer\(\)/);
+  assert.doesNotMatch(app, /pagehide[\s\S]{0,200}history\.back/);
+  assert.match(app, /function bindCreateTile[\s\S]*addEventListener\("contextmenu"/);
+  assert.match(app, /function askDeleteJob/);
+  assert.match(app, /function closeDeleteConfirm/);
+  assert.match(app, /askDeleteJob[\s\S]*syncOverlayLock/);
+  assert.match(app, /closeDeleteConfirm[\s\S]*syncOverlayLock/);
   assert.match(app, /#studio-chips/);
   assert.match(app, /function renderChips/);
-  assert.match(app, /만드는 과정/);
-  assert.match(app, /label: "대본"/);
-  assert.match(app, /label: "그림"/);
-  assert.match(app, /label: "움직임"/);
-  assert.match(app, /label: "편집"/);
+  assert.match(app, /function renderMachineSheet/);
+  assert.match(app, /renderMachineSheetHtml\(state\.health/);
+  assert.match(pipe, /export function pipelineStages/);
+  assert.match(pipe, /stage\.ready \? "준비" : stage\.paused \? PIPE_PAUSED : stage\.title/);
+  assert.equal(app.includes("대본 ${grok ? \"준비\" : \"없음\"}"), false);
+  assert.match(pipe, /만드는 과정/);
+  assert.match(pipe, /label: "대본"/);
+  assert.match(pipe, /label: "그림"/);
+  assert.match(pipe, /label: "움직임"/);
+  assert.match(pipe, /label: "편집"/);
+  assert.equal(app.includes("그림 · 멈춤"), false);
+  assert.equal(app.includes("움직임 · 멈춤"), false);
   assert.equal(app.includes("크레딧 부족"), false);
   assert.equal(app.includes("크레딧 402"), false);
   assert.equal(app.includes(">grok</button>"), false);
   assert.equal(app.includes(">ffmpeg</button>"), false);
+  assert.equal(app.includes("ffmpegPath"), false);
+  assert.equal(app.includes("settings-ffmpeg"), false);
+  assert.equal(html.includes("settings-ffmpeg"), false);
+  assert.equal(html.includes("ffmpeg 경로"), false);
+  assert.equal(html.includes("resource/songs"), false);
+  assert.equal(html.includes("workspace/songs"), false);
+  assert.match(css, /\.short-status\s*\{[^}]*z-index:\s*3/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
+  assert.match(app, /names\.join\(" · "\)/);
+  assert.equal(app.includes("곡 ${count}개"), false);
+  assert.match(app, /function emptyGridNote/);
+  assert.match(app, /id="grid-empty">아직 영상이 없어요/);
+  assert.match(app, /\$\{emptyGridNote\(\)\}/);
+  assert.match(css, /\.shorts-grid \.empty-note\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
+  assert.match(app, /importBroughtCopy\(payload\)/);
+  assert.equal(app.includes("가져옴 ${imported}"), false);
+  assert.equal(app.includes("시드 ${seeded}"), false);
+  assert.equal(app.includes("경로 ${roots}"), false);
+  assert.equal(app.includes("payload.roots"), false);
+  assert.equal(app.includes("payload.catalog"), false);
+  assert.equal(app.includes("window.confirm"), false);
+  assert.match(app, /function askDeleteJob/);
+  assert.match(html, /id="delete-overlay"/);
+  assert.match(html, /id="delete-title">삭제할까요</);
+  assert.equal(html.includes("window.confirm"), false);
+  assert.equal(app.includes("빈 현장의 숨은 원리"), false);
+  assert.match(app, /topic: topic\.trim\(\),/);
   assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
-  assert.match(app, /health\.imagine\?\.frozen/);
+  assert.match(app, /health\?\.imagine\?\.frozen/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
   assert.equal(app.includes("closeOpenWatchInspect"), false);
   assert.match(app, /pagehide/);
@@ -185,9 +418,21 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /createWatchPlayer/);
   assert.equal(app.includes('class="watch-dl"'), false);
   assert.match(html, /id="studio-chips"/);
+  assert.doesNotMatch(html, /id="studio-chips"[^>]*hidden/);
+  assert.match(html, /class="studio-pipe"/);
+  assert.match(html, />대본</);
+  assert.match(html, />그림</);
+  assert.match(html, />움직임</);
+  assert.match(html, />편집</);
+  assert.match(html, />대본<\/button>[\s\S]*studio-pipe-arrow[\s\S]*>그림<\/button>[\s\S]*studio-pipe-arrow[\s\S]*>움직임<\/button>[\s\S]*studio-pipe-arrow[\s\S]*>편집<\/button>/);
+  assert.equal(html.includes("그림 · 멈춤"), false);
   assert.match(html, /id="feed-banner"/);
+  assert.ok(html.indexOf('id="home-brand"') < html.indexOf('id="studio-chips"'));
+  assert.ok(html.indexOf('id="studio-chips"') < html.indexOf('class="studio-chrome-actions"'));
+  assert.ok(html.indexOf('id="studio-chips"') < html.indexOf('id="open-board"'));
   assert.match(html, /id="machine-overlay"/);
   assert.match(html, /viewport-fit=cover/);
+  assert.match(html, /interactive-widget=resizes-content/);
   assert.match(html, /class="studio-overlay feed-card" id="create-overlay"/);
   assert.match(html, /class="studio-overlay feed-card" id="settings-overlay"/);
   assert.equal(html.includes("id=\"template-overlay\""), false);
@@ -216,6 +461,19 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
+  assert.match(server, /songs: await listBgmPublicNames\(\)/);
+  assert.equal(server.includes("songs: await listBgmFiles()"), false);
+  assert.match(server, /browser: \{ connected: Boolean\(browser\.connected\) \}/);
+  assert.match(server, /ytDlp: \{ installed: Boolean\(ytDlp\.installed\) \}/);
+  assert.match(server, /\.\.\.importPublicView\(result\)/);
+  assert.equal(server.includes("...result,"), false);
+  assert.match(server, /stripPublicPaths/);
+  assert.match(server, /if \(next\.service === "ps4-ai-video-studio"\) return stripPublicPaths\(next\)/);
+  assert.match(server, /"\.webm": "video\/webm"/);
+  assert.match(server, /"\.mov": "video\/quicktime"/);
+  assert.match(server, /"\.m4v": "video\/x-m4v"/);
+  assert.match(server, /"\.mkv": "video\/x-matroska"/);
+  assert.match(server, /"\.webp": "image\/webp"/);
   assert.match(server, /request\.method === "DELETE"/);
   assert.match(server, /FACTORY_QUEUE_PATH/);
   assert.match(pipeline, /export async function deleteJob/);
@@ -227,7 +485,7 @@ test("library and overlays fill the viewport instead of a phone column", async (
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   assert.match(css, /html,\s*body\s*\{[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.match(css, /\.library\s*\{[^}]*width:\s*100%/);
-  assert.match(css, /\.library\s*\{[^}]*height:\s*100dvh/);
+  assert.match(css, /\.library\s*\{[^}]*height:\s*var\(--vv-height,\s*100dvh\)/);
   assert.match(css, /\.library\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/);
   assert.match(css, /\.library\s*\{[^}]*overflow:\s*hidden/);
   assert.match(css, /\.watch-feed\s*\{[^}]*position:\s*fixed/);
@@ -237,9 +495,11 @@ test("library and overlays fill the viewport instead of a phone column", async (
   assert.equal(/\.watch-feed\s*\{[^}]*--watch-h:/.test(css), false);
   assert.equal(/\.watch-feed\s*\{[^}]*height:\s*100svh/.test(css), false);
   assert.match(css, /\.studio-overlay\s*\{[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)\s+env\(safe-area-inset-left\)/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /width:\s*min\(440px,\s*calc\(100vw - 32px\)\)/);
-  assert.match(css, /max-width:\s*min\(440px,\s*calc\(100vw - 32px\)\)/);
+  assert.match(css, /width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
+  assert.match(css, /max-width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
+  assert.doesNotMatch(css, /\.overlay-panel[\s\S]{0,220}100vw/);
   assert.match(css, /max-height:\s*min\(80dvh,\s*720px\)/);
   assert.match(css, /border-radius:\s*16px/);
   assert.match(css, /padding:\s*20px 18px 22px/);
@@ -268,6 +528,7 @@ test("library and overlays fill the viewport instead of a phone column", async (
 test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const homeEnd = html.indexOf('id="create-overlay"');
   const home = homeEnd > 0 ? html.slice(0, homeEnd) : html;
@@ -301,7 +562,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="open-board"[^>]*href="\/backlot"/);
   assert.match(home, /id="open-template"[^>]*href="\/template"[^>]*>템플릿</);
   assert.match(html, /id="open-template-menu"[^>]*href="\/template"[^>]*>템플릿</);
-  assert.match(home, /id="open-settings">설정</);
+  assert.match(home, /id="open-settings"[^>]*href="#settings"[^>]*>설정</);
   assert.match(home, /id="refresh-all">새로고침</);
   assert.equal(home.includes("이미 만든 편 가져오기"), false);
   assert.equal(home.includes("프롬프트 템플릿"), false);
@@ -310,21 +571,52 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.equal(home.includes(">보기<"), false);
   assert.equal(home.includes("surface-toggle"), false);
   assert.match(home, /id="home-brand"/);
-  assert.match(home, /href="#shorts"/);
+  assert.match(home, /id="home-brand" href="\/"/);
   assert.equal(home.includes('class="watch-open"'), false);
   assert.match(html, /id="watch-feed" hidden/);
   assert.match(html, /id="shorts">/);
   assert.match(home, /id="create-tile"/);
-  assert.match(css, /\.studio-chrome\s*\{[^}]*justify-content:\s*space-between/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*display:\s*grid/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*width:\s*24px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*height:\s*24px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*aspect-ratio:\s*1\s*\/\s*1/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*flex:\s*0 0 24px/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*overflow:\s*hidden/);
-  assert.match(css, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent\)/);
-  assert.equal(/\.brand-mark\s*\{[^}]*background:\s*var\(--accent\)/.test(css), false);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
+  assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(chromeCss, /#satellite-menu \.overlay-panel[\s\S]*width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
+  assert.doesNotMatch(chromeCss, /#satellite-menu \.overlay-panel[\s\S]{0,160}100vw/);
+  assert.match(chromeCss, /\.studio-chips\s*\{[^}]*justify-self:\s*center/);
+  assert.match(chromeCss, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border:\s*0/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border-radius:\s*0/);
+  assert.match(chromeCss, /\.studio-chips\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(chromeCss, /\.studio-pipe\s*\{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*display:\s*inline/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*padding:\s*16px 4px/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*margin:\s*-16px 0/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*0/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*0/);
+  assert.match(chromeCss, /\.studio-chips\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(chromeCss, /\.studio-pipe\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(chromeCss, /\.studio-pipe-arrow\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.match(chromeCss, /\.studio-chip\s*\{[^}]*touch-action:\s*manipulation/);
+  assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-width:\s*44px/);
+  assert.doesNotMatch(chromeCss, /\.studio-chip\s*\{[^}]*min-height:\s*44px/);
+  assert.match(chromeCss, /\.studio-chip\.pause\s*\{[^}]*color:\s*var\(--dim/);
+  assert.equal(/\.studio-chip\s*\{[^}]*border-radius:\s*999px/.test(chromeCss), false);
+  assert.equal(/\.studio-chips\s*\{[^}]*flex:\s*1/.test(chromeCss), false);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*display:\s*grid/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*place-items:\s*center/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*width:\s*24px/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*height:\s*24px/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*aspect-ratio:\s*1\s*\/\s*1/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*flex:\s*0 0 24px/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(chromeCss, /\.brand-mark\s*\{[^}]*color:\s*var\(--accent/);
+  assert.equal(/\.brand-mark\s*\{[^}]*background:\s*var\(--accent\)/.test(chromeCss), false);
+  assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*text-overflow:\s*ellipsis/);
+  assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*#open-board[\s\S]*#open-template[\s\S]*display:\s*none/);
+  assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*\.studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
+  assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*\.library-brand h1\s*\{[^}]*display:\s*none/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)\s+env\(safe-area-inset-left\)/);
   assert.equal(home.includes('width="13.6"'), false);
   assert.equal(home.includes('height="19.6"'), false);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
@@ -362,7 +654,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(html.includes("watch-scroller"), false);
   assert.match(html, /id="shorts-grid"/);
   assert.match(html, /id="watch-track"/);
-  assert.match(watch, /aria-label="쇼츠 재생"/);
+  assert.match(watch, /aria-label="영상 재생"/);
   assert.equal(watch.includes("내려받기"), false);
   assert.equal(watch.includes("다시 실행"), false);
   assert.equal(watch.includes('id="watch-player"'), false);
@@ -374,7 +666,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /\.watch-slide\s*\{[^}]*contain:\s*size layout/);
   assert.equal(/\.watch-slide\s*\{[^}]*isolation:\s*isolate/.test(css), false);
   assert.equal(/\.watch-slide\s*\{[^}]*height:\s*100dvh/.test(css), false);
-  assert.match(css, /--watch-col:\s*min\(100vw,\s*calc\(100dvh \* 9 \/ 16\)\)/);
+  assert.match(css, /--watch-col:\s*min\(100%,\s*calc\(var\(--vv-height,\s*100dvh\) \* 9 \/ 16\)\)/);
   assert.match(css, /\.watch-stage\s*\{[^}]*width:\s*100%/);
   assert.match(css, /\.watch-stage\s*\{[^}]*height:\s*100%/);
   assert.match(css, /\.watch-slide\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
@@ -385,8 +677,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /body\.watch-open\s*\{[^}]*display:\s*block/);
   assert.match(css, /body\.watch-open \.studio-chrome\s*\{[^}]*display:\s*none/);
   assert.match(css, /\.watch-back\s*\{[^}]*position:\s*absolute/);
-  assert.match(css, /\.watch-back\s*\{[^}]*top:\s*12px/);
-  assert.match(css, /\.watch-back\s*\{[^}]*left:\s*12px/);
+  assert.match(css, /\.watch-back\s*\{[^}]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /\.watch-back\s*\{[^}]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)/);
   assert.match(css, /\.watch-back\s*\{[^}]*background:\s*none/);
   assert.match(css, /\.watch-back\s*\{[^}]*border:\s*0/);
   assert.match(css, /\.watch-back\s*\{[^}]*border-radius:\s*0/);
@@ -404,8 +696,17 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(/\.watch-menu\s*\{[^}]*border-radius:\s*50%/.test(css), false);
   assert.equal(/\.watch-menu\s*\{[^}]*background:\s*rgba/.test(css), false);
   assert.equal(/@media \(min-width:\s*861px\)[\s\S]*\.watch-menu[\s\S]*display:\s*none/.test(css), false);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]*max-width:\s*var\(--watch-col\)/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-slide[\s\S]*max-width:\s*var\(--watch-col\)/);
+  assert.doesNotMatch(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]{0,80}max-width:\s*100%/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-close[\s\S]*left:\s*max\(12px,\s*env\(safe-area-inset-left\)\)[\s\S]*right:\s*auto/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*right:\s*max\(12px,\s*env\(safe-area-inset-right\)\)/);
+  assert.match(css, /\.watch-back \{[^}]*top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /#watch-feed \.watch-menu,\s*\.watch-menu \{[\s\S]*?top:\s*max\(12px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /\.confirm-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /input:-webkit-autofill[\s\S]*-webkit-text-fill-color:\s*var\(--text\)/);
+  assert.match(css, /input:-webkit-autofill[\s\S]*var\(--surface\)/);
   assert.equal(css.includes("watch-inspect-dismiss"), false);
   assert.equal(css.includes("inspect-open"), false);
   assert.equal(css.includes(".watch-mute"), false);
@@ -431,13 +732,34 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("function patchDetailProgress"), false);
   assert.equal(app.includes("function renderLiveFactory"), false);
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
-  assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
+  assert.match(app, /function hashForView[\s\S]*if \(view === "machine"\) return "#machine";\s*return ""/);
+  assert.match(app, /if \(view === "machine"\) return "#machine"/);
+  assert.match(app, /hash === "machine"/);
+  assert.match(app, /hash === "machine" \|\| hash\.startsWith\("machine\/"\)/);
+  assert.match(app, /hash === "machine"[\s\S]*setView\("machine"/);
+  assert.match(app, /function resumeWatchIfVisible/);
+  assert.match(app, /addEventListener\("pageshow", resumeWatchIfVisible\)/);
+  assert.match(app, /pageHiding = false;\s*if \(event\.persisted\) void refreshJobs\(\)/);
+  assert.match(app, /addEventListener\("studio-open-machine", openMachine\)/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
+  assert.match(app, /const playable = watchableJobs\(\)/);
+  assert.match(app, /requested\?\.id \|\| playable\[0\]\.id/);
+  assert.match(app, /createSeq/);
+  assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
+  assert.match(app, /async function refreshCreatePreview\(expectedSeq = state\.createSeq\)/);
+  assert.match(app, /await refreshCreatePreview\(seq\)/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash\) history\.replaceState\(null, "", location\.pathname \+ location\.search\)/);
+  assert.match(app, /#batch-topics"\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(app, /hash === "short"/);
+  assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
+  assert.match(app, /\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}/);
   assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
   assert.match(app, /function openMaterials/);
-  assert.match(app, /hash === "short"/);
+  const shortHash = app.slice(app.indexOf('if (hash === "short"'), app.indexOf('if (!hash || hash === "shorts")'));
+  assert.match(shortHash, /openMaterials\(jobId\)/);
+  assert.match(shortHash, /location\.replace\("\/backlot"\)/);
+  assert.equal(shortHash.includes("state.selectedJobId"), false);
   assert.match(app, /location\.replace\("\/template"\)/);
   assert.equal(app.includes("preview-unavailable\">${escapeHtml(status.label)}"), false);
   assert.equal(app.includes("아직 영상이 없습니다"), false);
@@ -451,6 +773,39 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("toggleWatchSurface"), false);
   assert.equal(app.includes('state.view === "watch" ? "라이브러리" : "보기"'), false);
   assert.match(app, /function openHome/);
+  assert.match(app, /function openHome\(event\) \{\s*event\?\.preventDefault\(\);\s*skipStaleHashChange\(\);\s*stopWatchFeed\(\$\("#watch-feed"\)\);/);
+  assert.match(app, /영상 주제를 4자 이상 입력하세요/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*showImportResult\(\{ error:/);
+  assert.doesNotMatch(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
+  assert.match(app, /\$\("#create-form"\)\?\.addEventListener\("submit"/);
+  assert.match(app, /function fieldLines/);
+  assert.match(app, /node\?\.value \?\? ""/);
+  assert.match(app, /fieldLines\("#sources"\)/);
+  assert.match(app, /fieldLines\("#facts"\)/);
+  assert.match(app, /\$\("#provider"\)\?\.value/);
+  assert.match(app, /function keepPaintedGrid/);
+  assert.match(app, /throwMappedFetchError\(error\)/);
+  assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;/);
+  assert.match(app, /if \(isAbortError\(error\)\) \{\s*keepPaintedGrid\(error\);\s*return;\s*\}\s*enqueueToast\(error, "error"\)/);
+  assert.match(app, /settingsWrite\?\.abort\(\)/);
+  assert.match(app, /signal: controller.signal/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = settingsSaveFailMessage\(error\);\s*if \(!text\) return;\s*showToast\(text, "error"\)/);
+  assert.match(app, /async function persistSettings\(\{ toast = false, keepalive = false \} = \{\}\)/);
+  assert.match(app, /void persistSettings\(\{ keepalive: true \}\)/);
+  assert.match(app, /if \(keepalive\) \{\s*try \{\s*await fetch\("\/api\/settings"/);
+  assert.match(app, /keepalive: true/);
+  assert.match(app, /pagehide persist does not parse the body or toast/);
+  assert.match(app, /async function draftScriptFromTopic/);
+  assert.match(app, /if \(isAbortError\(error\)\) return;\s*const text = friendlyJobError\(error\);/);
+  assert.match(app, /if \(errorBox && text\) \{\s*errorBox\.hidden = false;/);
+  assert.match(app, /\$\("#script-draft"\)\?\.value\?\.trim\(\)/);
+  assert.match(app, /\$\("#topic"\)\?\.value\?\.trim\(\)/);
+  assert.doesNotMatch(app, /\$\("#script-draft"\)\?\.value\.trim\(/);
+  assert.doesNotMatch(app, /\$\("#topic"\)\?\.value\.trim\(/);
+  assert.match(app, /new AbortController/);
+  assert.equal(app.includes("error.message"), false);
+  assert.equal(app.includes("$(\"#sources\").value"), false);
+  assert.equal(app.includes("$(\"#provider\").value"), false);
   assert.match(app, /if \(state\.view === "watch"\) \{\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
   assert.match(app, /isWatchableShort\(job\)\) \{\s*setView\("watch"/);
   assert.match(app, /ArrowDown/);
@@ -479,7 +834,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /clearWatchSize/);
   assert.match(app, /sizeShortsGrid\(\)/);
   assert.match(app, /requestAnimationFrame/);
-  assert.match(app, /orientationchange/);
+  assert.match(app, /bindRotateSettle/);
   assert.match(app, /function notifyActive/);
   assert.match(app, /function mountWatchFeed/);
   assert.match(app, /data-loop="head"/);
@@ -489,7 +844,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /from "\.\/watch-feed\.mjs"/);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
   assert.match(app, /bindWatchFeed\(root, openHome/);
-  assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /openMaterials\(jobId \|\| currentWatchSlide/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
+  assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*playWatchFeed/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*stopWatchFeed/);
   assert.equal(app.includes("video.muted = true"), false);
@@ -501,6 +858,16 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(feed, /document\.createElement\("video"\)/);
   assert.match(feed, /activeSlide\.appendChild/);
   assert.match(app, /class="watch-menu watch-materials-toggle"/);
+  assert.match(app, /class="watch-sound"/);
+  assert.match(html, /class="watch-sound"[^>]*hidden/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?top:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?z-index:\s*7/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
@@ -511,6 +878,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("hydrateWatchInspect"), false);
   assert.equal(app.includes("function renderWatchInspectPanel"), false);
   assert.match(app, /function openMaterials/);
+  assert.match(app, /function hideLeftoverOverlays/);
+  assert.match(app, /hideLeftoverOverlays\(\);\s*state\.selectedJobId = jobId/);
   assert.match(app, /\/backlot\/p\//);
   assert.equal(app.includes("scrollIntoView"), false);
   assert.equal(app.includes('class="watch-materials"'), false);
@@ -520,6 +889,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /openJob/);
   assert.match(app, /function openDetail/);
   assert.match(app, /short-card-detail/);
+  assert.match(css, /\.short-card-detail\s*\{[^}]*min-width:\s*44px/);
+  assert.match(css, /\.short-card-detail\s*\{[^}]*min-height:\s*44px/);
   assert.match(app, />재료</);
   assert.equal(watchSlide.includes("watch-actions"), false);
   assert.equal(watchSlide.includes("watch-mute"), false);
@@ -549,14 +920,31 @@ test("completed short lists master chat parts and ASS downloads", () => {
       { name: "chat.mp4", url: "/api/jobs/a/artifacts/chat.mp4" }
     ]
   }).map((item) => item.label), ["마스터", "채팅용"]);
+  assert.deepEqual(inspectVideoDownloads({
+    artifacts: [
+      { name: "final.mp4", url: "/api/jobs/a/artifacts/final.mp4" },
+      { name: "chat.mp4", url: "/api/jobs/a/artifacts/chat.mp4" }
+    ]
+  }).map((item) => item.label), ["최종", "채팅용"]);
+  assert.deepEqual(inspectVideoDownloads({
+    artifacts: [
+      { name: "final.mp4", url: "/api/jobs/a/artifacts/final.mp4" },
+      { name: "parts/part-01.mp4", kind: "part", url: "/api/jobs/a/artifacts/parts/part-01.mp4" }
+    ]
+  }).map((item) => item.label), ["최종", "채팅용 1"]);
 });
 
 test("watch inspector saves drafts and freezes regen", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
   const editor = await readFile(join(publicDir, "materials-editor.mjs"), "utf8");
+  const ui = await readFile(join(publicDir, "shorts-ui.mjs"), "utf8");
   const materials = await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8");
   const board = await readFile(join(publicDir, "backlot/board.html"), "utf8");
   const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
+  assert.match(board, /content="width=device-width, initial-scale=1, interactive-widget=resizes-content"/);
+  assert.doesNotMatch(board, /viewport-fit/);
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
   const html = await readFile(join(publicDir, "index.html"), "utf8");
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
@@ -572,6 +960,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(app.includes("function renderWatchInspectPanel"), false);
   assert.equal(app.includes("function toggleWatchInspect"), false);
   assert.match(app, /function openMaterials/);
+  assert.match(app, /function hideLeftoverOverlays/);
+  assert.match(app, /hideLeftoverOverlays\(\);\s*state\.selectedJobId = jobId/);
   assert.match(app, /location\.assign\(materialsUrl/);
   assert.match(app, /\/backlot\/p\//);
   assert.match(app, /stopWatchFeed\(\$\("#watch-feed"\)\)/);
@@ -579,11 +969,18 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /export function renderMaterialsPanel/);
   assert.match(editor, /export function collectInspectPayload/);
   assert.match(editor, /inspectVideoDownloads\(job\)/);
+  assert.match(editor, /import \{ displayTitle, frozenRemakeLabel, inspectVideoDownloads \} from "\.\/shorts-ui\.mjs"/);
+  assert.match(editor, /value="\$\{escapeMaterialsHtml\(displayTitle\(job\.topic\)\)\}"/);
+  assert.match(editor, /shots\.length/);
   assert.match(editor, /class="inspect-files"/);
   assert.match(editor, /class="inspect-topic"/);
+  assert.match(editor, /enterkeyhint="done"/);
+  assert.match(editor, /autocomplete="off"/);
+  assert.match(editor, /spellcheck="false"/);
   assert.match(editor, /class="inspect-facts"/);
   assert.match(editor, /class="inspect-script"/);
   assert.match(editor, /class="inspect-shot-caption"/);
+  assert.match(editor, /placeholder="자막"/);
   assert.match(editor, /class="inspect-shot-prompt"/);
   assert.match(editor, /class="inspect-shot-animate"/);
   assert.match(editor, /data-world-slot/);
@@ -595,8 +992,52 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(editor.includes("자막 ASS"), false);
   assert.equal(editor.includes("captions.ass"), false);
   assert.match(editor, /class="primary-button inspect-save"[^>]*>저장</);
-  assert.match(editor, /class="secondary-button inspect-regen"[\s\S]*다시 만들기/);
-  assert.match(editor, /지금은 다시 못 만들어요/);
+  assert.match(editor, /secondary-button inspect-regen/);
+  assert.match(editor, /is-paused/);
+  assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
+  assert.match(editor, /frozenRemakeLabel\(frozen\)/);
+  assert.match(ui, /frozen \? "지금은 못 만들어요" : "다시 만들기"/);
+  assert.doesNotMatch(editor, /다시 만들기 · 멈춤/);
+  assert.match(editor, /지금은 그림을 안 만들어요/);
+  assert.match(editor, /export function fallbackCaptionPrompts/);
+  assert.match(editor, /job\.lines/);
+  assert.match(editor, /job\.captions/);
+  assert.match(editor, /script\?\.lines/);
+  assert.match(editor, /job\.scriptDraft/);
+  assert.match(materials, /fallbackCaptionPrompts/);
+  assert.match(materials, /pausedActionError/);
+  assert.match(materials, /friendlyJobError/);
+  assert.match(materials, /stripUiPaths/);
+  assert.match(materials, /method: "PATCH"/);
+  assert.match(materials, /friendlyJobError\(data\.error \|\| "초안을 저장하지 못했습니다\."\)/);
+  assert.match(materials, /parseJsonText\(await payload\.text\(\)\)/);
+  assert.match(materials, /throwMappedFetchError\(error\)/);
+  assert.match(materials, /if \(isAbortError\(error\)\) return/);
+  assert.match(editor, /root\?\.querySelectorAll\?\.\("\.inspect-shot/);
+  assert.match(editor, /root\?\.querySelectorAll\?\.\("\.inspect-caption/);
+  assert.match(editor, /node\.querySelector\?\./);
+  assert.match(editor, /input\.closest\?\./);
+  assert.match(editor, /root\?\.querySelector\?\.\("\[data-draft-topic\]/);
+  assert.equal(materials.includes(".json().catch(() => ({}))"), false);
+  assert.equal(materials.includes("Failed to fetch"), false);
+  assert.match(materials, /String\(400 \+ 2\)/);
+  assert.match(materials, /지금은 다시 못 만들어요/);
+  assert.equal(materials.includes("402"), false);
+  assert.match(pipe, /지금은 그림을 안 만들어요/);
+  assert.match(pipe, /대본을 쓸 수 없습니다/);
+  assert.match(pipe, /편집을 할 수 없습니다/);
+  assert.match(app, /if \(state\.jobsLoaded\)/);
+  assert.equal(app.includes("그림 · 멈춤"), false);
+  assert.equal(/reasons\.push\("그림 · 멈춤"\)/.test(app), false);
+  assert.equal(/if \(frozen\) reasons\.push/.test(app), false);
+  assert.match(app, /renderMachineSheetHtml\(state\.health/);
+  assert.match(pipe, /stage\.ready \? "준비" : stage\.paused \? PIPE_PAUSED : stage\.title/);
+  assert.equal(pipe.includes("없음"), false);
+  assert.equal(pipe.includes("지금은 다시 못 만들어요"), false);
+  assert.equal(app.includes("그림 · 멈춤"), false);
+  assert.equal(app.includes("움직임 · 멈춤"), false);
+  assert.match(pipe, /paused: frozen/);
+  assert.match(pipe, /if \(paused\) return " pause"/);
   assert.match(app, /function youtubePrepMarkup/);
   assert.equal(editor.includes("youtubePrepMarkup"), false);
   assert.equal(editor.includes("업로드 준비"), false);
@@ -613,6 +1054,17 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(board, /aria-label="재료"/);
   assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
   assert.ok(board.indexOf('class="wrap" id="app"') < board.indexOf('id="materials"'), "materials follows the original wrap");
+  assert.doesNotMatch(board, /id="app"[^>]*hidden/);
+  assert.doesNotMatch(boardCss, /#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(boardCss, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(boardCss, /body:has\([^\)]*materials[^\)]*\)[\s\S]{0,120}#app[\s\S]{0,80}display:\s*none/);
+  assert.match(boardCss, /No materials-page hide/);
+  assert.match(boardCss, /body:has\(#materials\) \.wrap#app/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*safe-area-inset-left/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*safe-area-inset-right/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*safe-area-inset-bottom/);
+  assert.doesNotMatch(materials, /getElementById\("app"\)/);
+  assert.doesNotMatch(materials, /#app/);
   assert.match(materials, /renderMaterialsPanel/);
   assert.match(materials, /collectInspectPayload/);
   assert.match(materials, /method: "PATCH"/);
@@ -620,11 +1072,188 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(materials.includes("크레딧 부족"), false);
   assert.equal(materials.includes("크레딧 402"), false);
   assert.match(boardCss, /\.wrap\s*\{\s*max-width:\s*1440px/);
+  assert.match(boardCss, /Studio extra: full-width wrap/);
+  assert.match(boardCss, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
+  assert.match(boardCss, /#studio-chrome/);
+  assert.match(boardCss, /z-index:\s*100/);
+  assert.match(boardCss, /Isolate shared chrome/);
+  assert.match(boardCss, /isolation:\s*isolate/);
+  assert.doesNotMatch(boardCss, /\.slate \.wordmark\s*\{[^}]*text-transform:\s*uppercase/);
+  assert.match(boardCss, /\.clapper\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.slate \.wordmark\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
+  assert.match(boardCss, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  assert.match(boardCss, /\.filmstrip\s*\{[^}]*scroll-snap-type:\s*none/);
+  assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
+  assert.match(boardCss, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
+  assert.match(boardCss, /\.wrap#app \.slate/);
+  assert.match(boardCss, /Studio extra: slim library slate under chrome/);
+  assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate/);
+  assert.match(app, /function emptyGridNote/);
+  assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!ffmpeg\)/);
+  assert.match(app, /function overlayStartFocus/);
+  assert.match(app, /root\.id === "create-overlay"/);
+  assert.match(app, /createMode === "batch"/);
+  assert.match(app, /querySelector\?\.\("#batch-topics"\)/);
+  assert.match(app, /querySelector\?\.\("#topic"\)/);
+  assert.doesNotMatch(app, /target\.closest\("\[hidden\]"\)/);
+  assert.match(app, /rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(app, /matchMedia\?\.\("\(pointer: coarse\)"\)/);
+  assert.match(app, /if \(!coarse\)/);
+  assert.match(app, /active && root\.contains\(active\)/);
+  assert.match(app, /overlayFocusables\(root\)\.filter\(\(node\) => !node\.classList\?\.contains\("draft-close"\)\)/);
+  assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
+  assert.match(html, /id="close-create"[^>]*tabindex="-1"/);
+  assert.match(html, /id="settings-overlay"[\s\S]*class="draft-close"[\s\S]*id="settings-tts-provider"/);
+  assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\?\.\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\{ preventScroll: true \}\);[\s\S]*?return;/);
+  assert.match(html, /id="machine-overlay"[\s\S]*class="overlay-panel machine-overlay-panel"[^>]*tabindex="-1"/);
+  assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
+  assert.match(app, /\/\^\(p\|materials\)/);
+  assert.match(app, /\.replace\(\/\\\/\+\$\/, ""\)/);
+  assert.match(app, /location\.replace\(`\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}`\)/);
+  assert.match(app, /월드 슬롯을 불러오지 못했습니다/);
+  assert.match(app, /hash === "batch"/);
+  assert.match(app, /if \(view === "create"\) return "#create"/);
+  assert.doesNotMatch(app, /createMode === "batch" \? "#batch" : "#create"/);
+  assert.doesNotMatch(app, /if \(view === "batch"\) return "#batch"/);
+  assert.doesNotMatch(app, /replaceState\(history\.state, "", "#batch"\)/);
+  assert.match(app, /takeCreateModeHint\(\)/);
+  assert.match(app, /hash === "batch"/);
+  assert.match(app, /location\.replace\("\/#create"\)/);
+  assert.match(app, /visualViewport/);
+  assert.match(app, /--vv-bottom/);
+  assert.match(app, /function pinWatchToVisualViewport/);
+  assert.match(app, /pinOverlaysToVisualViewport/);
+  assert.match(app, /rescrollFocusedField\(document\)/);
+  assert.match(app, /syncOverlayLock/);
+  assert.match(app, /--vv-height/);
+  assert.match(app, /scrollFocusIntoPanel/);
+  assert.match(app, /preventScroll:\s*true/);
+  assert.match(app, /function sizeShortsGrid/);
+  assert.match(app, /visualViewport\?\.height/);
+  assert.equal(app.includes("event.submitter"), false);
+  assert.match(app, /addEventListener\("submit", \(event\) => \{\s*if \(state\.createMode === "batch"\) \{\s*event\.preventDefault\(\);\s*void saveBatchDrafts\(\);/);
+  assert.match(app, /String\(400 \+ 2\)/);
+  assert.match(app, /지금은 다시 못 만들어요/);
+  assert.equal(app.includes("402"), false);
+  assert.match(app, /function refreshMachineHealth/);
+  assert.match(app, /api\("\/api\/health"\)/);
+  assert.match(app, /void refreshMachineHealth\(\)/);
+  assert.match(app, /settingsSeq/);
+  assert.match(app, /seq !== state\.settingsSeq/);
+  assert.match(app, /function persistSettings/);
+  assert.match(app, /addEventListener\("change", \(\) => \{ void persistSettings/);
+  assert.match(app, /state\.view === "settings" && next !== "settings"\) void persistSettings/);
+  assert.match(app, /await persistSettings\(\{ toast: true \}\)/);
+  assert.match(app, /settingsSaveFailMessage\(error\)/);
+  assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
+  assert.match(html, /<form class="create-panel" id="create-form" novalidate onsubmit="return false">/);
+  assert.match(html, /<form class="create-panel" id="settings-form" onsubmit="return false">/);
+  assert.equal(/id="create-form"[^>]*(action=|method=)/i.test(html), false);
+  assert.equal(/id="settings-form"[^>]*(action=|method=)/i.test(html), false);
+  assert.match(html, /id="settings-bgm-songs"[^>]*>곡을 불러오는 중</);
+  assert.equal(/id="settings-bgm-songs"[^>]*>곡 없음</.test(html), false);
+  assert.match(html, /id="create-world-slots"[\s\S]*template-skeleton/);
+  assert.match(app, /월드 슬롯을 불러오지 못했습니다/);
+  assert.match(html, /hash === "create" \|\| hash === "batch"/);
+  assert.ok(html.indexOf('hash === "create" || hash === "batch"') < html.indexOf('src="/app.js"'), "create/settings unhide before app.js");
+  assert.ok(html.indexOf('setProperty("--chrome"') < html.indexOf('src="/app.js"'), "first-paint --chrome before app.js");
+  assert.match(app, /leavingWatch/);
+  assert.match(app, /preview-wrap video, \.shorts-grid video, audio/);
+  assert.ok(html.indexOf('hash === "settings"') < html.indexOf('src="/app.js"'), "settings unhide before app.js");
+  assert.ok(html.indexOf('hash === "machine"') < html.indexOf('src="/app.js"'), "machine unhide before app.js");
+  const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
+  assert.match(boot, /hash === "machine" \|\| hash.indexOf\("machine\/"\) === 0/);
+  assert.match(boot, /show\("machine-overlay"\)/);
+  assert.match(boot, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
+  assert.match(boot, /classList\.add\("watch-open"\)/);
+  assert.match(boot, /library\.hidden = true/);
+  assert.match(boot, /feed\.hidden = false/);
+  assert.match(html, /leftoverBatch/);
+  assert.match(html, /studioCreateMode/);
+  assert.match(boot, /leftoverBatch/);
+  assert.match(boot, /hash === "batch"/);
+  assert.match(boot, /title\.textContent = "양산"/);
+  assert.match(boot, /single\.hidden = true/);
+  assert.match(boot, /batch\.hidden = false/);
+  assert.match(boot, /submit\.hidden = true/);
+  assert.match(boot, /actions\.hidden = false/);
+  assert.match(html, /id="single-topic-field"/);
+  assert.match(html, /id="batch-field" hidden/);
+  assert.match(html, /id="batch-actions" hidden/);
+  assert.match(css, /#batch-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(css, /#batch-actions\s*\{[^}]*bottom:\s*var\(--vv-bottom,\s*0px\)/);
+  assert.match(css, /#create-submit,\s*#settings-form \.primary-button,\s*\.machine-overlay-panel \.primary-button\s*\{[^}]*bottom:\s*var\(--vv-bottom,\s*0px\)/);
+  assert.match(css, /--vv-bottom/);
+  assert.match(css, /--vv-height:\s*100dvh/);
+  assert.match(css, /\.toast\s*\{[^}]*max-width:\s*min\(360px,\s*calc\(100% - 32px\)\)/);
+  assert.match(css, /\.toast\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /html\.ime-open \.toast\s*\{[^}]*display:\s*none/);
+  assert.match(app, /visualViewportKeyboardInset\(\)/);
+  assert.match(app, /classList\.toggle\("ime-open", bottom > 80\)/);
+  assert.match(css, /textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /input,\s*select\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /\.secondary-button\s*\{[^}]*min-height:\s*44px/);
+  assert.doesNotMatch(css, /#watch-feed[\s\S]{0,180}bottom:\s*var\(--vv-bottom/);
+  assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
+  assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(css, /input,\s*textarea,\s*select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /#create select,\s*#settings select/);
+  assert.match(css, /#create-overlay select,\s*#settings-overlay select/);
+  assert.match(css, /\.studio-overlay select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /#delete-confirm\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#delete-confirm\s*\{[^}]*min-width:\s*44px/);
+  assert.match(boardCss, /\.materials\s*\{[^}]*var\(--vv-bottom/);
+  assert.match(boardCss, /\.materials input,\s*\.materials textarea,\s*\.materials select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(boardCss, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
+  assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome h1\s*\{[^}]*display:\s*none/);
+  assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
+  assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*bottom:\s*0/);
+  assert.match(boardCss, /\.materials \.inspect-actions\s*\{[^}]*padding-bottom:\s*max\(8px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(boardCss, /\.scene-card \{ max-width: 100%; \}/);
+  assert.match(boardCss, /\.cost \.bar \{ width: min\(150px, 38%\); \}/);
+  assert.doesNotMatch(boardCss, /100vw - 42px/);
+  assert.doesNotMatch(boardCss, /38vw/);
+  assert.doesNotMatch(boardCss, /min-height:\s*100vh/);
+  assert.doesNotMatch(boardCss, /calc\(100vh - 360px\)/);
+  assert.match(boardCss, /min-height:\s*var\(--vv-height,\s*100dvh\)/);
+  assert.match(boardCss, /calc\(var\(--vv-height,\s*100dvh\) - 360px\)/);
+  assert.doesNotMatch(boardCss, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(boardCss, /\.filmstrip\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
+  assert.match(app, /function bindEvents\(\) \{\s*bindStudioPipe\(document, openMachine\);/);
+  assert.ok(app.indexOf("bindEvents();") < app.indexOf("void warnIfFactoryToolsMissing()"), "chips bind before health");
+  assert.match(boardCss, /IBM Plex Sans KR/);
+  assert.match(boardCss, /:root\s*\{[\s\S]*--sans:\s*'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;/);
+  assert.match(boardCss, /#studio-chrome[\s\S]*font-family:\s*var\(--sans\)/);
+  assert.equal(boardCss.includes("Inter"), false);
+  assert.equal(boardCss.includes("family=Inter"), false);
+  const heroExtra = boardCss.slice(boardCss.lastIndexOf("Studio extra: compact 9:16 render-hero"));
+  assert.match(heroExtra, /height:\s*auto/);
+  assert.match(heroExtra, /aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(heroExtra, /width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.doesNotMatch(boardCss, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
   assert.doesNotMatch(boardCss, /@media \(max-width: 720px\)/);
   assert.doesNotMatch(boardCss, /max-width:\s*440px/);
   assert.doesNotMatch(boardCss, /max-width:\s*400px/);
+  assert.match(boardCss, /\.materials \.inspect-frozen[\s\S]*color:\s*var\(--text-2\)/);
+  assert.doesNotMatch(boardCss, /\.materials \.inspect-frozen[^{]*\{[^}]*var\(--red\)/);
+  assert.match(boardCss, /\.materials \.inspect-regen\[inert\]/);
+  assert.match(boardCss, /\.materials \.inspect-regen\.is-paused/);
+  assert.match(boardCss, /pointer-events:\s*none/);
+  assert.doesNotMatch(boardCss, /\.materials \.inspect-regen\.is-paused[^{]*\{[^}]*opacity:\s*\.48/);
   assert.match(boardCss, /\.materials \.inspect-stack\s*\{[^}]*gap/);
   assert.match(boardCss, /\.materials \.inspect-caption\s*\{[^}]*grid-template-columns:\s*1\.5rem/);
   assert.match(boardCss, /\.materials \.inspect-files\s*\{/);
@@ -666,11 +1295,27 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(panel, /hidden class="inspect-facts"/);
   assert.match(panel, /hidden class="inspect-shot"/);
   assert.match(panel, /inspect-files/);
+  assert.ok(panel.indexOf(">자막<") < panel.indexOf("inspect-files"), "downloads sit under captions");
   assert.match(panel, /마스터/);
+  const noCaptions = renderMaterialsPanel({
+    id: "job-2",
+    topic: "한강 갑문",
+    artifacts: [
+      { name: "master.mp4", kind: "master-video", url: "/api/jobs/job-2/artifacts/master.mp4" }
+    ]
+  }, { shots: [] });
+  assert.equal(noCaptions.includes("inspect-files"), false);
+  assert.equal(noCaptions.includes("마스터"), false);
   assert.match(panel, /채팅용/);
   assert.equal(panel.includes("자막 ASS"), false);
   assert.equal(panel.includes("watch-inspect-close"), false);
-  assert.match(panel, /disabled/);
+  assert.match(panel, /inert/);
+  assert.doesNotMatch(panel, /data-inspect-regen[^>]*disabled/);
+  assert.match(panel, /is-paused/);
+  assert.match(panel, /지금은 못 만들어요/);
+  assert.doesNotMatch(panel, /다시 만들기 · 멈춤/);
+  assert.match(panel, /title="지금은 그림을 안 만들어요"/);
+  assert.match(panel, /지금은 그림을 안 만들어요/);
   const fakeRoot = {
     querySelectorAll(selector) {
       if (selector.includes("inspect-shot[data-shot-index]")) {
@@ -700,6 +1345,20 @@ test("watch inspector saves drafts and freezes regen", async () => {
       return null;
     }
   };
+  assert.deepEqual(collectInspectPayload(null), {
+    topic: "",
+    facts: [],
+    scriptDraft: "",
+    worldSlots: {},
+    shotOverrides: {}
+  });
+  assert.deepEqual(collectInspectPayload({}), {
+    topic: "",
+    facts: [],
+    scriptDraft: "",
+    worldSlots: {},
+    shotOverrides: {}
+  });
   assert.deepEqual(collectInspectPayload(fakeRoot), {
     topic: "한강 갑문",
     facts: ["숨긴 사실"],
@@ -716,9 +1375,20 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   assert.match(app, /function showImportResult/);
   assert.match(app, /textContent = "가져오기"/);
+  assert.match(html, /id="menu-import-close">닫기</);
   assert.match(html, /id="menu-import-ok">확인</);
+  assert.match(app, /\$\("#menu-import-close"\)\?\.addEventListener\("click"/);
+  assert.match(app, /resetMenuCard\(\)/);
+  assert.equal(html.includes(">Back<"), false);
+  assert.equal(html.includes(">Back</"), false);
   assert.match(html, /id="menu-batch">양산</);
+  assert.match(html, /<button type="button" id="menu-batch">양산</);
+  assert.doesNotMatch(html, /id="menu-batch"[^>]*href="#batch"/);
   assert.match(html, /id="batch-topics"/);
+  assert.match(html, /id="topic"[^>]*enterkeyhint="done"/);
+  assert.match(html, /id="topic"[^>]*autocomplete="off"/);
+  assert.match(html, /id="topic"[^>]*spellcheck="false"/);
+  assert.match(html, /id="batch-topics"[^>]*enterkeyhint="enter"/);
   assert.match(html, /id="batch-draft"[^>]*>[\s\S]*초안만 저장/);
   assert.match(html, /id="batch-queue"[^>]*>[\s\S]*대기열에 넣고 생성/);
   assert.equal(html.includes("id=\"batch-frozen\""), false);
@@ -728,10 +1398,51 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.equal(app.includes("크레딧 부족"), false);
   assert.equal(app.includes("크레딧 402"), false);
   assert.match(app, /createMode = "batch"/);
-  assert.match(app, /title\.textContent = batch \? "양산" : "새 쇼츠"/);
+  assert.match(app, /title\.textContent = batch \? "양산" : "새 영상"/);
   assert.match(app, /provider: "grok-imagine"/);
   assert.match(app, /draftOnly: true/);
   assert.match(app, /function queueBatchJobs/);
+  assert.match(app, /function parseBatchTopics/);
+  assert.match(app, /leftover\.length/);
+  assert.match(app, /line && line\.length < 4/);
+  assert.match(app, /짧은 줄은 4자 이상 입력하세요/);
+  assert.match(app, /function batchTopicsOrFocus/);
+  assert.match(app, /friendlyJobError/);
+  assert.match(app, /stripUiPaths/);
+  assert.match(app, /stripErrorPrefix/);
+  assert.match(app, /function enqueueToast/);
+  assert.match(app, /if \(isAbortError\(message\)\) return/);
+  assert.match(app, /enqueueToast\.current/);
+  assert.match(app, /enqueueToast\(error, "error"\)/);
+  assert.match(app, /parseJsonText\(text\)/);
+  assert.match(app, /displayTitle\(/);
+  assert.match(app, /parseJsonText\(event\.data\)/);
+  const apiFn = app.slice(app.indexOf("async function api"), app.indexOf("function enqueueToast"));
+  assert.match(apiFn, /throwMappedFetchError\(error\)/);
+  assert.match(apiFn, /parseJsonText\(text\)/);
+  assert.equal(apiFn.includes(".json().catch(() => ({}))"), false);
+  assert.equal(app.includes(".json().catch(() => ({}))"), false);
+  assert.match(app, /source\.onerror = \(\) => \{/);
+  assert.doesNotMatch(app, /source\.onerror = \(\) => \{\s*source\.close\(\)/);
+  assert.match(app, /function jobSseGone/);
+  assert.match(app, /function endJobSseIfGone/);
+  assert.match(app, /ENOENT/);
+  assert.doesNotMatch(app, /addEventListener\("done", \(\) => \{\s*source\.close\(\)/);
+  assert.match(app, /jobsFromListPayload\(payload\)/);
+  assert.match(
+    app,
+    /if \(!Array\.isArray\(payload\?\.jobs\) && !Array\.isArray\(payload\)\) \{\s*throw new Error\("불러오지 못했습니다\."\);\s*\}/,
+  );
+  const initFn = app.slice(app.indexOf("async function init"), app.lastIndexOf("init();"));
+  assert.match(initFn, /if \(isAbortError\(error\)\) return/);
+  assert.match(initFn, /failJobsLoad\(error\)/);
+  assert.equal(initFn.includes("state.jobs = []"), false);
+  assert.equal(initFn.includes("renderJobs()"), false);
+  assert.match(app, /shortCardUnchanged\(prev, job\)/);
+  assert.equal(app.includes("payload.jobs.map"), false);
+  assert.equal(app.includes("작업 상태 갱신 실패"), false);
+  assert.equal(app.includes("Failed to fetch"), false);
+  assert.equal(app.includes("요청 실패 (${response.status})"), false);
   assert.match(app, /\/run/);
   assert.match(app, /업로드 준비/);
   assert.match(app, /bindFocusTrap/);
@@ -776,4 +1487,321 @@ test("grid cards skip 1x1 placeholder png and use real jpg", () => {
     }),
     ""
   );
+});
+
+test("materials fallback captions follow job.lines then captions then script then draft", () => {
+  assert.deepEqual(fallbackCaptionPrompts({ lines: ["갑문", "물길"] }).shots.map((shot) => shot.caption), ["갑문", "물길"]);
+  assert.deepEqual(fallbackCaptionPrompts({ captions: ["첫 자막", "둘째"] }).shots.map((shot) => shot.caption), ["첫 자막", "둘째"]);
+  assert.deepEqual(fallbackCaptionPrompts({ captions: true, script: { lines: ["스크립트 줄"] } }).shots.map((shot) => shot.caption), ["스크립트 줄"]);
+  assert.deepEqual(fallbackCaptionPrompts({ script: "대본 한 줄\n다음 줄" }).shots.map((shot) => shot.caption), ["대본 한 줄", "다음 줄"]);
+  assert.deepEqual(fallbackCaptionPrompts({ scriptDraft: "초안 한 줄" }).shots.map((shot) => shot.caption), ["초안 한 줄"]);
+  assert.deepEqual(fallbackCaptionPrompts({ captions: true, scriptDraft: "" }).shots, []);
+  assert.deepEqual(fallbackCaptionPrompts({ lines: ["갑문", "", "물길"] }).shots.map((shot) => shot.caption), ["갑문", "", "물길"]);
+});
+
+test("machine sheet uses the same frozen and missing copy as chips", () => {
+  const frozen = pipelineStages({ imagine: { frozen: true }, capabilities: {} });
+  assert.deepEqual(frozen.map((stage) => stage.label), ["대본", "그림", "움직임", "편집"]);
+  assert.equal(frozen[0].title, PIPE_SCRIPT_MISSING);
+  assert.equal(frozen[1].title, PIPE_PAUSED);
+  assert.equal(frozen[2].title, PIPE_PAUSED);
+  assert.equal(frozen[3].title, PIPE_EDIT_MISSING);
+  assert.equal(frozen[1].paused, true);
+  const sheet = renderMachineSheetHtml({ imagine: { frozen: true }, capabilities: {} });
+  assert.equal(sheet, machineSheetHtml({ imagine: { frozen: true }, capabilities: {} }));
+  assert.match(sheet, /<ul id="machine-sheet">/);
+  assert.match(sheet, /<li>대본 대본을 쓸 수 없습니다<\/li>/);
+  assert.match(sheet, /대본 대본을 쓸 수 없습니다/);
+  assert.match(sheet, /그림 지금은 그림을 안 만들어요/);
+  assert.match(sheet, /움직임 지금은 그림을 안 만들어요/);
+  assert.match(sheet, /편집 편집을 할 수 없습니다/);
+  assert.equal(sheet.includes("없음"), false);
+  assert.equal(sheet.includes("Grok"), false);
+  assert.equal(sheet.includes("Imagine"), false);
+  assert.equal(sheet.includes("ffmpeg"), false);
+  assert.equal(sheet.includes("CLI"), false);
+  const ready = renderMachineSheetHtml({
+    imagine: { frozen: false },
+    capabilities: { grokCli: true, ffmpeg: true }
+  });
+  assert.match(ready, /대본 준비/);
+  assert.match(ready, /그림 준비/);
+  assert.match(ready, /움직임 준비/);
+  assert.match(ready, /편집 준비/);
+  assert.equal(ready.includes("Grok"), false);
+  assert.equal(ready.includes("ffmpeg"), false);
+});
+
+test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and wrap.work", async () => {
+  const files = [
+    await readFile(join(publicDir, "app.js"), "utf8"),
+    await readFile(join(publicDir, "index.html"), "utf8"),
+    await readFile(join(publicDir, "watch-feed.mjs"), "utf8"),
+    await readFile(join(publicDir, "materials-editor.mjs"), "utf8"),
+    await readFile(join(publicDir, "studio-pipe.mjs"), "utf8"),
+    await readFile(join(publicDir, "studio-chrome.mjs"), "utf8"),
+    await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8"),
+    await readFile(join(publicDir, "backlot/board.html"), "utf8"),
+    await readFile(join(publicDir, "backlot/index.html"), "utf8"),
+    await readFile(join(publicDir, "template/index.html"), "utf8"),
+    await readFile(join(publicDir, "template/template.js"), "utf8")
+  ];
+  const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
+  const app = files[0];
+  for (const source of files) {
+    assert.equal(source.includes("#short-overlay"), false);
+    assert.equal(source.includes("크레딧 402"), false);
+    assert.equal(source.includes("크레딧 부족"), false);
+    assert.equal(source.includes("탭해서 재생"), false);
+    assert.equal(source.includes("쇼츠 공장"), false);
+    assert.equal(source.includes("class=\"wrap work\""), false);
+    assert.equal(source.includes("Failed to fetch"), false);
+    assert.equal(source.includes(".json().catch(() => ({}))"), false);
+  }
+  assert.doesNotMatch(boardCss, /\.wrap\.work/);
+  assert.equal(files[3].includes("402"), false);
+  assert.equal((await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8")).includes("402"), false);
+  assert.match(app, /location\.replace\("\/backlot"\)/);
+  assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
+});
+
+test("displayTitle drops workspace paths and falls back to 보드", () => {
+  assert.equal(displayTitle("/workspace/jobs/foo", "보드"), "보드");
+  assert.equal(displayTitle("workspace/jobs/foo/master.mp4", "보드"), "보드");
+  assert.equal(displayTitle("file:///tmp/clip.mp4", "보드"), "보드");
+  assert.equal(displayTitle("/workspace/jobs/foo"), "");
+  assert.equal(displayTitle("한강 갑문", "보드"), "한강 갑문");
+  assert.equal(displayStageLabel("script"), "대본");
+  assert.equal(displayStageLabel("unknown"), "단계");
+  assert.equal(displayStageLabel("CustomStage"), "단계");
+  assert.equal(displayItemLabel("research_brief"), "조사");
+  assert.equal(displayItemLabel("artifact"), "항목");
+  assert.equal(displayItemLabel("Item 3"), "3번");
+  assert.equal(displayItemLabel("take 2"), "2테이크");
+  assert.equal(displayPipelineLabel("unknown"), "단계");
+  assert.equal(displayPipelineLabel("ps4-studio"), "보드");
+  assert.equal(displayPipelineLabel("style_playbook"), "");
+  assert.equal(frozenRemakeLabel(true), "지금은 못 만들어요");
+  assert.equal(frozenRemakeLabel(false), "다시 만들기");
+});
+
+test("leftover watch with no clips replaces /", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash\) history\.replaceState\(null, "", location\.pathname \+ location\.search\)/);
+  assert.equal(html.includes('class="watch-open"'), false);
+  assert.match(html, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
+  assert.match(html, /classList\.add\("watch-open"\)/);
+});
+
+test("hydrateCreateSlots keeps createSeq so cancel cannot refill", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  assert.match(app, /async function refreshCreatePreview\(expectedSeq = state\.createSeq\)/);
+  assert.match(app, /const seq = expectedSeq/);
+  assert.match(app, /async function hydrateCreateSlots\(\) \{\s*const seq = state\.createSeq/);
+  assert.match(app, /if \(seq !== state\.createSeq\) return;\s*await refreshCreatePreview\(seq\)/);
+  assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
+});
+
+test("Android Back closes leftover create settings machine then applies hash after watch", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
+  const page = await readFile(join(publicDir, "template/index.html"), "utf8");
+  assert.match(app, /closeOverlays\(\{ fromPop: true \}\)/);
+  assert.match(app, /function closeOverlays\(event, options = \{\}\)/);
+  assert.match(app, /function closeOverlays[\s\S]*createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(app, /if \(state\.view === "watch"\) stopWatchFeed\(\$\("#watch-feed"\)\)/);
+  assert.match(app, /applyHash\(\)/);
+  assert.match(chrome, /export function leaveSatelliteIfNeeded/);
+  assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(chrome, /export function hideExtraStudioChrome/);
+  assert.match(chrome, /querySelectorAll\?\.\("\.studio-chrome"\)/);
+  assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
+});
+
+test("empty grid first create upserts then renders and pagehide persists settings", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
+  assert.match(app, /function upsertJob\(partial\) \{[\s\S]*renderJobs\(\);[\s\S]*renderJobs\(\);/);
+  assert.match(app, /if \(event\.persisted\) void refreshJobs\(\)/);
+  assert.match(app, /keepalive/);
+  assert.match(app, /settingsSaveFailMessage\(error\)/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*z-index:\s*40/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*60/);
+  assert.match(css, /\.library-menu\s*\{[^}]*z-index:\s*2/);
+  assert.match(css, /\.toast\s*\{[^}]*z-index:\s*50/);
+  assert.match(css, /\.studio-overlay\.feed-card\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
+  assert.match(css, /\.library-menu button,\s*\.library-menu a\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*top:\s*max\(10px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /#machine-sheet li\s*\{[^}]*min-height:\s*44px/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*z-index:\s*40/);
+  assert.match(chromeCss, /\.studio-chrome ~ \.studio-chrome\s*\{[^}]*display:\s*none/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+});
+
+test("grid hash is / and IME queues toasts until the keyboard closes", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
+  assert.match(app, /function hashForView[\s\S]*if \(view === "machine"\) return "#machine";\s*return ""/);
+  assert.match(app, /if \(hash === "shorts"\) history\.replaceState\(history\.state, "", location\.pathname \+ location\.search\)/);
+  assert.match(html, /id="home-brand" href="\/"/);
+  assert.match(app, /function imeKeyboardOpen/);
+  assert.match(app, /function flushToastsAfterIme/);
+  assert.match(app, /current \|\| imeKeyboardOpen\(\)/);
+  assert.match(app, /flushToastsAfterIme\(\)/);
+  assert.match(app, /document\.body\.style\.top = "0px"/);
+  assert.match(chrome, /body\.style\.top = "0px"/);
+  assert.match(css, /html\.ime-open body\s*\{[^}]*top:\s*0/);
+  assert.match(css, /\.create-panel h2[\s\S]{0,120}padding-right:\s*48px/);
+  assert.match(css, /\.draft-close\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /\.draft-close\s*\{[^}]*height:\s*44px/);
+});
+
+test("leftover UI 쇼츠 becomes 영상 and batch Back ignores stale hash", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.equal(html.includes("쇼츠"), false);
+  assert.equal(html.includes("공장"), false);
+  assert.equal(html.includes("402"), false);
+  assert.equal(html.includes("새 쇼츠"), false);
+  assert.equal(html.includes("쇼츠 재생"), false);
+  assert.equal(html.includes('aria-label="쇼츠"'), false);
+  assert.equal(app.includes("새 쇼츠"), false);
+  assert.match(html, /aria-label="영상 재생"/);
+  assert.match(html, /aria-label="새 영상"/);
+  assert.match(html, /id="menu-create">새 영상</);
+  assert.match(html, /id="create-title">새 영상</);
+  assert.match(html, /9:16 · 영상/);
+  assert.match(app, /let ignoreNextHashChange = false/);
+  assert.match(app, /function skipStaleHashChange/);
+  assert.match(app, /ignoreNextHashChange = true/);
+  assert.match(app, /if \(ignoreNextHashChange\) \{\s*ignoreNextHashChange = false;\s*return;/);
+  assert.match(app, /addEventListener\("invalid"/);
+  assert.match(app, /showToast\("영상 주제를 4자 이상 입력하세요\.", "error"\)/);
+  assert.match(app, /source\.readyState === EventSource\.CONNECTING/);
+  assert.match(app, /try \{ source\.close\(\)/);
+  assert.match(app, /sameLive && shortCardUnchanged/);
+  assert.doesNotMatch(app, /\$\("#home-brand"\)\?\.addEventListener\("click", openHome\);\s*bindWatchFeed/);
+});
+
+test("failJobsLoad paints create+empty, batch is a button, and health sheet stays Korean", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const ui = await readFile(join(publicDir, "shorts-ui.mjs"), "utf8");
+  const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
+  assert.match(app, /function failJobsLoad/);
+  assert.match(app, /state\.jobsLoaded = true/);
+  assert.match(app, /failJobsLoad\(error\)/);
+  assert.match(app, /is-skeleton/);
+  assert.match(html, /short-skeleton is-skeleton/);
+  assert.match(html, /<button type="button" id="menu-batch">양산</);
+  assert.doesNotMatch(html, /id="menu-batch"[^>]*href="#batch"/);
+  assert.match(app, /if \(view === "create"\) return "#create"/);
+  assert.match(app, /const swap = state\.view === "create"/);
+  assert.match(app, /setView\("create", \{ skipHash: swap \}\)/);
+  assert.match(app, /const createSwap = prev === "create" && next === "create"/);
+  assert.match(ui, /export function healthTextKo/);
+  assert.match(ui, /export function writeCreateModeHint/);
+  assert.match(ui, /export function rememberStudioCreateMode/);
+  assert.match(ui, /export function takeCreateModeHint/);
+  assert.match(ui, /studioCreateMode/);
+  assert.match(app, /rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(html, /class="confirm-actions"/);
+  assert.match(pipe, /healthTextKo\(stage\.label\)/);
+  assert.match(pipe, /healthTextKo\(status\)/);
+  assert.match(pipe, /<ul id="machine-sheet">/);
+  assert.match(css, /body\.template-page \.library-board-toggle\[href="\/backlot"\]/);
+  assert.match(css, /body\.template-page \.library-board-toggle\[href="\/template"\]/);
+  assert.equal(html.includes("쇼츠"), false);
+});
+
+test("confirm sits above toast so 삭제 stays tappable", async () => {
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*60/);
+  assert.match(css, /\.toast\s*\{[^}]*z-index:\s*50/);
+  assert.match(css, /\.confirm-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+});
+
+test("closeOverlays cancel forces createMode single and clears the hint", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  assert.match(app, /function closeOverlays\(event, options = \{\}\)/);
+  assert.match(app, /state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+});
+
+test("landscape 2-col needs min-width 600px and machine close uses safe-area", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  assert.match(app, /innerWidth >= 600 && window\.innerWidth > window\.innerHeight/);
+  assert.match(app, /innerHeight \/ window\.innerWidth < 0\.75/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*height:\s*44px/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*top:\s*max\(10px,\s*env\(safe-area-inset-top\)\)/);
+  assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*right:\s*max\(10px,\s*env\(safe-area-inset-right\)\)/);
+});
+
+test("#batch does not open 양산; mode is the session hint and watch forces single", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.match(app, /const hinted = takeCreateModeHint\(\)/);
+  assert.match(app, /state\.createMode = hinted === "batch" \? "batch" : "single"/);
+  assert.doesNotMatch(app, /leftoverBatch \|\| hinted/);
+  assert.doesNotMatch(app, /const leftoverBatch = hash === "batch"/);
+  assert.match(app, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(app, /if \(openingWatch\) \{\s*state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.doesNotMatch(html, /leftoverBatch = hash === "batch"/);
+  assert.doesNotMatch(html, /leftoverBatch = leftoverBatch \|\|/);
+  assert.match(html, /leftoverBatch = sessionStorage\.getItem\("studioCreateMode"\) === "batch"/);
+  assert.match(html, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(html, /if \(hash === "create" \|\| hash === "batch"\)/);
+});
+
+test("portrait IME --thumb-h uses innerHeight and landscape mute swaps safe-area", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  assert.match(app, /setProperty\("--inner-height", `\$\{Math\.round\(innerH\)\}px`\)/);
+  assert.match(app, /const portrait = window\.innerWidth < 600 \|\| window\.innerWidth <= window\.innerHeight/);
+  assert.match(app, /const height = portrait \? innerH : \(window\.visualViewport\?\.height \|\| innerH\)/);
+  assert.match(css, /--thumb-h:\s*calc\(\(var\(--vv-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /@media \(orientation:\s*portrait\)[\s\S]*\.shorts-grid[\s\S]*--thumb-h:\s*calc\(\(var\(--inner-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /@media \(max-width:\s*599px\)[\s\S]*\.shorts-grid[\s\S]*--n:\s*1/);
+  assert.match(css, /@media \(max-width:\s*599px\)[\s\S]*\.shorts-grid[\s\S]*--thumb-h:\s*calc\(\(var\(--inner-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*top:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*z-index:\s*7/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*width:\s*44px/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*height:\s*44px/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*right:\s*max\(0px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\)\)/);
+});
+
+test("leftover #batch bounces to /#create, import clears the hint, and settleRotate waits for width", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  const chrome = await readFile(join(publicDir, "studio-chrome.mjs"), "utf8");
+  const ui = await readFile(join(publicDir, "shorts-ui.mjs"), "utf8");
+  assert.match(html, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(app, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(app, /state\.createMode = hinted === "batch" \? "batch" : "single"/);
+  assert.match(app, /async function importLibrary[\s\S]*state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.match(chrome, /export function settleRotate/);
+  assert.match(chrome, /requestAnimationFrame\(\(\) => requestAnimationFrame\(cb\)\)/);
+  assert.match(chrome, /export function bindRotateSettle/);
+  assert.match(chrome, /orientationchange/);
+  assert.match(chrome, /screen\?\.orientation\?\.addEventListener\?\.\("change"/);
+  assert.match(app, /bindRotateSettle\(/);
+  assert.match(app, /sizeShortsGrid\(\)/);
+  assert.match(app, /innerWidth >= 600 && window\.innerWidth > window\.innerHeight/);
+  assert.doesNotMatch(css, /--n:\s*2/);
+  assert.equal(healthTextKo("ready"), "준비");
+  assert.equal(healthTextKo("frozen"), "멈춤");
+  assert.equal(healthTextKo("편집 · ffmpeg"), "편집");
+  assert.equal(healthTextKo("ffmpeg"), "단계");
+  assert.match(ui, /ready:\s*"준비"/);
+  assert.match(ui, /frozen:\s*"멈춤"/);
 });

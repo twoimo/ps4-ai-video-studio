@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
-import { extname, join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import { DEFAULT_BGM_VOLUME, ROOT, WORKSPACE_DIR } from "./studio-settings.mjs";
 
 export const BGM_EXTENSIONS = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus"]);
@@ -39,6 +39,11 @@ export async function listBgmFiles(root = ROOT) {
     }
   }
   return files.sort((left, right) => left.localeCompare(right));
+}
+
+export async function listBgmPublicNames(root = ROOT) {
+  const names = [...new Set((await listBgmFiles(root)).map((file) => basename(file)).filter((name) => isSafeSongName(name)))];
+  return names.sort((left, right) => left.localeCompare(right));
 }
 
 export function resolveBgmPath(unsafePath, root = ROOT) {

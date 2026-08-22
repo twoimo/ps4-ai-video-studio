@@ -3,7 +3,7 @@
    Dark-room editorial: near-black matte canvas, artifacts glow.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
 
 :root {
   --bg: #0a0a0c;
@@ -37,7 +37,7 @@
   --media-bg: #000;
   --textcard-bg: #0d0d10;
   --badge-bg: rgba(8,8,10,.72);
-  --sans: 'Inter', -apple-system, sans-serif;
+  --sans: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --screenplay: 'Courier Prime', 'Courier New', monospace;
 
@@ -99,7 +99,7 @@ body {
   font-family: var(--sans);
   font-size: calc(14px * var(--fs-scale));
   line-height: 1.5;
-  min-height: 100vh;
+  min-height: var(--vv-height, 100dvh);
   /* faint vignette so media pops */
   background-image: var(--bg-vignette);
 }
@@ -108,7 +108,7 @@ body {
 
 /* film grain — barely-there, keeps the dark room from feeling flat */
 body::after {
-  content: ''; position: fixed; inset: -50%; pointer-events: none; z-index: 90;
+  content: ''; position: fixed; inset: -50%; pointer-events: none; z-index: 1;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
   opacity: var(--grain-opacity); animation: grain 1.2s steps(4) infinite;
 }
@@ -157,10 +157,6 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
 .slate h1 {
   font-family: var(--mono); font-size: calc(17px * var(--fs-scale)); font-weight: 600;
   letter-spacing: 0.08em; text-transform: uppercase;
-}
-.slate .wordmark {
-  font-family: var(--mono); font-size: calc(11px * var(--fs-scale)); letter-spacing: 0.22em;
-  color: var(--text-3); text-transform: uppercase; margin-right: 2px;
 }
 .chip {
   font-family: var(--mono); font-size: calc(10.5px * var(--fs-scale)); letter-spacing: 0.06em;
@@ -242,10 +238,6 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
   font-size: calc(24px * var(--fs-scale));
   letter-spacing: .18em;
   text-shadow: 0 1px 0 rgba(255,247,222,.75);
-}
-:root[data-theme="light"] .slate .wordmark {
-  color: #aa9368;
-  font-weight: 700;
 }
 :root[data-theme="light"] .chip {
   background: rgba(236,216,169,.46);
@@ -461,6 +453,7 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
 .stage .name {
   margin-top: 10px; font-family: var(--mono); font-size: calc(11px * var(--fs-scale));
   letter-spacing: 0.05em; color: var(--text-3);
+  overflow-wrap: anywhere;
 }
 .stage .sub { font-size: calc(10.5px * var(--fs-scale)); color: var(--text-3); margin-top: 3px; text-align: center; max-width: 150px; }
 
@@ -523,7 +516,7 @@ aside .panel:nth-of-type(1) { animation-delay: .32s } aside .panel:nth-of-type(2
   cursor: pointer;
 }
 .script-preview {
-  max-height: min(430px, calc(100vh - 360px));
+  max-height: min(430px, calc(var(--vv-height, 100dvh) - 360px));
   min-height: 320px;
   overflow: hidden;
 }
@@ -970,7 +963,7 @@ body:not(.first) .approval-review { animation: none; }
   .slate h1 { overflow-wrap: anywhere; }
   .slate .spacer { display: none; }
   .cost { text-align: left; }
-  .cost .bar { width: min(150px, 38vw); }
+  .cost .bar { width: min(150px, 38%); }
 
   .rail {
     overflow-x: auto;
@@ -1008,7 +1001,6 @@ body:not(.first) .approval-review { animation: none; }
   .wrap { padding: 0 12px 52px; }
   .slate { padding-top: 14px; }
   .clapper { width: 30px; height: 23px; }
-  .slate .wordmark { font-size: calc(10px * var(--fs-scale)); }
   .slate h1 { font-size: calc(15px * var(--fs-scale)); letter-spacing: .06em; }
   .chip { font-size: calc(9.5px * var(--fs-scale)); padding: 3px 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .live { font-size: calc(10px * var(--fs-scale)); letter-spacing: .1em; }
@@ -1033,7 +1025,7 @@ body:not(.first) .approval-review { animation: none; }
   .panel-head .meta { margin-left: 0; }
   .drawer .drawer-head { flex-wrap: wrap; }
   .drawer pre { font-size: calc(10.5px * var(--fs-scale)); }
-  .scene-card { max-width: calc(100vw - 42px); }
+  .scene-card { max-width: 100%; }
   .approval-review-head, .approval-artifacts, .approval-review-foot { padding-left: 16px; padding-right: 16px; }
   .approval-review-note { margin-left: 16px; margin-right: 16px; }
   .approval-review-foot { align-items: flex-start; flex-direction: column; }
@@ -1045,8 +1037,8 @@ body:not(.first) .approval-review { animation: none; }
 .materials {
   box-sizing: border-box;
   max-width: 1440px;
-  margin: 0 auto 80px;
-  padding: 0 28px;
+  margin: 0 auto max(80px, env(safe-area-inset-bottom), var(--vv-bottom, 0px));
+  padding: 0 max(28px, env(safe-area-inset-right)) 0 max(28px, env(safe-area-inset-left));
 }
 .materials[hidden] { display: none; }
 .materials .inspect-stack {
@@ -1056,10 +1048,11 @@ body:not(.first) .approval-review { animation: none; }
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   background: var(--surface);
+  overflow-x: visible;
 }
 .materials .inspect-stack-head h2 { margin: 0; font-size: 16px; }
 .materials .field-label { margin: 0; color: var(--text-2); font-size: 12px; }
-.materials input, .materials textarea {
+.materials input, .materials textarea, .materials select {
   width: 100%;
   box-sizing: border-box;
   min-height: 44px;
@@ -1069,8 +1062,9 @@ body:not(.first) .approval-review { animation: none; }
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
+  font-size: 16px;
 }
-.materials textarea { min-height: 72px; resize: vertical; }
+.materials textarea { min-height: 72px; max-height: calc(var(--vv-height, 100dvh) * 0.36); resize: vertical; }
 .materials .inspect-caption { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 8px; align-items: start; }
 .materials .inspect-caption b { padding-top: 10px; color: var(--text-3); font-size: 13px; }
 .materials .inspect-caption b i { display: block; font-style: normal; font-weight: 500; font-size: 10px; }
@@ -1085,8 +1079,17 @@ body:not(.first) .approval-review { animation: none; }
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
+  -webkit-touch-callout: none;
 }
-.materials .inspect-actions { display: grid; gap: 8px; }
+.materials .inspect-actions {
+  display: grid;
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  padding-bottom: max(8px, env(safe-area-inset-bottom), var(--vv-bottom, 0px));
+  z-index: 2;
+  background: var(--surface);
+}
 .materials .inspect-save, .materials .inspect-regen {
   min-height: 44px;
   border: 1px solid var(--border);
@@ -1097,5 +1100,298 @@ body:not(.first) .approval-review { animation: none; }
   cursor: pointer;
 }
 .materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
+.materials .inspect-save:disabled,
+.materials .inspect-save[disabled] {
+  opacity: 1;
+}
 .materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
-.materials .materials-status[data-kind="error"], .materials .inspect-frozen { color: var(--red); }
+.materials .inspect-regen[inert], .materials .inspect-regen.is-paused {
+  pointer-events: none;
+  cursor: default;
+  opacity: 1;
+}
+.materials .materials-status[data-kind="error"] { color: var(--red); }
+
+/* Studio extra: full-width wrap and chrome, no 1440/1120 center column */
+.wrap,
+.wrap#app,
+.materials {
+  max-width: none;
+  width: 100%;
+}
+
+/* Studio extra: /backlot/p/:id keeps the board. Materials sit below. No materials-page hide. */
+body:has(#materials) .wrap#app,
+.wrap#app {
+  display: block;
+  visibility: visible;
+}
+:root[data-theme="light"] .wrap {
+  max-width: none;
+}
+
+/* Isolate shared chrome from OM * reset, grain overlay, and type scale. */
+#studio-chrome.studio-chrome,
+#studio-chrome {
+  display: grid;
+  grid-template-columns: 1fr 1fr max-content;
+  align-items: center;
+  gap: 8px;
+  margin: 0 10px 8px;
+  padding: 0;
+  padding-top: env(safe-area-inset-top);
+  min-height: 36px;
+  position: relative;
+  z-index: 100;
+  isolation: isolate;
+  pointer-events: auto;
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.15;
+}
+#studio-chrome * { box-sizing: border-box; }
+#studio-chrome h1 {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -.04em;
+  line-height: 1.15;
+  text-transform: none;
+}
+#studio-chrome .library-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  justify-self: start;
+  color: inherit;
+  text-decoration: none;
+}
+#studio-chrome .studio-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  gap: 2px 4px;
+  min-width: 0;
+  touch-action: manipulation;
+}
+#studio-chrome .studio-pipe {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 6px;
+  touch-action: manipulation;
+}
+#studio-chrome .studio-pipe-arrow {
+  margin: 0;
+  padding: 0;
+  color: var(--text-3, #5f5f68);
+  font-size: 11px;
+  line-height: 1;
+  touch-action: manipulation;
+}
+#studio-chrome .studio-chip {
+  display: inline;
+  margin: -16px 0;
+  padding: 16px 4px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-2, #a0a0a9);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  min-width: 0;
+  min-height: 0;
+  text-transform: none;
+  touch-action: manipulation;
+}
+#studio-chrome .studio-chip.ok { color: var(--text, #ececef); }
+#studio-chrome .studio-chip.warn { color: var(--amber, #f0a83c); }
+#studio-chrome .studio-chip.danger { color: var(--red, #e5544b); }
+#studio-chrome .studio-chip.pause { color: var(--text-3, #5f5f68); }
+#studio-chrome .studio-chrome-actions {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 10px;
+}
+#studio-chrome .library-board-toggle,
+#studio-chrome .library-more-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px;
+  border: 0;
+  background: none;
+  color: var(--text-2, #a0a0a9);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  text-decoration: none;
+  text-transform: none;
+}
+#studio-chrome .library-board-toggle:hover,
+#studio-chrome .library-more-toggle:hover { color: var(--text, #ececef); }
+@media (max-width: 860px) {
+  #studio-chrome { grid-template-columns: max-content 1fr max-content; }
+  #studio-chrome h1 { display: none; }
+}
+.clapper { display: none; }
+.slate .wordmark { display: none; }
+body:has(#studio-chrome) .wrap:not(#app) .slate h1,
+body:has(#studio-chrome) .wrap:not(#app) .slate > div:has(h1),
+body:has(#studio-chrome) .wrap:not(#app) .theme-toggle { display: none; }
+body:has(#studio-chrome) .wrap:not(#app) .slate {
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-height: 0;
+  border-bottom: 0;
+  background: none;
+}
+
+/* Studio extra: compact 9:16 render-hero so 720p files are not squashed */
+.render-hero {
+  height: auto;
+  aspect-ratio: 9 / 16;
+  width: min(100%, calc(min(36vh, 320px) * 9 / 16));
+  max-width: min(100%, calc(min(36vh, 320px) * 9 / 16));
+  max-height: min(36vh, 320px);
+  margin-inline: auto;
+}
+.render-hero video {
+  width: 100%;
+  height: auto;
+  max-height: min(36vh, 320px);
+  object-fit: contain;
+}
+
+/* Studio extra: slim board slate always, no OM wordmark/clapper */
+.wrap#app .slate {
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-height: 0;
+  margin: 0;
+  border-bottom: 0;
+  background: none;
+}
+.wrap#app .slate .clapper,
+.wrap#app .slate .wordmark,
+.wrap#app .slate .theme-toggle { display: none; }
+.wrap#app .slate h1 {
+  font-size: calc(13px * var(--fs-scale));
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* Studio extra: slim library slate under chrome, not a second header */
+body:has(#studio-chrome) .wrap:not(#app) .slate {
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-height: 0;
+  border-bottom: 0;
+  background: none;
+}
+
+/* Studio extra: library titles keep written case and wrap two lines */
+.wrap:not(#app) .lib-body h3 {
+  text-transform: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Studio extra: filmstrip does not snap */
+.filmstrip {
+  scroll-snap-type: none;
+  overflow-y: hidden;
+  overscroll-behavior-y: none;
+  touch-action: pan-x;
+}
+
+/* Studio extra: Android select stays 16px */
+.wrap#app select,
+.materials select {
+  font-size: 16px;
+}
+
+/* Studio extra: board rail Korean names wrap at every width */
+.stage .name {
+  overflow-wrap: anywhere;
+}
+
+/* Studio extra: library long-press does not call out; board rail stays visible. */
+.lib-card,
+.lib-card img {
+  -webkit-touch-callout: none;
+}
+.wrap#app .rail {
+  overflow-x: auto;
+}
+
+/* Studio extra: 44px theme toggle and modal close */
+.theme-toggle,
+.modal-close {
+  min-width: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+/* Studio extra: no pull-to-refresh over the board */
+html, body {
+  overscroll-behavior-y: none;
+}
+
+/* Studio extra: cost bar wraps and never overflows */
+.cost {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.cost .bar {
+  max-width: 100%;
+}
+
+/* Studio extra: library posters are 9:16, not 16:9 letterbox */
+.wrap:not(#app) .lib-poster {
+  aspect-ratio: 9 / 16;
+}
+
+/* Studio extra: filmstrip 9:16 overflow */
+.filmstrip .thumb {
+  aspect-ratio: 9 / 16;
+  height: auto;
+  max-height: 118px;
+  width: auto;
+  object-fit: cover;
+}
+
+/* Studio extra: board aside overflow */
+.board {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+}
+aside {
+  overflow-x: clip;
+}
+.materials {
+  overflow: visible;
+}
+.lib-grid:has(.is-skeleton) + #empty,
+.lib-grid[data-busy] + #empty {
+  display: none !important;
+}

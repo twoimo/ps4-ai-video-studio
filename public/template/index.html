@@ -1,27 +1,52 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" data-studio-chrome="auto">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0b0e14" />
     <title>템플릿 · PS4_JUSTDOIT</title>
+    <link rel="stylesheet" href="/studio-chrome.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="template-page">
     <main class="template-studio" id="template-page">
-      <header class="template-studio-chrome">
+      <header class="studio-chrome" id="studio-chrome">
         <a class="library-brand" href="/">
           <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><rect x="3.2" y="3.2" width="17.6" height="17.6" rx="4.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="currentColor" d="M9.4 8.2v7.6L16.6 12z"/></svg></span>
           <h1>PS4_JUSTDOIT</h1>
         </a>
-        <p id="template-title">잠긴 프롬프트를 불러오는 중</p>
-        <div class="template-studio-links">
+        <div id="studio-chips" class="studio-chips" aria-label="만드는 과정"><nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정"><button type="button" class="studio-chip warn" data-open-machine title="대본을 쓸 수 없습니다" aria-label="대본을 쓸 수 없습니다">대본</button><span class="studio-pipe-arrow" aria-hidden="true">→</span><button type="button" class="studio-chip pause" data-open-machine title="지금은 그림을 안 만들어요" aria-label="지금은 그림을 안 만들어요">그림</button><span class="studio-pipe-arrow" aria-hidden="true">→</span><button type="button" class="studio-chip pause" data-open-machine title="지금은 그림을 안 만들어요" aria-label="지금은 그림을 안 만들어요">움직임</button><span class="studio-pipe-arrow" aria-hidden="true">→</span><button type="button" class="studio-chip warn" data-open-machine title="편집을 할 수 없습니다" aria-label="편집을 할 수 없습니다">편집</button></nav></div>
+        <div class="studio-chrome-actions">
+          <a class="template-back" href="/" aria-label="닫기">×</a>
           <a class="library-board-toggle" href="/backlot">보드</a>
-          <a class="library-board-toggle" href="/">쇼츠</a>
+          <a class="library-board-toggle" href="/template">템플릿</a>
+          <a class="library-board-toggle" href="/#create">새 영상</a>
+          <a class="library-board-toggle" href="/#create" data-create-mode="batch">양산</a>
+          <a class="library-board-toggle" href="/#settings">설정</a>
+          <button type="button" class="library-board-toggle" id="satellite-import">가져오기</button>
         </div>
       </header>
-      <div id="template-root" class="template-root"></div>
+      <h2 id="template-title">잠긴 프롬프트</h2>
+      <div id="template-root" class="template-root"><div class="template-skeleton" aria-hidden="true"></div></div>
     </main>
+    <div class="studio-overlay" id="satellite-menu" hidden>
+      <div class="overlay-backdrop" data-close-satellite></div>
+      <div class="overlay-panel" aria-labelledby="satellite-menu-title">
+        <button type="button" class="draft-close" data-close-satellite aria-label="닫기">×</button>
+        <h2 id="satellite-menu-title">가져오기</h2>
+        <div id="satellite-menu-actions">
+          <button type="button" class="primary-button" id="satellite-import-run">가져오기</button>
+        </div>
+        <div id="satellite-import-result" hidden>
+          <p id="satellite-import-summary" class="empty-note"></p>
+          <button type="button" id="satellite-import-close">닫기</button>
+          <button type="button" class="primary-button" id="satellite-import-ok">확인</button>
+        </div>
+      </div>
+    </div>
+    <script src="/satellite-boot.js"></script>
+    <script type="module" src="/studio-chrome.mjs"></script>
+    <script type="module" src="/satellite-menu.mjs"></script>
     <script type="module" src="/template/template.js"></script>
   </body>
 </html>
