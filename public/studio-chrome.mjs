@@ -109,6 +109,15 @@ export function scrollFocusIntoPanel(node) {
   scrollFocusedFieldIntoView(node);
 }
 
+export function hideExtraStudioChrome(root = document) {
+  const extras = [...(root.querySelectorAll?.(".studio-chrome") || [])].slice(1);
+  for (const node of extras) {
+    node.hidden = true;
+    node.setAttribute("hidden", "");
+    node.setAttribute("aria-hidden", "true");
+  }
+}
+
 export function bindFocusScroll(root = document) {
   if (!root || root.dataset?.focusScroll === "1") return;
   if (root.dataset) root.dataset.focusScroll = "1";
@@ -201,6 +210,7 @@ export function armSatelliteHistory() {
 }
 
 if (typeof document !== "undefined" && document.documentElement?.dataset?.studioChrome === "auto") {
+  hideExtraStudioChrome(document);
   bindStudioPipe(document);
   bindFocusScroll(document);
   void hydrateStudioChrome(document);

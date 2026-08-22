@@ -69,9 +69,21 @@ export function bindSatelliteMenu(root = document, request = fetch) {
     resetSatelliteMenu(root);
     syncOverlayOpen(root);
   };
+  const backToMenu = (event) => {
+    event?.preventDefault?.();
+    resetSatelliteMenu(root);
+  };
   root.querySelectorAll?.("[data-close-satellite]").forEach((node) => {
-    node.addEventListener("click", close);
+    node.addEventListener("click", (event) => {
+      const result = root.querySelector?.("#satellite-import-result");
+      if (result && !result.hidden) {
+        backToMenu(event);
+        return;
+      }
+      close(event);
+    });
   });
+  root.querySelector?.("#satellite-import-close")?.addEventListener("click", backToMenu);
   root.querySelector?.("#satellite-import-ok")?.addEventListener("click", close);
   const run = async (event) => {
     event?.preventDefault?.();

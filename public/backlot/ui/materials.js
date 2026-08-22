@@ -27,6 +27,10 @@ function status(text, kind = "") {
   note.dataset.kind = kind;
 }
 
+function toast(text, kind = "") {
+  status(text, kind);
+}
+
 function promptsForPanel(job, prompts) {
   if (Array.isArray(prompts?.shots) && prompts.shots.length) return prompts;
   const fallback = fallbackCaptionPrompts(job);
@@ -75,8 +79,22 @@ async function saveMaterials() {
 }
 
 function bindMaterials(frozen) {
+  root.addEventListener("contextmenu", (event) => {
+    if (!event.target?.closest?.(".inspect-files a, a[download]")) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  root.querySelector("[data-draft-topic], .inspect-topic")?.addEventListener("invalid", (event) => {
+    event.preventDefault();
+    toast("영상 주제를 4자 이상 입력하세요.", "error");
+  });
   const save = async (event) => {
     event?.preventDefault?.();
+    const topic = root.querySelector("[data-draft-topic], .inspect-topic");
+    if (String(topic?.value || "").trim().length < 4) {
+      toast("영상 주제를 4자 이상 입력하세요.", "error");
+      return;
+    }
     const button = root.querySelector("[data-inspect-save], .inspect-save");
     if (button) {
       button.disabled = true;

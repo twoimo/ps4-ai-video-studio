@@ -1177,6 +1177,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(css, /\.studio-overlay\s*\{[^}]*max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
   assert.match(chromeCss, /#satellite-menu\s*\{[^}]*max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
   assert.match(css, /input,\s*textarea,\s*select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /#create select,\s*#settings select/);
+  assert.match(css, /#create-overlay select,\s*#settings-overlay select/);
+  assert.match(css, /\.studio-overlay select\s*\{[^}]*font-size:\s*16px/);
   assert.match(css, /#delete-confirm\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /#delete-confirm\s*\{[^}]*min-width:\s*44px/);
   assert.match(boardCss, /\.materials\s*\{[^}]*var\(--vv-bottom/);
@@ -1345,7 +1348,12 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   assert.match(app, /function showImportResult/);
   assert.match(app, /textContent = "가져오기"/);
+  assert.match(html, /id="menu-import-close">닫기</);
   assert.match(html, /id="menu-import-ok">확인</);
+  assert.match(app, /\$\("#menu-import-close"\)\?\.addEventListener\("click"/);
+  assert.match(app, /resetMenuCard\(\)/);
+  assert.equal(html.includes(">Back<"), false);
+  assert.equal(html.includes(">Back</"), false);
   assert.match(html, /id="menu-batch"[^>]*href="#batch"[^>]*>양산</);
   assert.match(html, /id="batch-topics"/);
   assert.match(html, /id="topic"[^>]*enterkeyhint="done"/);
@@ -1572,6 +1580,8 @@ test("Android Back closes leftover create settings machine then applies hash aft
   assert.match(app, /applyHash\(\)/);
   assert.match(chrome, /export function leaveSatelliteIfNeeded/);
   assert.match(chrome, /export function armSatelliteHistory/);
+  assert.match(chrome, /export function hideExtraStudioChrome/);
+  assert.match(chrome, /querySelectorAll\?\.\("\.studio-chrome"\)/);
   assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
 });
 
@@ -1587,6 +1597,7 @@ test("empty grid first create upserts then renders and pagehide persists setting
   assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*46/);
   assert.match(css, /\.library-menu\s*\{[^}]*z-index:\s*2/);
   assert.match(chromeCss, /#satellite-menu\s*\{[^}]*z-index:\s*40/);
+  assert.match(chromeCss, /\.studio-chrome ~ \.studio-chrome\s*\{[^}]*display:\s*none/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
 });
 
@@ -1613,6 +1624,7 @@ test("grid hash is / and IME queues toasts until the keyboard closes", async () 
 test("leftover UI 쇼츠 becomes 영상 and batch Back ignores stale hash", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.equal(html.includes("쇼츠"), false);
   assert.equal(html.includes("새 쇼츠"), false);
   assert.equal(html.includes("쇼츠 재생"), false);
   assert.equal(html.includes('aria-label="쇼츠"'), false);

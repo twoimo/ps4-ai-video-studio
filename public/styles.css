@@ -100,6 +100,15 @@ h1, h2, h3, p { margin-top: 0; }
 .form-footnote { color: var(--dim); font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
 .field-label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 6px; }
 input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 16px; outline: none; }
+#create select,
+#settings select,
+#create-overlay select,
+#settings-overlay select,
+#create-form select,
+#settings-form select,
+.studio-overlay select {
+  font-size: 16px;
+}
 input:focus, textarea:focus, select:focus, button:focus-visible, a:focus-visible, summary:focus-visible { border-color: rgba(183,243,107,.55); box-shadow: 0 0 0 3px rgba(183,243,107,.12); outline: none; }
 input, select { padding: 12px; min-height: 44px; }
 textarea { resize: vertical; min-height: 72px; max-height: calc(var(--vv-height, 100dvh) * 0.36); padding: 10px 12px; line-height: 1.5; }
@@ -353,13 +362,17 @@ body.watch-open .watch-feed { display: block; }
 .watch-player video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; background: transparent; pointer-events: auto; }
 #watch-feed .watch-chrome,
 .watch-chrome { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
-#watch-feed .watch-menu {
+#watch-feed .watch-menu,
+.watch-menu {
   position: absolute;
   top: 12px;
   right: 12px;
   z-index: 8;
+  width: 44px;
+  height: 44px;
   min-width: 44px;
   min-height: 44px;
+  box-sizing: border-box;
   padding: 0;
   margin: 0;
   display: grid;

@@ -217,6 +217,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(libraryJs, /animate:\s*"움직이기"/);
   assert.match(libraryJs, /compose:\s*"편집"/);
   assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
+  assert.match(libraryJs, /function stageStatusKo/);
+  assert.match(libraryJs, /stageStatusKo\(s\.status\)/);
   assert.match(libraryJs, /addEventListener\("contextmenu"/);
   assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
   assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
@@ -344,6 +346,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satellite, /\/api\/library\/import/);
   assert.match(satellite, /method: "POST"/);
   assert.match(satellite, /resetSatelliteMenu\(root\)/);
+  assert.match(satellite, /#satellite-import-close/);
+  assert.match(satellite, /backToMenu/);
   assert.match(satellite, /function showSatelliteImportResult/);
   assert.match(satellite, /importBroughtCopy\(payload\)/);
   assert.equal(satellite.includes("가져옴 ${imported}"), false);
@@ -353,7 +357,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satellite, /if \(isAbortError\(error\)\) return/);
   assert.match(satellite, /await request\("\/api\/library\/import", \{ method: "POST" \}[\s\S]*resetSatelliteMenu\(root\);\s*showSatelliteImportResult/);
   assert.match(library, /id="satellite-import-result"/);
+  assert.match(library, /id="satellite-import-close">닫기</);
   assert.match(board, /id="satellite-import-result"/);
+  assert.match(board, /id="satellite-import-close">닫기</);
   assert.match(library, /id="satellite-import-summary"/);
   assert.match(board, /id="satellite-import-ok">확인</);
   assert.match(board, /class="lib-skeleton"/);
@@ -365,6 +371,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(boardJs, /대본 → 그림 → 움직임 → 편집/);
   assert.doesNotMatch(boardJs, /function renderBeginner/);
   assert.doesNotMatch(css, /--bg:\s*#0b0d12/);
+  assert.equal(library.includes("쇼츠"), false);
+  assert.equal(board.includes("쇼츠"), false);
   assert.equal(library.includes("쇼츠 공장"), false);
   assert.equal(board.includes("쇼츠 공장"), false);
   assert.equal(boardJs.includes("쇼츠 공장"), false);
@@ -379,6 +387,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /\/run/);
   assert.match(materialsJs, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
   assert.match(materialsJs, /영상 주제를 4자 이상 입력하세요/);
+  assert.match(materialsJs, /function toast/);
+  assert.match(materialsJs, /addEventListener\("invalid"/);
+  assert.match(materialsJs, /toast\("영상 주제를 4자 이상 입력하세요\.", "error"\)/);
+  assert.match(materialsJs, /addEventListener\("contextmenu"/);
+  assert.match(materialsJs, /closest\?\.\("\.inspect-files a, a\[download\]"\)/);
   assert.match(materialsJs, /health\?\.imagine\?\.frozen !== false/);
   assert.match(materialsJs, /button\?\.inert/);
   assert.match(materialsJs, /button\.inert = true/);
@@ -577,10 +590,14 @@ test("library long-press blocks contextmenu and the board rail stays visible", a
   const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
   const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
   const chrome = await readFile(join(root, "public/studio-chrome.mjs"), "utf8");
+  assert.match(chrome, /export function hideExtraStudioChrome/);
   assert.match(libraryJs, /addEventListener\("contextmenu"/);
   assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
   assert.match(libraryJs, /event\.preventDefault\(\)/);
   assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
+  assert.match(libraryJs, /function stageStatusKo/);
+  assert.match(libraryJs, /stageStatusKo\(s\.status\)/);
+  assert.doesNotMatch(libraryJs, /RAIL_STATUS\[s\.status\] \|\| s\.status/);
   assert.match(libraryJs, /script:\s*"대본"/);
   assert.match(libraryJs, /displayPipelineLabel\(p\.pipeline_type\)/);
   assert.match(libraryJs, /p\.pipeline_type !== "style_playbook"/);
@@ -594,7 +611,12 @@ test("library long-press blocks contextmenu and the board rail stays visible", a
   assert.match(boardJs, /displayItemLabel/);
   assert.match(boardJs, /displayStageLabel\(st\.name\)/);
   assert.match(libraryJs, /completed:\s*"완료"/);
+  assert.match(libraryJs, /function stageStatusKo/);
+  assert.match(libraryJs, /stageStatusKo\(s\.status\)/);
   assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.materials \.inspect-files a\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  const railName = css.replace(/@media \(max-width:\s*900px\)[\s\S]*/, "");
+  assert.match(railName, /\.stage \.name\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(css, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);

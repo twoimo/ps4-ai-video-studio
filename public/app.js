@@ -1928,7 +1928,17 @@ function bindEvents() {
   $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
   $("#library-more")?.addEventListener("click", openMenu);
   $("#close-menu")?.addEventListener("click", (event) => {
+    const result = $("#menu-import-result");
+    if (result && !result.hidden) {
+      event?.preventDefault?.();
+      resetMenuCard();
+      return;
+    }
     if (!studioLayerDismiss()) closeMenu(event);
+  });
+  $("#menu-import-close")?.addEventListener("click", (event) => {
+    event?.preventDefault?.();
+    resetMenuCard();
   });
   $("#menu-import-ok")?.addEventListener("click", (event) => {
     if (!studioLayerDismiss()) closeMenu(event);

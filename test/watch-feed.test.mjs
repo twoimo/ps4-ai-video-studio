@@ -713,6 +713,12 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-slide[\s\S]*max-width:\s*var\(--watch-col\)/);
   assert.doesNotMatch(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]{0,80}max-width:\s*100%/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
+  assert.match(css, /#watch-feed \.watch-menu,\s*\.watch-menu/);
+  assert.match(css, /\.watch-menu\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /\.watch-menu\s*\{[^}]*height:\s*44px/);
+  const watchMenuRule = css.slice(css.indexOf("#watch-feed .watch-menu"), css.indexOf("@media (max-width: 860px)", css.indexOf("#watch-feed .watch-menu")));
+  assert.match(watchMenuRule, /\.watch-menu\s*\{[^}]*width:\s*44px/);
+  assert.match(watchMenuRule, /\.watch-menu\s*\{[^}]*height:\s*44px/);
   assert.match(css, /#watch-feed \.watch-menu/);
   assert.equal(css.includes("watch-inspect"), false);
   assert.equal(css.includes("inspect-open"), false);

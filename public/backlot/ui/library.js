@@ -53,12 +53,15 @@ const RAIL_LABELS = {
   edit: "편집"
 };
 
-const RAIL_STATUS = {
-  completed: "완료",
-  in_progress: "진행",
-  awaiting_human: "확인 필요",
-  failed: "실패"
-};
+function stageStatusKo(status) {
+  const labels = {
+    completed: "완료",
+    in_progress: "진행",
+    awaiting_human: "확인 필요",
+    failed: "실패"
+  };
+  return labels[String(status || "")] || "단계";
+}
 
 function miniRail(states) {
   const rail = el("div", { class: "mini-rail" });
@@ -67,7 +70,7 @@ function miniRail(states) {
       : s.status === "in_progress" ? "a"
       : s.status === "awaiting_human" ? "w" : "";
     const name = RAIL_LABELS[s.name] || displayStageLabel(s.name);
-    const status = RAIL_STATUS[s.status] || s.status;
+    const status = stageStatusKo(s.status);
     rail.append(el("i", { class: cls, title: `${name}: ${status}` }));
   }
   return rail;

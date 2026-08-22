@@ -125,6 +125,8 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(html.includes("id=\"short-overlay\""), false);
   assert.match(page, /class="template-studio" id="template-page"/);
   assert.match(page, /class="studio-chrome" id="studio-chrome"/);
+  assert.equal(page.split('class="studio-chrome"').length - 1, 1);
+  assert.equal(page.includes("쇼츠"), false);
   assert.match(page, /id="studio-chips"/);
   assert.match(page, /id="template-root"/);
   assert.match(page, /class="template-skeleton"/);
@@ -197,6 +199,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /src="\/satellite-boot\.js"/);
   assert.match(page, /id="satellite-import-result"/);
   assert.match(page, /id="satellite-import-summary"/);
+  assert.match(page, /id="satellite-import-close">닫기</);
   assert.match(page, /id="satellite-import-ok">확인</);
   assert.match(page, /<h1>PS4_JUSTDOIT<\/h1>/);
   assert.match(specJs, /specKv\("같은 현장"/);
@@ -265,6 +268,8 @@ test("template Back is 44px, hides the locked title, and bounces #watch", async 
   const satelliteBoot = await readFile(join(process.cwd(), "public", "satellite-boot.js"), "utf8");
   assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
   assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
+  assert.equal(page.split('class="studio-chrome"').length - 1, 1);
+  assert.equal(page.includes("쇼츠"), false);
   assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
   assert.match(js, /title\.hidden = true/);
   assert.match(js, /raw === "template"/);
