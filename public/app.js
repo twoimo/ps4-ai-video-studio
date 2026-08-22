@@ -134,6 +134,12 @@ function selectedJob() {
   return state.jobs.find((job) => job.id === state.selectedJobId) || null;
 }
 
+let ignoreNextHashChange = false;
+
+function skipStaleHashChange() {
+  ignoreNextHashChange = true;
+}
+
 function hashForView(view) {
   if (view === "create") return state.createMode === "batch" ? "#batch" : "#create";
   if (view === "batch") return "#batch";
@@ -285,6 +291,7 @@ function setView(view, options = {}) {
   if (!options.skipHash) {
     const nextHash = hashForView(state.view);
     if (location.hash !== nextHash) {
+      skipStaleHashChange();
       if (prev === "grid" && next !== "grid") history.pushState({ studioView: next }, "", nextHash);
       else history.replaceState(null, "", nextHash);
     }
@@ -416,7 +423,7 @@ function sizeShortsGrid() {
 }
 
 function createTileMarkup() {
-  return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
+  return `<button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 영상"><div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div></button>`;
 }
 
 function bindCreateTile() {
@@ -500,11 +507,6 @@ function bindWatchChrome() {
       progress?.setAttribute("aria-valuenow", String(value));
     }
   });
-  feed.querySelector(".watch-close")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    stopWatchFeed(feed);
-    openHome(event);
-  });
 }
 
 function placeWatchFeed(index = Math.max(0, watchIndexOf(state.selectedJobId))) {
@@ -533,7 +535,7 @@ function activateWatchSlide(jobId) {
   });
   const title = $("#watch-feed .watch-meta h2");
   const job = state.jobs.find((item) => item.id === jobId);
-  if (title) title.textContent = displayTitle(job?.topic, "쇼츠");
+  if (title) title.textContent = displayTitle(job?.topic, "영상");
   const feed = $("#watch-feed");
   if (!document.body.classList.contains("watch-open")) {
     stopWatchFeed(feed);
@@ -568,7 +570,7 @@ function patchWatchSlide(job) {
   });
   if (state.selectedJobId === job.id) {
     const title = $("#watch-feed .watch-meta h2");
-    if (title) title.textContent = displayTitle(job.topic, "쇼츠");
+    if (title) title.textContent = displayTitle(job.topic, "영상");
   }
 }
 
@@ -674,6 +676,7 @@ async function saveInspectDraft(jobId, root) {
 
 function openHome(event) {
   event?.preventDefault();
+  skipStaleHashChange();
   stopWatchFeed($("#watch-feed"));
   closeMenu({ navigate: true });
   if (studioLayerDismiss()) return;
@@ -697,7 +700,7 @@ function renderShortCard(job) {
   const generating = status.key === "running"
     ? `<div class="thumb-progress" aria-hidden="true"><i style="width:${progress}%"></i></div>`
     : "";
-  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(displayTitle(job.topic, "쇼츠"))}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
+  return `<article class="short-card status-${status.key}${highlight}" data-job-id="${escapeHtml(job.id)}"><button type="button" class="short-card-open" data-job-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(displayTitle(job.topic, "영상"))}" aria-pressed="${job.id === state.selectedJobId && state.view === "watch"}"><div class="short-card-thumb"><div class="thumb-stage">${media}${generating}</div><span class="short-status ${status.key}"><i></i>${escapeHtml(status.label)}</span><span class="short-duration">${escapeHtml(duration)}</span></div></button><button type="button" class="short-card-detail" data-job-id="${escapeHtml(job.id)}">재료</button></article>`;
 }
 
 function upsertJob(partial) {
@@ -1000,13 +1003,18 @@ function defaultFactoryStages() {
 function applyLiveSnapshot(jobId, payload) {
   if (!payload || !jobId) return;
   const previous = state.live[jobId] || {};
-  state.live[jobId] = {
+  const next = {
     events: payload.events || previous.events || [],
     timeline: payload.timeline || previous.timeline || [],
     shots: payload.shots || previous.shots || [],
     proofs: payload.proofs || previous.proofs || []
   };
-  const job = upsertJob(payload.job || state.jobs.find((item) => item.id === jobId));
+  const prevJob = state.jobs.find((item) => item.id === jobId);
+  let sameLive = false;
+  try { sameLive = JSON.stringify(previous) === JSON.stringify(next); } catch { sameLive = false; }
+  if (sameLive && shortCardUnchanged(prevJob, payload.job || prevJob)) return;
+  state.live[jobId] = next;
+  const job = upsertJob(payload.job || prevJob);
   if (job && payload.job) {
     job.artifacts = payload.job.artifacts || job.artifacts;
     job.live = payload.job.live || job.live;
@@ -1084,6 +1092,8 @@ function watchJobLive(job) {
       void refreshJobs();
     });
     source.onerror = () => {
+      if (source.readyState === EventSource.CONNECTING || source.readyState === 0) return;
+      try { source.close(); } catch { /* ignore leftover SSE */ }
       void endJobSseIfGone(source, job.id);
     };
     state.sse = source;
@@ -1378,7 +1388,7 @@ function syncProviderForm() {
 function syncCreateMode() {
   const batch = state.createMode === "batch";
   const title = $("#create-title");
-  if (title) title.textContent = batch ? "양산" : "새 쇼츠";
+  if (title) title.textContent = batch ? "양산" : "새 영상";
   const topicField = $("#single-topic-field");
   const topic = $("#topic");
   const batchField = $("#batch-field");
@@ -1817,6 +1827,7 @@ function closeOverlays(event, options = {}) {
   event?.preventDefault?.();
   if (state.view === "create") state.createSeq += 1;
   if (options.fromPop) {
+    skipStaleHashChange();
     closeDeleteConfirm({ fromPop: true });
     closeMenu({ fromPop: true });
     setView("grid");
@@ -1936,9 +1947,6 @@ function bindEvents() {
     if (!studioLayerDismiss()) closeDeleteConfirm();
   }));
   $("#home-brand")?.addEventListener("click", openHome);
-  bindWatchFeed($("#watch-feed"), openHome, (jobId) => notifyActive(jobId), (jobId) => {
-    openMaterials(jobId || currentWatchSlide($("#watch-feed"))?.dataset?.jobId || state.selectedJobId);
-  });
   $("#open-settings")?.addEventListener("click", openSettings);
   $("#import-library")?.addEventListener("click", importLibrary);
   $("#close-create")?.addEventListener("click", closeOverlays);
@@ -1950,6 +1958,10 @@ function bindEvents() {
   $("#preview-voice")?.addEventListener("click", () => { void previewVoice("#preview-voice", "#voice-preview-audio", "#create-tts-provider", "#create-tts-voice"); });
   $("#settings-preview-voice")?.addEventListener("click", () => { void previewVoice("#settings-preview-voice", "#settings-preview-audio", "#settings-tts-provider", "#settings-tts-voice"); });
   $("#settings-bgm-enabled")?.addEventListener("change", syncToggleLabels);
+  $("#topic")?.addEventListener("invalid", (event) => {
+    event.preventDefault();
+    showToast("영상 주제를 4자 이상 입력하세요.", "error");
+  });
   $("#topic")?.addEventListener("input", () => {
     window.clearTimeout(state.previewTimer);
     state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
@@ -1959,7 +1971,14 @@ function bindEvents() {
     state.previewTimer = window.setTimeout(() => refreshCreatePreview().catch((error) => showToast(error, "error")), 280);
   });
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
-  window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
+  window.addEventListener("hashchange", () => {
+    if (ignoreNextHashChange) {
+      ignoreNextHashChange = false;
+      return;
+    }
+    applyHash();
+    renderJobs();
+  });
   window.addEventListener("popstate", handleStudioPopState);
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {

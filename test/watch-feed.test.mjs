@@ -804,7 +804,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(css, /\.watch-sound\[hidden\]/);
   assert.equal(feed.includes("letterbox"), false);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
-  assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
+  assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /pagehide/);
   assert.match(app, /pageHiding = true;\s*replaceClearStudioLayer\(\)/);
   assert.doesNotMatch(app, /pagehide[\s\S]{0,200}history\.back/);
@@ -1173,4 +1174,17 @@ test("hardware Back after PiP exits PiP and re-pushes so layers stay", async () 
   assert.match(pop, /history\.pushState\(history\.state,\s*"",\s*location\.href\)/);
   assert.ok(pop.indexOf("pictureInPictureElement") < pop.indexOf('studioLayer === "confirm"'));
   assert.ok(pop.indexOf("pictureInPictureElement") < pop.indexOf('state.view === "watch"'));
+});
+
+test("watch title blocks Android long-press callout and close does not double openHome", async () => {
+  const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
+  const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  assert.match(css, /\.watch-meta\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(feed, /closest\?\.\("\.watch-meta, \.watch-meta h2, \.watch-slide-chrome"\)/);
+  assert.match(app, /function skipStaleHashChange/);
+  assert.match(app, /ignoreNextHashChange/);
+  assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
 });

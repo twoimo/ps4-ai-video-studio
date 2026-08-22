@@ -600,6 +600,11 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
   bindWatchResize(root);
   bindWatchFlip(root);
   const track = watchTrack(root);
+  root.addEventListener("contextmenu", (event) => {
+    if (eventElement(event)?.closest?.(".watch-meta, .watch-meta h2, .watch-slide-chrome")) {
+      event.preventDefault?.();
+    }
+  });
   root.addEventListener("click", (event) => {
     if (pager.swallowClick) {
       pager.swallowClick = false;

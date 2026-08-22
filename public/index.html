@@ -11,7 +11,7 @@
   <body>
     <section class="watch-feed" id="watch-feed" hidden>
       <div class="watch-column">
-        <div class="watch-track" id="watch-track" tabindex="0" aria-label="쇼츠 재생"></div>
+        <div class="watch-track" id="watch-track" tabindex="0" aria-label="영상 재생"></div>
         <div class="watch-chrome" id="watch-chrome">
           <button type="button" class="watch-close watch-back" aria-label="닫기">×</button>
           <button type="button" class="watch-menu watch-materials-toggle" aria-label="재료"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
@@ -41,8 +41,8 @@
       </div>
       <p id="feed-banner" class="feed-banner" hidden></p>
       </header>
-      <div class="shorts-grid" id="shorts-grid" aria-live="polite" aria-label="쇼츠">
-        <button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 쇼츠">
+      <div class="shorts-grid" id="shorts-grid" aria-live="polite" aria-label="영상">
+        <button type="button" class="short-card short-create-tile" id="create-tile" aria-label="새 영상">
           <div class="short-card-thumb create-thumb"><span class="create-plus">+</span></div>
         </button>
         <div class="short-card short-skeleton" aria-hidden="true"><div class="short-card-thumb"></div></div>
@@ -63,7 +63,7 @@
         <h2 id="menu-title">메뉴</h2>
         <div id="menu-body">
           <div class="library-menu" id="menu-actions">
-            <button type="button" id="menu-create">새 쇼츠</button>
+            <button type="button" id="menu-create">새 영상</button>
             <a id="menu-batch" href="#batch">양산</a>
             <button type="button" id="import-library">가져오기</button>
             <a id="open-board-menu" href="/backlot">보드</a>
@@ -94,7 +94,7 @@
       <div class="overlay-panel create-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="create-title">
         <button type="button" class="draft-close" id="close-create" tabindex="-1" aria-label="닫기">×</button>
         <form class="create-panel" id="create-form" novalidate onsubmit="return false">
-          <h2 id="create-title">새 쇼츠</h2>
+          <h2 id="create-title">새 영상</h2>
           <div id="single-topic-field">
           <label class="field-label" for="topic">주제</label>
           <input id="topic" name="topic" placeholder="예: 오래된 도시 시설의 숨은 원리" required minlength="4" enterkeyhint="done" autocomplete="off" spellcheck="false" />
@@ -135,7 +135,7 @@
               <div>
                 <label class="field-label" for="format">영상 비율</label>
                 <select id="format">
-                  <option value="vertical" selected>9:16 · 쇼츠</option>
+                  <option value="vertical" selected>9:16 · 영상</option>
                   <option value="landscape">16:9</option>
                 </select>
               </div>

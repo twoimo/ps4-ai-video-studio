@@ -172,7 +172,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(library, />편집</);
   assert.match(library, />보드</);
   assert.match(library, />템플릿</);
-  assert.match(library, /href="\/#create">새 쇼츠</);
+  assert.match(library, /href="\/#create">새 영상</);
   assert.match(library, /href="\/#settings">설정</);
   assert.equal(library.includes("aria-label=\"메뉴\""), false);
   assert.equal(library.includes("그림 · 멈춤"), false);
@@ -182,7 +182,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(board, /id="studio-chips"[\s\S]*data-open-machine[\s\S]*>대본</);
   assert.match(board, />대본</);
   assert.match(board, />보드</);
-  assert.match(board, /href="\/#create">새 쇼츠</);
+  assert.match(board, /href="\/#create">새 영상</);
   assert.match(board, /href="\/#settings">설정</);
   assert.equal(board.includes("그림 · 멈춤"), false);
   assert.match(board, /src="\/studio-chrome\.mjs"/);
@@ -640,6 +640,26 @@ test("library empty Korean, fail clears skeletons, and hero uses an auto 9:16 bo
   assert.match(heroExtra, /height:\s*auto/);
   assert.match(heroExtra, /max-width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
   assert.match(heroExtra, /max-height:\s*min\(36vh,\s*320px\)/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("library posters are 9:16, cost wraps, and materials save stays opaque", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const materials = await readFile(join(root, "public/backlot/ui/materials.js"), "utf8");
+  const library = await readFile(join(root, "public/backlot/index.html"), "utf8");
+  const board = await readFile(join(root, "public/backlot/board.html"), "utf8");
+  assert.match(css, /\.wrap:not\(#app\) \.lib-poster\s*\{[^}]*aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(css, /\.cost\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /\.cost\s*\{[^}]*max-width:\s*100%/);
+  assert.match(css, /\.cost \.bar\s*\{[^}]*max-width:\s*100%/);
+  assert.match(css, /\.materials \.inspect-save:disabled[\s\S]{0,80}opacity:\s*1/);
+  assert.match(materials, /저장 중…/);
+  assert.match(materials, /button\.textContent = "저장 중…"/);
+  assert.match(library, /href="\/#create">새 영상</);
+  assert.match(board, /href="\/#create">새 영상</);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

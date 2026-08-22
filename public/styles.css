@@ -450,8 +450,8 @@ body.watch-open .watch-feed { display: block; }
     bottom: max(68px, env(safe-area-inset-bottom));
   }
 }
-.watch-meta { min-width: 0; }
-.watch-meta h2 { margin: 0; padding-right: 52px; font-size: 16px; font-weight: 600; letter-spacing: -.03em; text-shadow: 0 1px 10px rgba(0,0,0,.72); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.watch-meta { min-width: 0; -webkit-touch-callout: none; user-select: none; }
+.watch-meta h2 { margin: 0; padding-right: 52px; font-size: 16px; font-weight: 600; letter-spacing: -.03em; text-shadow: 0 1px 10px rgba(0,0,0,.72); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; -webkit-touch-callout: none; user-select: none; }
 .watch-empty { position: absolute; left: 50%; top: 0; width: calc(100dvh * 9 / 16); max-width: 100vw; height: 100dvh; transform: translateX(-50%); display: grid; place-items: center; margin: 0; padding: 24px; color: var(--muted); text-align: center; z-index: 3; }
 .watch-empty[hidden] { display: none; }
 

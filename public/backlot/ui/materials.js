@@ -77,11 +77,21 @@ async function saveMaterials() {
 function bindMaterials(frozen) {
   const save = async (event) => {
     event?.preventDefault?.();
+    const button = root.querySelector("[data-inspect-save], .inspect-save");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "저장 중…";
+    }
     try {
       await saveMaterials();
       status("초안을 저장했습니다.");
     } catch (error) {
       status(pausedActionError(error), "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "저장";
+      }
     }
   };
   root.querySelector(".inspect-form")?.addEventListener("submit", save);

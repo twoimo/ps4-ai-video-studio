@@ -190,7 +190,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, />대본</);
   assert.match(page, />보드</);
   assert.match(page, />템플릿</);
-  assert.match(page, /href="\/#create">새 쇼츠</);
+  assert.match(page, /href="\/#create">새 영상</);
   assert.match(page, /href="\/#settings">설정</);
   assert.match(page, /id="satellite-import">가져오기</);
   assert.match(page, /src="\/satellite-menu\.mjs"/);

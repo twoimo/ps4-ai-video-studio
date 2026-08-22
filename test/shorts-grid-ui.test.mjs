@@ -197,7 +197,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /Grok Imagine으로 그림과 움직임을 만듭니다\./);
   assert.equal(/PATH의 grok|SuperGrok OAuth|Gemini로 대체/.test(app), false);
   assert.equal((home.match(/id="create-tile"/g) || []).length, 1);
-  assert.match(home, /id="create-tile"[^>]*aria-label="새 쇼츠"/);
+  assert.match(home, /id="create-tile"[^>]*aria-label="새 영상"/);
   assert.equal(home.includes("short-card-body"), false);
   assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
   assert.match(css, /\.library\s*\{[^}]*padding:\s*8px 0 0/);
@@ -276,8 +276,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /const fallback = escapeHtml\(status\.label\)/);
   assert.equal(app.includes("(job.topic || \"쇼츠\").slice(0, 2)"), false);
   assert.equal(app.includes("short-card-body"), false);
-  assert.match(app, /aria-label="새 쇼츠"/);
-  assert.match(app, /aria-label="\$\{escapeHtml\(displayTitle\(job\.topic, "쇼츠"\)\)\}"/);
+  assert.match(app, /aria-label="새 영상"/);
+  assert.match(app, /aria-label="\$\{escapeHtml\(displayTitle\(job\.topic, "영상"\)\)\}"/);
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
   assert.match(app, /Math\.max\(shortLandscape \? 3 : 1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
@@ -649,7 +649,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(html.includes("watch-scroller"), false);
   assert.match(html, /id="shorts-grid"/);
   assert.match(html, /id="watch-track"/);
-  assert.match(watch, /aria-label="쇼츠 재생"/);
+  assert.match(watch, /aria-label="영상 재생"/);
   assert.equal(watch.includes("내려받기"), false);
   assert.equal(watch.includes("다시 실행"), false);
   assert.equal(watch.includes('id="watch-player"'), false);
@@ -832,7 +832,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
   assert.match(app, /bindWatchFeed\(root, openHome/);
   assert.match(app, /openMaterials\(jobId \|\| currentWatchSlide/);
-  assert.match(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
+  assert.match(app, /bindWatchFeed\(root, openHome/);
+  assert.doesNotMatch(app, /stopWatchFeed\(feed\);\s*openHome\(event\)/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*playWatchFeed/);
   assert.match(app, /classList\.contains\("watch-open"\)[\s\S]*stopWatchFeed/);
   assert.equal(app.includes("video.muted = true"), false);
@@ -1360,7 +1361,7 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.equal(app.includes("크레딧 부족"), false);
   assert.equal(app.includes("크레딧 402"), false);
   assert.match(app, /createMode = "batch"/);
-  assert.match(app, /title\.textContent = batch \? "양산" : "새 쇼츠"/);
+  assert.match(app, /title\.textContent = batch \? "양산" : "새 영상"/);
   assert.match(app, /provider: "grok-imagine"/);
   assert.match(app, /draftOnly: true/);
   assert.match(app, /function queueBatchJobs/);
@@ -1607,4 +1608,28 @@ test("grid hash is / and IME queues toasts until the keyboard closes", async () 
   assert.match(css, /\.create-panel h2[\s\S]{0,120}padding-right:\s*48px/);
   assert.match(css, /\.draft-close\s*\{[^}]*width:\s*44px/);
   assert.match(css, /\.draft-close\s*\{[^}]*height:\s*44px/);
+});
+
+test("leftover UI 쇼츠 becomes 영상 and batch Back ignores stale hash", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.equal(html.includes("새 쇼츠"), false);
+  assert.equal(html.includes("쇼츠 재생"), false);
+  assert.equal(html.includes('aria-label="쇼츠"'), false);
+  assert.equal(app.includes("새 쇼츠"), false);
+  assert.match(html, /aria-label="영상 재생"/);
+  assert.match(html, /aria-label="새 영상"/);
+  assert.match(html, /id="menu-create">새 영상</);
+  assert.match(html, /id="create-title">새 영상</);
+  assert.match(html, /9:16 · 영상/);
+  assert.match(app, /let ignoreNextHashChange = false/);
+  assert.match(app, /function skipStaleHashChange/);
+  assert.match(app, /ignoreNextHashChange = true/);
+  assert.match(app, /if \(ignoreNextHashChange\) \{\s*ignoreNextHashChange = false;\s*return;/);
+  assert.match(app, /addEventListener\("invalid"/);
+  assert.match(app, /showToast\("영상 주제를 4자 이상 입력하세요\.", "error"\)/);
+  assert.match(app, /source\.readyState === EventSource\.CONNECTING/);
+  assert.match(app, /try \{ source\.close\(\)/);
+  assert.match(app, /sameLive && shortCardUnchanged/);
+  assert.doesNotMatch(app, /\$\("#home-brand"\)\?\.addEventListener\("click", openHome\);\s*bindWatchFeed/);
 });

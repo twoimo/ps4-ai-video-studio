@@ -1096,6 +1096,10 @@ body:not(.first) .approval-review { animation: none; }
   cursor: pointer;
 }
 .materials .inspect-save { border-color: rgba(79, 194, 131, .4); }
+.materials .inspect-save:disabled,
+.materials .inspect-save[disabled] {
+  opacity: 1;
+}
 .materials .inspect-frozen, .materials .materials-status { margin: 0; color: var(--text-2); font-size: 12px; }
 .materials .inspect-regen[inert], .materials .inspect-regen.is-paused {
   pointer-events: none;
@@ -1340,4 +1344,18 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
 /* Studio extra: no pull-to-refresh over the board */
 html, body {
   overscroll-behavior-y: none;
+}
+
+/* Studio extra: cost bar wraps and never overflows */
+.cost {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.cost .bar {
+  max-width: 100%;
+}
+
+/* Studio extra: library posters are 9:16, not 16:9 letterbox */
+.wrap:not(#app) .lib-poster {
+  aspect-ratio: 9 / 16;
 }
