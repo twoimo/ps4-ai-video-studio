@@ -152,7 +152,7 @@ function attachWatchVideo(video) {
   if (typeof video.addEventListener === "function" && video.dataset && !video.dataset.watchContext) {
     video.dataset.watchContext = "1";
     video.addEventListener("contextmenu", (event) => {
-      event.preventDefault?.();
+      event?.preventDefault?.();
     });
   }
   return video;
