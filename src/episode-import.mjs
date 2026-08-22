@@ -159,18 +159,25 @@ async function attachDropFiles(job, drop, jobsDir) {
     else artifacts.push(artifact(job.id, name, kind, extra));
   };
   if (drop.master && existsSync(drop.master)) {
+    const masterExt = extname(drop.master).toLowerCase();
     await copyFile(drop.master, join(jobDir, "master.mp4"));
     await copyFile(drop.master, join(jobDir, "final.mp4"));
     await copyFile(drop.master, join(jobDir, "chat.mp4"));
     add("master.mp4", "master-video");
     add("final.mp4", "video");
     add("chat.mp4", "chat-video");
+    if (VIDEO_EXTENSIONS.has(masterExt) && masterExt !== ".mp4") {
+      const kept = `master${masterExt}`;
+      await copyFile(drop.master, join(jobDir, kept));
+      add(kept, "import-video");
+    }
     job.imported = true;
     job.origin = "import";
     job.message = "가져온 마스터를 라이브러리에 올렸습니다.";
   }
   if (drop.thumbnail && existsSync(drop.thumbnail)) {
-    const extension = extname(drop.thumbnail).toLowerCase() === ".png" ? "thumbnail.png" : "thumbnail.jpg";
+    const thumbExt = extname(drop.thumbnail).toLowerCase();
+    const extension = thumbExt === ".png" ? "thumbnail.png" : thumbExt === ".webp" ? "thumbnail.webp" : "thumbnail.jpg";
     await copyFile(drop.thumbnail, join(jobDir, extension));
     if (extension === "thumbnail.png") {
       const index = artifacts.findIndex((item) => item.name === "thumbnail.png");

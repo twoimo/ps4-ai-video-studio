@@ -75,6 +75,12 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
   const home = await readFile(join(root, "public/index.html"), "utf8");
   const app = await readFile(join(root, "public/app.js"), "utf8");
+  const backlotServer = await readFile(join(root, "src/backlot-server.mjs"), "utf8");
+  assert.match(backlotServer, /"\.webm": "video\/webm"/);
+  assert.match(backlotServer, /"\.mov": "video\/quicktime"/);
+  assert.match(backlotServer, /"\.m4v": "video\/x-m4v"/);
+  assert.match(backlotServer, /"\.mkv": "video\/x-matroska"/);
+  assert.match(backlotServer, /"\.webp": "image\/webp"/);
 
   assert.match(library, /class="lib-grid" id="grid"/);
   assert.match(library, /id="liveBadge"/);

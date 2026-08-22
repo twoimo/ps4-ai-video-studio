@@ -258,6 +258,11 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
+  assert.match(server, /"\.webm": "video\/webm"/);
+  assert.match(server, /"\.mov": "video\/quicktime"/);
+  assert.match(server, /"\.m4v": "video\/x-m4v"/);
+  assert.match(server, /"\.mkv": "video\/x-matroska"/);
+  assert.match(server, /"\.webp": "image\/webp"/);
   assert.match(server, /request\.method === "DELETE"/);
   assert.match(server, /FACTORY_QUEUE_PATH/);
   assert.match(pipeline, /export async function deleteJob/);
@@ -575,6 +580,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("hydrateWatchInspect"), false);
   assert.equal(app.includes("function renderWatchInspectPanel"), false);
   assert.match(app, /function openMaterials/);
+  assert.match(app, /function hideLeftoverOverlays/);
+  assert.match(app, /hideLeftoverOverlays\(\);\s*state\.selectedJobId = jobId/);
   assert.match(app, /\/backlot\/p\//);
   assert.equal(app.includes("scrollIntoView"), false);
   assert.equal(app.includes('class="watch-materials"'), false);
@@ -649,6 +656,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.equal(app.includes("function renderWatchInspectPanel"), false);
   assert.equal(app.includes("function toggleWatchInspect"), false);
   assert.match(app, /function openMaterials/);
+  assert.match(app, /function hideLeftoverOverlays/);
+  assert.match(app, /hideLeftoverOverlays\(\);\s*state\.selectedJobId = jobId/);
   assert.match(app, /location\.assign\(materialsUrl/);
   assert.match(app, /\/backlot\/p\//);
   assert.match(app, /stopWatchFeed\(\$\("#watch-feed"\)\)/);

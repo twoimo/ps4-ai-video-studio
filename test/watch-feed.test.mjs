@@ -204,21 +204,24 @@ test("syncWatchFeed stops videos when the surface is not watch", () => {
   assert.equal(videos[0].currentTime, 0);
 });
 
-test("bindWatchFeed closes only on watch-close and ignores letterbox", () => {
+test("bindWatchFeed closes only on watch-close and letterbox tap stops watch", () => {
   const videos = [fakeVideo(3)];
   const root = fakeRoot(videos);
   const backs = [];
   bindWatchFeed(root, (event) => backs.push(event.via));
   const handler = root.listeners.find((item) => item.type === "click").handler;
   handler({ target: { closest: () => null }, via: "letterbox" });
-  assert.equal(backs.length, 0);
-  assert.equal(videos[0].pauseCalls, 0);
-  handler({ target: { closest: (sel) => sel === ".watch-stage" ? {} : null }, via: "stage" });
-  assert.equal(backs.length, 0);
+  assert.deepEqual(backs, ["letterbox"]);
   assert.equal(videos[0].pauseCalls, 1);
-  handler({ target: { closest: (sel) => sel === ".watch-close, .watch-back" || sel === ".watch-close" || sel === ".watch-back" ? {} : null }, via: "close" });
-  assert.deepEqual(backs, ["close"]);
+  assert.equal(videos[0].currentTime, 0);
+  videos[0].currentTime = 3;
+  videos[0].paused = false;
+  handler({ target: { closest: (sel) => sel === ".watch-stage" ? {} : null }, via: "stage" });
+  assert.deepEqual(backs, ["letterbox"]);
   assert.equal(videos[0].pauseCalls, 2);
+  handler({ target: { closest: (sel) => sel === ".watch-close, .watch-back" || sel === ".watch-close" || sel === ".watch-back" ? {} : null }, via: "close" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
+  assert.equal(videos[0].pauseCalls, 3);
   assert.equal(videos[0].currentTime, 0);
 });
 
@@ -327,7 +330,8 @@ test("playWatchMedia muted fallback is same-turn unmute then remute", async () =
   assert.match(mediaFn, /video\.muted = false/);
   assert.ok(mediaFn.indexOf("video.play()") < mediaFn.indexOf("playMutedThenUnmutePlay"));
   assert.match(mutedFn, /video\.muted = true/);
-  assert.match(mutedFn, /unmuteAndPlay/);
+  assert.match(mutedFn, /finishWatchPlay/);
+  assert.equal(mutedFn.includes("unmuteAndPlay"), false);
   assert.match(feed, /pointerup/);
 });
 
@@ -365,12 +369,12 @@ test("playWatchMedia remutes and plays when unmute play fails", async () => {
     pause() { this.paused = true; }
   };
   await playWatchMedia(video);
-  assert.equal(playCalls, 4);
+  assert.equal(playCalls, 2);
   assert.equal(video.muted, true);
   assert.equal(video.paused, false);
 });
 
-test("playWatchMedia same-turn muted play then unmute after unmuted reject", async () => {
+test("playWatchMedia same-turn muted play stays muted after unmuted reject", async () => {
   let unmutedFails = 1;
   const video = fakeVideo(0);
   video.play = function play() {
@@ -384,9 +388,9 @@ test("playWatchMedia same-turn muted play then unmute after unmuted reject", asy
     return Promise.resolve();
   };
   await playWatchMedia(video);
-  assert.equal(video.playCalls, 3);
+  assert.equal(video.playCalls, 2);
   assert.equal(video.paused, false);
-  assert.equal(video.muted, false);
+  assert.equal(video.muted, true);
 });
 
 test("createWatchPlayer builds one video with createElement", () => {
@@ -707,6 +711,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /onMaterials/);
   assert.match(feed, /pager\.onMaterials\?\.\(jobId\)/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
+  assert.match(feed, /closest\("\.watch-column"\)/);
+  assert.match(feed, /playMutedThenUnmutePlay[\s\S]*finishWatchPlay/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(feed, /\.watch-close, \.watch-back/);
   assert.equal(feed.includes("letterbox"), false);

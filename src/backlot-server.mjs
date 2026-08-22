@@ -154,6 +154,8 @@ function contentType(path) {
     ".mp4": "video/mp4",
     ".webm": "video/webm",
     ".mov": "video/quicktime",
+    ".m4v": "video/x-m4v",
+    ".mkv": "video/x-matroska",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav"
   }[ext] || "application/octet-stream";

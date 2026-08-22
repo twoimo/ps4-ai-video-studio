@@ -270,7 +270,7 @@ function playMutedThenUnmutePlay(video, root, epoch) {
   } catch {
     return remuteAndPlay(video, root, epoch);
   }
-  return playResult(mutedPlay).then(() => unmuteAndPlay(video, root, epoch)).catch(() => remuteAndPlay(video, root, epoch));
+  return playResult(mutedPlay).then(() => finishWatchPlay(video, root, epoch)).catch(() => remuteAndPlay(video, root, epoch));
 }
 
 export function playWatchMedia(video, root, epoch) {
@@ -483,7 +483,13 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
       event.stopPropagation?.();
       return;
     }
-    if (!event.target.closest(".watch-stage") && !event.target.closest("video")) return;
+    if (!event.target.closest(".watch-stage") && !event.target.closest("video")) {
+      if (!event.target.closest(".watch-column")) {
+        stopWatchFeed(root);
+        onBack?.(event);
+      }
+      return;
+    }
     const video = watchPlayerVideo(root);
     if (!video) return;
     if (video.paused) {

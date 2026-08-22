@@ -508,8 +508,17 @@ function materialsUrl(jobId) {
   return `/backlot/p/${encodeURIComponent(jobId)}`;
 }
 
+function hideLeftoverOverlays() {
+  ["#create-overlay", "#settings-overlay", "#machine-overlay", "#menu-overlay"].forEach((selector) => {
+    const node = $(selector);
+    if (node) node.hidden = true;
+  });
+  document.body.classList.remove("overlay-open");
+}
+
 function openMaterials(jobId) {
   if (!jobId) return;
+  hideLeftoverOverlays();
   state.selectedJobId = jobId;
   stopWatchFeed($("#watch-feed"));
   location.assign(materialsUrl(jobId));

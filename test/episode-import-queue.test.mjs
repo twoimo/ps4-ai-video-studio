@@ -119,6 +119,34 @@ test("empty library gets seed cards; dropped masters attach once", async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+test("import keeps webm mov m4v mkv and webp types", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-types-"));
+  const jobsDir = join(root, "jobs");
+  const drops = join(root, "imports");
+  await mkdir(join(drops, "playground-cistern"), { recursive: true });
+  await writeFile(join(drops, "playground-cistern", "master.webm"), "webm-master");
+  await writeFile(join(drops, "playground-cistern", "thumbnail.webp"), "webp-thumb");
+  const result = await ensureLibraryEpisodes({
+    root,
+    jobsDir,
+    workspaceDir: root,
+    extraRoots: [drops]
+  });
+  const job = findJobForSlug(result.jobs, "playground-cistern");
+  assert.ok(existsSync(join(jobsDir, job.id, "master.webm")));
+  assert.ok(existsSync(join(jobsDir, job.id, "master.mp4")));
+  assert.ok(existsSync(join(jobsDir, job.id, "thumbnail.webp")));
+  assert.equal(job.artifacts.some((item) => item.name === "master.webm"), true);
+  assert.equal(job.artifacts.some((item) => item.name === "thumbnail.webp"), true);
+  const source = await readFile(join(process.cwd(), "src/episode-import.mjs"), "utf8");
+  assert.match(source, /\.webm/);
+  assert.match(source, /\.mov/);
+  assert.match(source, /\.m4v/);
+  assert.match(source, /\.mkv/);
+  assert.match(source, /\.webp/);
+  await rm(root, { recursive: true, force: true });
+});
+
 test("imported jpg wins over 1x1 placeholder png on the card", async () => {
   const root = await mkdtemp(join(tmpdir(), "ps4-thumb-"));
   const jobsDir = join(root, "jobs");

@@ -236,6 +236,9 @@ function contentType(path) {
     ".mp4": "video/mp4",
     ".webm": "video/webm",
     ".mov": "video/quicktime",
+    ".m4v": "video/x-m4v",
+    ".mkv": "video/x-matroska",
+    ".webp": "image/webp",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
@@ -1064,7 +1067,7 @@ async function handleApi(request, url) {
         if (!files.length) throw new Error("업로드할 영상 파일을 선택하세요.");
         for (const file of files) {
           const extension = extname(file.name).toLowerCase();
-          if (!VIDEO_EXTENSIONS.has(extension) || (file.type && !file.type.startsWith("video/"))) throw new Error("MP4, MOV, WebM 영상만 업로드할 수 있습니다.");
+          if (!VIDEO_EXTENSIONS.has(extension) || (file.type && !file.type.startsWith("video/"))) throw new Error("MP4, MOV, WebM, M4V, MKV 영상만 업로드할 수 있습니다.");
           if (file.size > MAX_UPLOAD_BYTES) throw new Error("클립 하나의 최대 크기는 250MB입니다.");
         }
         const jobDir = join(JOBS_DIR, jobId);
