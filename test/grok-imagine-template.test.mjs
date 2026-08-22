@@ -136,6 +136,13 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(page.includes("쇼츠 공장"), false);
   assert.equal(js.includes("쇼츠 공장"), false);
+  assert.equal(html.includes("크레딧 부족"), false);
+  assert.equal(page.includes("크레딧 부족"), false);
+  assert.equal(js.includes("크레딧 부족"), false);
+  assert.equal(specJs.includes("크레딧 부족"), false);
+  assert.equal(app.includes("크레딧 부족"), false);
+  assert.equal(html.includes("크레딧 402"), false);
+  assert.equal(app.includes("크레딧 402"), false);
 
   const response = await handleTemplatePage(new Request("http://studio.local/template"), new URL("http://studio.local/template"));
   assert.ok(response);

@@ -831,10 +831,7 @@ async function hydrateCreateSlots() {
 
 async function runSelectedJob() {
   if (!state.selectedJobId) return;
-  if (state.health?.imagine?.frozen !== false) {
-    showToast("크레딧 부족", "error");
-    return;
-  }
+  if (state.health?.imagine?.frozen !== false) return;
   try {
     await api(`/api/jobs/${encodeURIComponent(state.selectedJobId)}/run`, { method: "POST" });
     showToast("만들기를 시작했습니다.");
@@ -968,7 +965,6 @@ function syncCreateMode() {
   const batchField = $("#batch-field");
   const submit = $("#create-submit");
   const actions = $("#batch-actions");
-  const frozenNote = $("#batch-frozen");
   const queue = $("#batch-queue");
   if (topicField) topicField.hidden = batch;
   if (batchField) batchField.hidden = !batch;
@@ -977,7 +973,6 @@ function syncCreateMode() {
   if (topic) topic.required = !batch;
   const frozen = state.health?.imagine?.frozen !== false;
   if (queue) queue.disabled = frozen;
-  if (frozenNote) frozenNote.hidden = !batch || !frozen;
 }
 
 function openCreate(event) {
@@ -1026,10 +1021,7 @@ async function saveBatchDrafts() {
 }
 
 async function queueBatchJobs() {
-  if (state.health?.imagine?.frozen !== false) {
-    showToast("크레딧 부족", "error");
-    return;
-  }
+  if (state.health?.imagine?.frozen !== false) return;
   const topics = parseBatchTopics();
   if (!topics.length) {
     showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
@@ -1087,8 +1079,8 @@ function renderChips(health = {}) {
   const pictureReady = grok && !frozen;
   const stages = [
     { label: "대본", ready: grok, blocked: false, title: grok ? "대본 · grok CLI 텍스트" : "대본을 쓸 수 없습니다" },
-    { label: "그림", ready: pictureReady, blocked: frozen, title: frozen ? "그림 · 크레딧 부족" : pictureReady ? "그림 · Grok Imagine" : "그림을 만들 수 없습니다" },
-    { label: "움직임", ready: pictureReady, blocked: frozen, title: frozen ? "움직임 · 크레딧 부족" : pictureReady ? "움직임 · Grok Imagine 영상" : "움직임을 만들 수 없습니다" },
+    { label: "그림", ready: pictureReady, blocked: frozen, title: pictureReady ? "그림 · Grok Imagine" : "그림을 만들 수 없습니다" },
+    { label: "움직임", ready: pictureReady, blocked: frozen, title: pictureReady ? "움직임 · Grok Imagine 영상" : "움직임을 만들 수 없습니다" },
     { label: "편집", ready: ffmpeg, blocked: false, title: ffmpeg ? "편집 · ffmpeg" : "편집을 할 수 없습니다" }
   ];
   return `<nav class="studio-pipe" aria-label="만드는 과정" title="만드는 과정">${stages.map((stage, index) => {
@@ -1104,7 +1096,7 @@ function renderMachineSheet() {
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
   const frozen = health.imagine?.frozen !== false;
-  const picture = frozen ? "크레딧 부족" : grok ? "준비" : "없음";
+  const picture = grok && !frozen ? "준비" : "없음";
   root.innerHTML = `<h2 id="machine-title">사양</h2><p>대본 ${grok ? "준비" : "없음"} · 그림 ${picture} · 움직임 ${picture} · 편집 ${ffmpeg ? "준비" : "없음"}</p>`;
 }
 
@@ -1112,7 +1104,6 @@ function renderStudioChrome() {
   const health = state.health || {};
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
   const chips = $("#studio-chips");
   if (chips) {
     chips.hidden = false;
@@ -1123,7 +1114,6 @@ function renderStudioChrome() {
   if (banner) {
     const reasons = [];
     if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
-    if (frozen) reasons.push("크레딧 부족");
     if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
     if (!grok) reasons.push("대본을 쓸 수 없습니다");
     banner.hidden = reasons.length === 0;

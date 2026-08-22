@@ -171,7 +171,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /label: "그림"/);
   assert.match(app, /label: "움직임"/);
   assert.match(app, /label: "편집"/);
-  assert.match(app, /크레딧 부족/);
+  assert.equal(app.includes("크레딧 부족"), false);
+  assert.equal(app.includes("크레딧 402"), false);
   assert.equal(app.includes(">grok</button>"), false);
   assert.equal(app.includes(">ffmpeg</button>"), false);
   assert.equal(app.includes(">402</button>"), false);
@@ -606,7 +607,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(materials, /collectInspectPayload/);
   assert.match(materials, /method: "PATCH"/);
   assert.match(materials, /\/run/);
-  assert.match(materials, /크레딧 부족/);
+  assert.equal(materials.includes("크레딧 부족"), false);
+  assert.equal(materials.includes("크레딧 402"), false);
   assert.match(boardCss, /\.wrap\.work\s*\{/);
   assert.match(boardCss, /@media \(max-width: 720px\)[\s\S]*\.wrap\.work \{ display: block; \}/);
   assert.doesNotMatch(boardCss, /max-width:\s*440px/);
@@ -626,9 +628,11 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(pipeline, /buildGrokImagineScript/);
   assert.match(server, /request\.method === "PATCH"/);
   assert.match(server, /suffix === "draft"/);
-  assert.match(server, /크레딧 부족/);
+  assert.equal(server.includes("크레딧 부족"), false);
   assert.equal(server.includes("크레딧 402"), false);
+  assert.equal(app.includes("크레딧 부족"), false);
   assert.equal(app.includes("크레딧 402"), false);
+  assert.equal(html.includes("크레딧 부족"), false);
   assert.equal(html.includes("크레딧 402"), false);
   const panel = renderMaterialsPanel({
     id: "job-1",
@@ -705,10 +709,12 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(html, /id="batch-topics"/);
   assert.match(html, /id="batch-draft"[^>]*>[\s\S]*초안만 저장/);
   assert.match(html, /id="batch-queue"[^>]*>[\s\S]*대기열에 넣고 생성/);
-  assert.match(html, /id="batch-frozen"[^>]*>크레딧 부족</);
+  assert.equal(html.includes("id=\"batch-frozen\""), false);
   assert.equal(html.includes("크레딧 402"), false);
+  assert.equal(html.includes("크레딧 부족"), false);
   assert.equal(app.includes("공장 시작"), false);
-  assert.match(app, /크레딧 부족/);
+  assert.equal(app.includes("크레딧 부족"), false);
+  assert.equal(app.includes("크레딧 402"), false);
   assert.match(app, /createMode = "batch"/);
   assert.match(app, /title\.textContent = batch \? "양산" : "새 쇼츠"/);
   assert.match(app, /provider: "grok-imagine"/);

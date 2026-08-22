@@ -718,7 +718,7 @@ async function startJob(jobId) {
   const current = await readJob(jobId);
   if (current.provider === GROK_IMAGINE_PROVIDER) {
     if (imagineFrozen()) {
-      const error = new Error("크레딧 부족");
+      const error = new Error("지금은 시작할 수 없습니다.");
       error.status = 409;
       throw error;
     }
