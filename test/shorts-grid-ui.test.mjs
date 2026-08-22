@@ -353,7 +353,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, />그림</);
   assert.match(html, />움직임</);
   assert.match(html, />편집</);
-  assert.match(html, />대본<\/button>[\s\S]{0,120}→[\s\S]{0,120}>그림<\/button>[\s\S]{0,120}→[\s\S]{0,120}>움직임<\/button>[\s\S]{0,120}→[\s\S]{0,120}>편집<\/button>/);
+  assert.match(html, />대본<\/button>[\s\S]*studio-pipe-arrow[\s\S]*>그림<\/button>[\s\S]*studio-pipe-arrow[\s\S]*>움직임<\/button>[\s\S]*studio-pipe-arrow[\s\S]*>편집<\/button>/);
   assert.equal(html.includes("그림 · 멈춤"), false);
   assert.match(html, /id="feed-banner"/);
   assert.ok(html.indexOf('id="home-brand"') < html.indexOf('id="studio-chips"'));
