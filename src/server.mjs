@@ -34,7 +34,7 @@ import { studioDocsHtml, studioOpenApi } from "./openapi.mjs";
 import { draftScriptFromTopic } from "./studio-script.mjs";
 import { EDGE_VOICES, chirpConfigured, readStudioSettings, settingsPublicView, writeStudioSettings } from "./studio-settings.mjs";
 import { synthesizeStudioTts } from "./studio-tts.mjs";
-import { ensureSongDirectories, listBgmFiles } from "./studio-bgm.mjs";
+import { ensureSongDirectories, listBgmPublicNames } from "./studio-bgm.mjs";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = join(ROOT, "public");
@@ -767,7 +767,7 @@ async function handleApi(request, url) {
   }
   if (path === "/api/settings" && request.method === "GET") {
     await ensureSongDirectories();
-    return json({ settings: settingsPublicView(await readStudioSettings()), songs: await listBgmFiles() });
+    return json({ settings: settingsPublicView(await readStudioSettings()), songs: await listBgmPublicNames() });
   }
   if (path === "/api/settings" && request.method === "PUT") {
     try {

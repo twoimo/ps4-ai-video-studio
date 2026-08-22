@@ -17,7 +17,7 @@ import { extractLegalQuantities } from "../src/grok-imagine-factory.mjs";
 import { extractGrokText } from "../src/grok-imagine-cli.mjs";
 import { studioOpenApi } from "../src/openapi.mjs";
 import { parseArgs, printHelp, runCli, IMAGINE_BLOCKED } from "../cli/studio.mjs";
-import { chirpConfigured, defaultStudioSettings, readStudioSettings, writeStudioSettings } from "../src/studio-settings.mjs";
+import { chirpConfigured, defaultStudioSettings, readStudioSettings, settingsPublicView, writeStudioSettings } from "../src/studio-settings.mjs";
 import { SCRIPT_CLOSER, assertScriptDraft, scriptDraftPrompt } from "../src/studio-script.mjs";
 import { createHash } from "node:crypto";
 import {
@@ -31,7 +31,7 @@ import {
   synthesizeEdgeTts,
   ttsTimingFromWords
 } from "../src/studio-tts.mjs";
-import { listBgmFiles } from "../src/studio-bgm.mjs";
+import { listBgmFiles, listBgmPublicNames } from "../src/studio-bgm.mjs";
 
 test("Edge TTS token is assembled from public parts or env", () => {
   const assembled = assemblePublicEdgeTrustedClientToken();
@@ -133,6 +133,8 @@ test("settings persist in workspace config", async () => {
   assert.deepEqual(read, written);
   const raw = JSON.parse(await readFile(join(root, "workspace", "studio-config.json"), "utf8"));
   assert.equal(raw.ffmpegPath, "/opt/bin/ffmpeg");
+  const publicView = settingsPublicView(written, {});
+  assert.equal("ffmpegPath" in publicView, false);
   assert.equal(chirpConfigured({}), false);
   assert.equal(defaultStudioSettings().bgmEnabled, false);
   await rm(root, { recursive: true, force: true });
@@ -285,6 +287,19 @@ test("resource/songs stays empty of MoneyPrinterTurbo rips", async () => {
   assert.deepEqual(names.filter((name) => !name.startsWith(".") && name !== "README.md"), []);
   const listed = await listBgmFiles(join(process.cwd()));
   assert.equal(listed.every((path) => !path.includes("resource/songs/") || !/\.(mp3|m4a|wav)$/i.test(path)), true);
+});
+
+test("BGM public list is filenames only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ps4-bgm-public-"));
+  const songsDir = join(root, "workspace", "songs");
+  await mkdir(songsDir, { recursive: true });
+  await writeFile(join(songsDir, "bed.mp3"), Buffer.from("x"));
+  const files = await listBgmFiles(root);
+  const names = await listBgmPublicNames(root);
+  assert.equal(files.some((path) => path.includes("/")), true);
+  assert.deepEqual(names, ["bed.mp3"]);
+  assert.equal(names.every((name) => !name.includes("/") && !name.includes("\\")), true);
+  await rm(root, { recursive: true, force: true });
 });
 
 test("compose injects Edge timestamps into locked ASS and BGM amix", async () => {

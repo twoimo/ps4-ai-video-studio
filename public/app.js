@@ -1189,7 +1189,6 @@ function applySettingsToForm(settings) {
   }
   if ($("#settings-bgm-enabled")) $("#settings-bgm-enabled").checked = settings?.bgmEnabled === true;
   if ($("#settings-bgm-volume")) $("#settings-bgm-volume").value = String(settings?.bgmVolume ?? 0.08);
-  if ($("#settings-ffmpeg")) $("#settings-ffmpeg").value = settings?.ffmpegPath || "";
   syncToggleLabels();
 }
 
@@ -1202,8 +1201,10 @@ async function hydrateStudioSettings() {
     applySettingsToForm(payload.settings);
     const songs = $("#settings-bgm-songs");
     if (songs) {
-      const count = Array.isArray(payload.songs) ? payload.songs.length : 0;
-      songs.textContent = count ? `곡 ${count}개` : "곡 없음";
+      const names = Array.isArray(payload.songs)
+        ? payload.songs.filter((name) => typeof name === "string" && name && !/[\\/]/.test(name))
+        : [];
+      songs.textContent = names.length ? names.join(" · ") : "곡 없음";
       songs.dataset.ready = "1";
     }
   } catch (error) {
@@ -1219,8 +1220,7 @@ function settingsPayload() {
     ttsProvider: $("#settings-tts-provider")?.value,
     ttsVoice: $("#settings-tts-voice")?.value,
     bgmEnabled: $("#settings-bgm-enabled")?.checked === true,
-    bgmVolume: Number($("#settings-bgm-volume")?.value || 0),
-    ffmpegPath: $("#settings-ffmpeg")?.value || ""
+    bgmVolume: Number($("#settings-bgm-volume")?.value || 0)
   };
 }
 

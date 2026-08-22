@@ -743,6 +743,7 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /class="watch-sound"/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
   assert.match(css, /\.watch-sound\[hidden\]/);
   assert.equal(feed.includes("letterbox"), false);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);

@@ -213,6 +213,16 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(app.includes("크레딧 402"), false);
   assert.equal(app.includes(">grok</button>"), false);
   assert.equal(app.includes(">ffmpeg</button>"), false);
+  assert.equal(app.includes("ffmpegPath"), false);
+  assert.equal(app.includes("settings-ffmpeg"), false);
+  assert.equal(html.includes("settings-ffmpeg"), false);
+  assert.equal(html.includes("ffmpeg 경로"), false);
+  assert.equal(html.includes("resource/songs"), false);
+  assert.equal(html.includes("workspace/songs"), false);
+  assert.match(css, /\.short-status\s*\{[^}]*z-index:\s*3/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
+  assert.match(app, /names\.join\(" · "\)/);
+  assert.equal(app.includes("곡 ${count}개"), false);
   assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
   assert.match(app, /health\?\.imagine\?\.frozen/);
@@ -264,6 +274,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   const server = await readFile(join(process.cwd(), "src/server.mjs"), "utf8");
   const pipeline = await readFile(join(process.cwd(), "src/pipeline.mjs"), "utf8");
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
+  assert.match(server, /songs: await listBgmPublicNames\(\)/);
+  assert.equal(server.includes("songs: await listBgmFiles()"), false);
   assert.match(server, /"\.webm": "video\/webm"/);
   assert.match(server, /"\.mov": "video\/quicktime"/);
   assert.match(server, /"\.m4v": "video\/x-m4v"/);
@@ -589,6 +601,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(html, /class="watch-sound"[^>]*hidden/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);

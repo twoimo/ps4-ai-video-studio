@@ -78,10 +78,15 @@ export async function writeStudioSettings(input = {}, { root = ROOT, env = proce
 }
 
 export function settingsPublicView(settings, env = process.env) {
+  const normalized = normalizeStudioSettings(settings, env);
   return {
-    ...normalizeStudioSettings(settings, env),
+    schemaVersion: normalized.schemaVersion,
+    ttsProvider: normalized.ttsProvider,
+    ttsVoice: normalized.ttsVoice,
+    bgmEnabled: normalized.bgmEnabled,
+    bgmVolume: normalized.bgmVolume,
     chirpAvailable: chirpConfigured(env),
     voices: EDGE_VOICES,
-    songsHint: "resource/songs 또는 workspace/songs에 오디오를 넣습니다. 없으면 나레이션만 씁니다."
+    songsHint: "곡을 넣으면 배경음으로 씁니다. 없으면 나레이션만 씁니다."
   };
 }
