@@ -737,16 +737,12 @@ async function confirmDeleteJob() {
 
 function bindShortCard(card) {
   const jobId = card.dataset.jobId;
-  card.querySelector(".short-card-open")?.addEventListener("click", () => openJob(jobId));
-  card.querySelector(".short-card-detail")?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openDetail(jobId);
-  });
   let hold = 0;
   let originX = 0;
   let originY = 0;
   let moved = false;
   let fired = false;
+  let swallowClick = false;
   const clearHold = () => {
     if (hold) window.clearTimeout(hold);
     hold = 0;
@@ -754,13 +750,16 @@ function bindShortCard(card) {
   const fireDelete = () => {
     if (fired || moved) return;
     fired = true;
+    swallowClick = true;
     clearHold();
     void deleteJob(jobId);
   };
   const startHold = (event) => {
     if (event?.button != null && event.button !== 0) return;
+    if (event?.target?.closest?.(".short-card-detail")) return;
     fired = false;
     moved = false;
+    swallowClick = false;
     clearHold();
     originX = event?.clientX ?? 0;
     originY = event?.clientY ?? 0;
@@ -775,6 +774,25 @@ function bindShortCard(card) {
       clearHold();
     }
   };
+  card.querySelector(".short-card-open")?.addEventListener("click", (event) => {
+    if (swallowClick) {
+      swallowClick = false;
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      return;
+    }
+    openJob(jobId);
+  });
+  card.querySelector(".short-card-detail")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openDetail(jobId);
+  });
+  card.addEventListener("click", (event) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+  }, true);
   card.addEventListener("pointerdown", startHold);
   card.addEventListener("pointermove", moveHold);
   card.addEventListener("pointerup", clearHold);
@@ -782,6 +800,7 @@ function bindShortCard(card) {
   card.addEventListener("pointerleave", clearHold);
   card.addEventListener("contextmenu", (event) => {
     event?.preventDefault?.();
+    if (event?.target?.closest?.(".short-card-detail")) return;
     fireDelete();
   });
 }

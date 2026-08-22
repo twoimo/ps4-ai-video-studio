@@ -214,6 +214,8 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /\.short-card-thumb\s*\{[^}]*height:\s*auto/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border-radius:\s*0/);
   assert.match(css, /\.short-card-thumb\s*\{[^}]*border:\s*0/);
+  assert.match(css, /\.short-card-thumb\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /#delete-overlay\s*\{[^}]*z-index:\s*24/);
   assert.match(css, /\.watch-feed\s*\{[^}]*container-type:\s*size/);
   assert.match(css, /100cqh/);
   assert.equal(/\.shorts-grid\s*\{[^}]*container-type/.test(css), false);
@@ -295,6 +297,9 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /pointermove/);
   assert.match(app, /pointercancel/);
   assert.match(app, /if \(fired \|\| moved\) return/);
+  assert.match(app, /swallowClick = true/);
+  assert.match(app, /if \(swallowClick\)/);
+  assert.match(app, /closest\?\.\("\.short-card-detail"\)/);
   assert.match(app, /function askDeleteJob/);
   assert.match(app, /function closeDeleteConfirm/);
   assert.match(app, /askDeleteJob[\s\S]*syncOverlayLock/);
