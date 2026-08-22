@@ -336,7 +336,9 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
   assert.match(satelliteBoot, /hash === "template"/);
   assert.match(satelliteBoot, /location\.replace\("\/template"\)/);
-  assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings" \|\| hash === "machine"/);
+  assert.match(satelliteBoot, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.match(satelliteBoot, /hash === "create" \|\| hash === "settings" \|\| hash === "machine"/);
+  assert.doesNotMatch(satelliteBoot, /hash === "create" \|\| hash === "batch"/);
   assert.match(satelliteBoot, /raw === "machine" \|\| raw\.indexOf\("machine\/"\) === 0/);
   assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
   assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
@@ -704,7 +706,7 @@ test("library posters are 9:16, cost wraps, and materials save stays opaque", as
   assert.match(css, /\.board\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*320px\)/);
   assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
   assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
-  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*visible/);
   assert.match(css, /\.filmstrip\s*\{[^}]*overflow-y:\s*hidden/);
   assert.match(css, /\.filmstrip\s*\{[^}]*overscroll-behavior-y:\s*none/);
   assert.match(css, /\.filmstrip\s*\{[^}]*touch-action:\s*pan-x/);
@@ -758,13 +760,31 @@ test("materials overflow stays visible, filmstrip pans sideways, slate is N테�
   const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
   const boardJs = await readFile(join(root, "public/backlot/ui/board.js"), "utf8");
   assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
-  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*visible/);
   assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
   assert.match(css, /\.filmstrip\s*\{[^}]*overflow-y:\s*hidden/);
   assert.match(css, /\.filmstrip\s*\{[^}]*overscroll-behavior-y:\s*none/);
   assert.match(css, /\.filmstrip\s*\{[^}]*touch-action:\s*pan-x/);
   assert.match(boardJs, /\$\{card\.takes\.length\}테이크/);
   assert.doesNotMatch(boardJs, /`T\$\{card\.takes\.length\}`/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+});
+
+test("inspect-stack overflow-x is visible and satellite #batch rewrites to /#create", async () => {
+  const root = process.cwd();
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  const library = await readFile(join(root, "public/backlot/index.html"), "utf8");
+  const board = await readFile(join(root, "public/backlot/board.html"), "utf8");
+  assert.match(css, /\.materials\s*\{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.materials \.inspect-stack\s*\{[^}]*overflow-x:\s*visible/);
+  assert.match(css, /aside\s*\{[^}]*overflow-x:\s*clip/);
+  assert.match(satelliteBoot, /if \(hash === "batch"\) \{\s*location\.replace\("\/#create"\)/);
+  assert.doesNotMatch(satelliteBoot, /hash === "create" \|\| hash === "batch"/);
+  assert.match(library, /href="\/#create" data-create-mode="batch">양산</);
+  assert.match(board, /href="\/#create" data-create-mode="batch">양산</);
   assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);

@@ -273,6 +273,8 @@ function setView(view, options = {}) {
   pinWatchToVisualViewport();
   pinOverlaysToVisualViewport();
   if (openingWatch) {
+    state.createMode = "single";
+    rememberStudioCreateMode(sessionStorage, "single");
     sizeWatchFeed(watchFeed);
   }
   syncWatchFeed(watchFeed, state.view, () => mountWatchFeed({ focus: true, instant: Boolean(options.instant) }));
@@ -324,9 +326,8 @@ function syncDocumentTitle() {
 function applyHash() {
   const hash = location.hash.replace("#", "");
   if (hash === "batch" || hash === "create") {
-    const leftoverBatch = hash === "batch";
     const hinted = takeCreateModeHint();
-    state.createMode = leftoverBatch || hinted === "batch" ? "batch" : "single";
+    state.createMode = hinted === "batch" ? "batch" : "single";
     setView("create", { skipHash: true });
     if (location.hash === "#batch") {
       history.replaceState(history.state, "", `${location.pathname}${location.search}#create`);
@@ -414,7 +415,10 @@ function sizeShortsGrid() {
   const width = grid.clientWidth;
   if (!width) return;
   const chrome = measureChrome();
-  const height = window.visualViewport?.height || window.innerHeight;
+  const innerH = window.innerHeight || 0;
+  if (innerH) document.documentElement.style.setProperty("--inner-height", `${Math.round(innerH)}px`);
+  const portrait = window.innerWidth < 600 || window.innerWidth <= window.innerHeight;
+  const height = portrait ? innerH : (window.visualViewport?.height || innerH);
   const col = (height - chrome - gap) * 9 / 16;
   if (!(col > 0)) return;
   const shortLandscape = window.innerWidth >= 600 && window.innerWidth > window.innerHeight && window.innerHeight / window.innerWidth < 0.75;
@@ -1913,9 +1917,11 @@ function pinWatchToVisualViewport() {
 function syncVisualViewportInset() {
   const vv = window.visualViewport;
   const height = vv?.height || window.innerHeight || 0;
+  const innerH = window.innerHeight || height;
   const bottom = visualViewportKeyboardInset();
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   document.documentElement.style.setProperty("--vv-height", `${Math.round(height)}px`);
+  document.documentElement.style.setProperty("--inner-height", `${Math.round(innerH)}px`);
   document.documentElement.classList.toggle("ime-open", bottom > 80);
   if (bottom > 80) {
     document.body.style.top = "0px";

@@ -5,7 +5,10 @@
   if (hash === "template") {
     location.replace("/template");
   }
-  if (hash === "create" || hash === "batch" || hash === "settings" || hash === "machine") {
+  if (hash === "batch") {
+    location.replace("/#create");
+  }
+  if (hash === "create" || hash === "settings" || hash === "machine") {
     location.replace("/#" + hash);
   }
   if (hash === "watch" || raw.indexOf("watch/") === 0) {

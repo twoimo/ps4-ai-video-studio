@@ -235,9 +235,9 @@
           if (node) node.hidden = false;
           document.body.classList.add("overlay-open");
         }
-        var leftoverBatch = hash === "batch";
+        var leftoverBatch = false;
         try {
-          leftoverBatch = leftoverBatch || (hash === "create" && sessionStorage.getItem("studioCreateMode") === "batch");
+          leftoverBatch = sessionStorage.getItem("studioCreateMode") === "batch";
         } catch (e) {}
         if (hash === "create" || hash === "batch") {
           show("create-overlay");

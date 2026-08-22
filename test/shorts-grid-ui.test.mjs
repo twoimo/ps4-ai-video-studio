@@ -1740,3 +1740,37 @@ test("landscape 2-col needs min-width 600px and machine close uses safe-area", a
   assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*top:\s*max\(10px,\s*env\(safe-area-inset-top\)\)/);
   assert.match(css, /#close-machine,\s*#machine-overlay \.draft-close\s*\{[^}]*right:\s*max\(10px,\s*env\(safe-area-inset-right\)\)/);
 });
+
+test("#batch does not open 양산; mode is the session hint and watch forces single", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.match(app, /const hinted = takeCreateModeHint\(\)/);
+  assert.match(app, /state\.createMode = hinted === "batch" \? "batch" : "single"/);
+  assert.doesNotMatch(app, /leftoverBatch \|\| hinted/);
+  assert.doesNotMatch(app, /const leftoverBatch = hash === "batch"/);
+  assert.match(app, /if \(location\.hash === "#batch"\) \{\s*history\.replaceState\(history\.state, "", `\$\{location\.pathname\}\$\{location\.search\}#create`\)/);
+  assert.match(app, /if \(openingWatch\) \{\s*state\.createMode = "single";\s*rememberStudioCreateMode\(sessionStorage, "single"\)/);
+  assert.doesNotMatch(html, /leftoverBatch = hash === "batch"/);
+  assert.doesNotMatch(html, /leftoverBatch = leftoverBatch \|\|/);
+  assert.match(html, /leftoverBatch = sessionStorage\.getItem\("studioCreateMode"\) === "batch"/);
+  assert.match(html, /if \(hash === "create" \|\| hash === "batch"\)/);
+});
+
+test("portrait IME --thumb-h uses innerHeight and landscape mute swaps safe-area", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const css = await readFile(join(publicDir, "styles.css"), "utf8");
+  assert.match(app, /setProperty\("--inner-height", `\$\{Math\.round\(innerH\)\}px`\)/);
+  assert.match(app, /const portrait = window\.innerWidth < 600 \|\| window\.innerWidth <= window\.innerHeight/);
+  assert.match(app, /const height = portrait \? innerH : \(window\.visualViewport\?\.height \|\| innerH\)/);
+  assert.match(css, /--thumb-h:\s*calc\(\(var\(--vv-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /@media \(orientation:\s*portrait\)[\s\S]*\.shorts-grid[\s\S]*--thumb-h:\s*calc\(\(var\(--inner-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /@media \(max-width:\s*599px\)[\s\S]*\.shorts-grid[\s\S]*--n:\s*1/);
+  assert.match(css, /@media \(max-width:\s*599px\)[\s\S]*\.shorts-grid[\s\S]*--thumb-h:\s*calc\(\(var\(--inner-height,\s*100dvh\) - var\(--chrome\) - var\(--gap\)\) \/ var\(--rows\)\)/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*top:\s*auto/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*z-index:\s*7/);
+  assert.match(css, /#watch-feed \.watch-column \.watch-sound\s*\{[^}]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*width:\s*44px/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*height:\s*44px/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*bottom:\s*max\(68px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\)\)/);
+  assert.match(css, /@media \(orientation:\s*landscape\)[\s\S]*#watch-feed \.watch-column \.watch-sound[\s\S]*right:\s*max\(0px,\s*env\(safe-area-inset-bottom\),\s*env\(safe-area-inset-right\)\)/);
+});
