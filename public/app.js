@@ -1,7 +1,7 @@
 import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
-import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, scrollFocusIntoPanel } from "./studio-chrome.mjs";
+import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, rescrollFocusedField, scrollFocusIntoPanel } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -1628,6 +1628,7 @@ function syncVisualViewportInset() {
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   pinWatchToVisualViewport();
   pinOverlaysToVisualViewport();
+  rescrollFocusedField(document);
   if (document.body?.classList?.contains("watch-open")) {
     const root = $("#watch-feed");
     sizeWatchFeed(root);

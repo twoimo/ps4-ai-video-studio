@@ -59,14 +59,18 @@ export function pinNodeToVisualViewport(node, open) {
   if (!open || !vv) {
     node.style.top = "";
     node.style.left = "";
+    node.style.right = "";
+    node.style.bottom = "";
     node.style.width = "";
     node.style.height = "";
     return;
   }
-  node.style.top = `${Math.round(vv.offsetTop || 0)}px`;
   node.style.left = `${Math.round(vv.offsetLeft || 0)}px`;
   node.style.width = `${Math.round(vv.width)}px`;
+  node.style.right = "auto";
+  node.style.top = `${Math.round(vv.offsetTop || 0)}px`;
   node.style.height = `${Math.round(vv.height)}px`;
+  node.style.bottom = "auto";
 }
 
 export function pinOverlaysToVisualViewport(root = document) {
@@ -104,12 +108,19 @@ export function bindFocusScroll(root = document) {
   });
 }
 
+export function rescrollFocusedField(root = document) {
+  const active = root.activeElement || globalThis.document?.activeElement;
+  if (!active || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || "")) return;
+  scrollFocusIntoPanel(active);
+}
+
 function syncVisualViewportInset() {
   const vv = globalThis.visualViewport;
   const innerHeight = globalThis.innerHeight || 0;
   const bottom = vv ? Math.max(0, innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
   globalThis.document?.documentElement?.style?.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   pinOverlaysToVisualViewport(globalThis.document);
+  rescrollFocusedField(globalThis.document);
 }
 
 if (typeof document !== "undefined" && document.documentElement?.dataset?.studioChrome === "auto") {

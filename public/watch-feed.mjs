@@ -439,8 +439,16 @@ function settleWatchPager(root) {
   settleWatchIndex(root, { animate: false });
 }
 
+function eventElement(event) {
+  const node = event?.target;
+  if (node && typeof node.closest === "function") return node;
+  const parent = node?.parentElement;
+  return parent && typeof parent.closest === "function" ? parent : null;
+}
+
 function chromeHit(event) {
-  const closest = event.target?.closest?.bind(event.target);
+  const node = eventElement(event);
+  const closest = node?.closest?.bind(node);
   if (!closest) return false;
   return Boolean(
     closest(".watch-close")
@@ -449,6 +457,21 @@ function chromeHit(event) {
     || closest(".watch-materials-toggle")
     || closest(".watch-sound")
     || closest(".watch-close, .watch-back, .watch-menu, .watch-materials-toggle, .watch-sound")
+  );
+}
+
+function inWatchPlayer(event) {
+  const node = eventElement(event);
+  const closest = node?.closest?.bind(node);
+  if (!closest) return false;
+  return Boolean(
+    closest(".watch-stage")
+    || closest("video")
+    || closest(".watch-poster")
+    || closest(".watch-meta")
+    || closest(".watch-slide-chrome")
+    || closest(".watch-slide")
+    || closest(".watch-column")
   );
 }
 
@@ -498,7 +521,8 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
       return;
     }
     if (chromeHit(event)) {
-      if (event.target?.closest?.(".watch-sound")) {
+      const hit = eventElement(event);
+      if (hit?.closest?.(".watch-sound")) {
         event.preventDefault?.();
         event.stopPropagation?.();
         const video = watchPlayerVideo(root);
@@ -510,14 +534,14 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
         syncWatchSound(root, video);
         return;
       }
-      if (event.target?.closest?.(".watch-menu, .watch-materials-toggle")) {
+      if (hit?.closest?.(".watch-menu, .watch-materials-toggle")) {
         event.preventDefault?.();
         event.stopPropagation?.();
         const jobId = currentWatchSlide(root)?.dataset?.jobId;
         pager.onMaterials?.(jobId);
         return;
       }
-      const close = event.target?.closest?.(".watch-close, .watch-back");
+      const close = hit?.closest?.(".watch-close, .watch-back");
       if (close) {
         stopWatchFeed(root);
         onBack?.(event);
@@ -525,11 +549,13 @@ export function bindWatchFeed(root, onBack, onActive, onMaterials) {
       }
       return;
     }
-    if (!event.target?.closest?.(".watch-stage") && !event.target?.closest?.("video")) {
-      if (!event.target?.closest?.(".watch-column")) {
-        stopWatchFeed(root);
-        onBack?.(event);
-      }
+    if (!inWatchPlayer(event)) {
+      stopWatchFeed(root);
+      onBack?.(event);
+      return;
+    }
+    const hit = eventElement(event);
+    if (!hit?.closest?.(".watch-stage") && !hit?.closest?.("video") && !hit?.closest?.(".watch-poster")) {
       return;
     }
     const video = watchPlayerVideo(root);

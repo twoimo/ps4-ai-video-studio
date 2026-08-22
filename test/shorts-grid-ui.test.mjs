@@ -229,6 +229,11 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(chrome, /export function pinOverlaysToVisualViewport/);
   assert.match(chrome, /export function pinNodeToVisualViewport/);
   assert.match(chrome, /export function scrollFocusIntoPanel/);
+  assert.match(chrome, /export function rescrollFocusedField/);
+  assert.match(chrome, /node\.style\.left/);
+  assert.match(chrome, /node\.style\.width/);
+  assert.match(chrome, /vv\.offsetLeft/);
+  assert.match(chrome, /vv\.width/);
   assert.match(chrome, /scrollTop/);
   assert.equal(chrome.includes("scrollIntoView"), false);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
@@ -968,6 +973,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /--vv-bottom/);
   assert.match(app, /function pinWatchToVisualViewport/);
   assert.match(app, /pinOverlaysToVisualViewport/);
+  assert.match(app, /rescrollFocusedField\(document\)/);
   assert.match(app, /scrollFocusIntoPanel/);
   assert.match(app, /preventScroll:\s*true/);
   assert.match(app, /function sizeShortsGrid/);
@@ -1021,6 +1027,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);
   assert.doesNotMatch(css, /\.studio-overlay\s*\{[^}]*--vv-bottom/);
   assert.match(css, /input,\s*textarea,\s*select\s*\{[^}]*font-size:\s*16px/);
+  assert.match(css, /#delete-confirm\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /#delete-confirm\s*\{[^}]*min-width:\s*44px/);
   assert.match(boardCss, /\.materials\s*\{[^}]*var\(--vv-bottom/);
   assert.match(boardCss, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
   assert.match(boardCss, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);

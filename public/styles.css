@@ -92,6 +92,7 @@ h1, h2, h3, p { margin-top: 0; }
 .ghost-button { color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .ghost-button:hover { color: var(--text); border-color: rgba(183,243,107,.45); }
 .primary-button { width: 100%; color: #11170a; background: var(--accent); padding: 13px 14px; border-radius: 8px; font-size: 15px; font-weight: 700; margin-top: 12px; }
+#delete-confirm { min-width: 44px; min-height: 44px; }
 .primary-button:hover { background: #d3ff98; }
 .secondary-button { color: var(--accent); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 .form-footnote { color: var(--dim); font-size: 12px; line-height: 1.5; margin: 10px 0 0; }

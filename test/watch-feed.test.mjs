@@ -239,6 +239,15 @@ test("bindWatchFeed closes only on watch-close and letterbox tap stops watch", (
   assert.deepEqual(backs, ["letterbox", "close"]);
   assert.equal(videos[0].pauseCalls, 3);
   assert.equal(videos[0].currentTime, 0);
+  videos[0].currentTime = 3;
+  videos[0].paused = false;
+  handler({ target: { closest: (sel) => sel === ".watch-poster" ? {} : null }, via: "poster" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
+  assert.equal(videos[0].pauseCalls, 4);
+  handler({ target: { closest: (sel) => sel === ".watch-meta" ? {} : null }, via: "title" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
+  handler({ target: { parentElement: { closest: (sel) => sel === ".watch-meta" || sel === ".watch-slide-chrome" ? {} : null } }, via: "title-text" });
+  assert.deepEqual(backs, ["letterbox", "close"]);
 });
 
 test("bindWatchFeed already bound plays only while body.watch-open", () => {
@@ -760,8 +769,13 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(feed, /onMaterials/);
   assert.match(feed, /pager\.onMaterials\?\.\(jobId\)/);
   assert.match(feed, /stopWatchFeed\(root\);\s*onBack\?\.\(event\)/);
-  assert.match(feed, /closest\?\.\("\.watch-column"\)/);
-  assert.match(feed, /target\?\.closest\?\.\("\.watch-stage"\)/);
+  assert.match(feed, /function eventElement/);
+  assert.match(feed, /function inWatchPlayer/);
+  assert.match(feed, /closest\("\.watch-poster"\)/);
+  assert.match(feed, /closest\("\.watch-meta"\)/);
+  assert.match(feed, /closest\("\.watch-slide-chrome"\)/);
+  assert.match(feed, /closest\("\.watch-column"\)/);
+  assert.match(feed, /hit\?\.closest\?\.\("\.watch-stage"\)/);
   assert.match(feed, /playMutedThenUnmutePlay[\s\S]*finishWatchPlay/);
   assert.match(feed, /watch-open[\s\S]*playWatchFeed[\s\S]*stopWatchFeed\(root\)/);
   assert.match(feed, /\.watch-close, \.watch-back, \.watch-menu, \.watch-materials-toggle, \.watch-sound/);
