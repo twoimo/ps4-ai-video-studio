@@ -80,6 +80,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.doesNotMatch(board, /class="wrap work"/);
   assert.match(board, /id="materials"/);
   assert.match(board, /aria-label="재료"/);
+  assert.doesNotMatch(board, /<aside[^>]*id="materials"[^>]*hidden/);
+  assert.match(board, /id="materials"[^>]*>\s*<div class="lib-skeleton"/);
   assert.match(board, /src="\/backlot\/ui\/materials\.js"/);
   assert.ok(board.indexOf('class="wrap" id="app"') < board.indexOf('id="materials"'), "materials follows the original wrap");
   assert.match(board, /id="modal"/);

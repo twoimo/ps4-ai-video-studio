@@ -142,6 +142,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /from "\.\/studio-pipe\.mjs"/);
   assert.match(app, /from "\.\/studio-chrome\.mjs"/);
   assert.match(pipe, /export function pipelineStages/);
+  assert.match(pipe, /export function machineSheetHtml[\s\S]*pipelineStages\(health\)/);
   assert.match(pipe, /export function renderStudioPipe/);
   assert.match(chrome, /export function paintStudioPipe/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);

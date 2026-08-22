@@ -142,6 +142,7 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(js.includes("watch-inspect"), false);
   assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
   assert.match(css, /\.template-studio\s*\{[^}]*padding:\s*0 0 48px/);
+  assert.doesNotMatch(css, /\.template-studio\s*\{[^}]*padding:\s*16px/);
   assert.match(css, /\.template-studio \.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
   assert.match(css, /\.template-root\s*\{[^}]*max-width:\s*none/);
   assert.doesNotMatch(css, /max-width:\s*min\(1120px/);
