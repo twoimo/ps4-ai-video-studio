@@ -92,7 +92,7 @@ function renderSlate(s) {
     el("div", { class: "clapper" }),
     el("div", {},
       el("a", { class: "wordmark", href: "/", style: "text-decoration:none" }, "Backlot"),
-      el("h1", {}, s.title),
+      el("h1", {}, s.title || "보드"),
     ),
     ...chips,
     el("div", { class: "spacer" }),
@@ -1064,7 +1064,7 @@ function tickReplay() {
 function render() {
   if (!state) return;
   const s = replay ? stateAt(state, replay.t) : state;
-  document.title = `Backlot — ${s.title}`;
+  document.title = s.title || "보드";
   document.body.classList.toggle("first", firstPaint);
   firstPaint = false;
   app.innerHTML = "";
@@ -1133,8 +1133,19 @@ function normalize(s) {
   return s;
 }
 
+function boardUnchanged(prev, next) {
+  if (!prev || !next) return false;
+  try {
+    return JSON.stringify(prev) === JSON.stringify(next);
+  } catch {
+    return false;
+  }
+}
+
 async function refresh() {
-  state = normalize(await getJSON(`/api/project/${encodeURIComponent(projectId)}/state`));
+  const next = normalize(await getJSON(`/api/project/${encodeURIComponent(projectId)}/state`));
+  if (boardUnchanged(state, next)) return;
+  state = next;
   render();
 }
 

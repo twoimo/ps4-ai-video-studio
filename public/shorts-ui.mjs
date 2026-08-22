@@ -61,6 +61,22 @@ export function jobsFromListPayload(payload) {
   return [];
 }
 
+export function projectsFromListPayload(payload) {
+  if (Array.isArray(payload)) return payload.filter((item) => item && typeof item === "object");
+  if (Array.isArray(payload?.projects)) return payload.projects.filter((item) => item && typeof item === "object");
+  return [];
+}
+
+export function parseJsonText(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) throw new Error("불러오지 못했습니다.");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("불러오지 못했습니다.");
+  }
+}
+
 export function shortCardUnchanged(prev, next) {
   if (!prev || !next) return false;
   const left = shortStatus(prev);

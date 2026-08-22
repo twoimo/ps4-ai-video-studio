@@ -1,4 +1,4 @@
-import { friendlyJobError } from "../../shorts-ui.mjs";
+import { friendlyJobError, projectsFromListPayload } from "../../shorts-ui.mjs";
 import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");
@@ -75,7 +75,7 @@ function card(p) {
 }
 
 async function render() {
-  const projects = await getJSON("/api/projects");
+  const projects = projectsFromListPayload(await getJSON("/api/projects"));
   document.getElementById("count").textContent = `${projects.length} projects`;
   const liveCount = projects.filter((p) => p.live).length;
   const badge = document.getElementById("liveBadge");

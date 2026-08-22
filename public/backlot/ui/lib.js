@@ -1,6 +1,6 @@
 // Shared helpers for the Backlot UI.
 
-import { friendlyJobError, stripErrorPrefix } from "../../shorts-ui.mjs";
+import { friendlyJobError, parseJsonText, stripErrorPrefix } from "../../shorts-ui.mjs";
 
 export function projectIdFromPath(pathname = "") {
   const match = String(pathname || "").match(/\/(?:backlot\/)?p\/([^/]+)\/?$/);
@@ -15,7 +15,17 @@ export async function getJSON(url) {
     throw new Error(friendlyJobError(stripErrorPrefix(error)));
   }
   if (!res.ok) throw new Error(friendlyJobError("불러오지 못했습니다."));
-  return res.json();
+  let text;
+  try {
+    text = await res.text();
+  } catch {
+    throw new Error(friendlyJobError("불러오지 못했습니다."));
+  }
+  try {
+    return parseJsonText(text);
+  } catch (error) {
+    throw new Error(friendlyJobError(error));
+  }
 }
 
 export function el(tag, attrs = {}, ...children) {
@@ -80,7 +90,7 @@ export function subscribe(url, onChange) {
   const source = new EventSource(url);
   source.onmessage = (msg) => {
     try {
-      const data = JSON.parse(msg.data);
+      const data = parseJsonText(msg.data);
       if (data.type !== "change") return;
     } catch {
       return;

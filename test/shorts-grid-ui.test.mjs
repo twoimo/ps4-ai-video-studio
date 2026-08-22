@@ -9,6 +9,8 @@ import {
   friendlyJobError,
   importBroughtCopy,
   jobsFromListPayload,
+  parseJsonText,
+  projectsFromListPayload,
   inspectVideoDownloads,
   isPlaceholderThumbnail,
   isWatchableShort,
@@ -98,6 +100,15 @@ test("short cards map status, hook still, and duration", () => {
   assert.deepEqual(jobsFromListPayload({ jobs: null }), []);
   assert.equal(jobsFromListPayload({ jobs: [{ id: "a" }] })[0].id, "a");
   assert.equal(jobsFromListPayload([{ id: "b" }])[0].id, "b");
+  assert.deepEqual(projectsFromListPayload(undefined), []);
+  assert.deepEqual(projectsFromListPayload({}), []);
+  assert.deepEqual(projectsFromListPayload({ projects: null }), []);
+  assert.equal(projectsFromListPayload({ projects: [{ project_id: "a" }] })[0].project_id, "a");
+  assert.equal(projectsFromListPayload([{ project_id: "b" }])[0].project_id, "b");
+  assert.deepEqual(parseJsonText('{"ok":true}'), { ok: true });
+  assert.throws(() => parseJsonText(""), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("{"), /불러오지 못했습니다/);
+  assert.throws(() => parseJsonText("not-json"), /불러오지 못했습니다/);
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "draft", topic: "abcd" }), true);
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "running", topic: "abcd" }), false);
   assert.equal(settingsSaveFailMessage("ECONNREFUSED"), "설정을 저장하지 못했습니다.");
