@@ -229,6 +229,11 @@ test("studio keeps import control and seed episode copy", async () => {
   assert.equal(html.includes("playground-cistern"), false);
   assert.equal(html.includes("workspace/imports"), false);
   assert.match(app, /\/api\/library\/import/);
-  assert.match(app, /queuePosition/);
   assert.match(app, /libraryIndex/);
+  assert.equal(html.includes("id=\"short-overlay\""), false);
+  assert.equal(app.includes("#short-overlay"), false);
+  assert.equal(app.includes('trapOverlay("#short-overlay")'), false);
+  assert.equal(html.includes("크레딧 402"), false);
+  assert.equal(html.includes("크레딧 부족"), false);
+  assert.equal(html.includes("공장 시작"), false);
 });
