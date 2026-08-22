@@ -802,7 +802,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /\.wrap#app \.slate/);
   assert.match(boardCss, /Studio extra: slim library slate under chrome/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate/);
-  assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
+  assert.match(app, /function emptyGridNote/);
+  assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!ffmpeg\)/);
   assert.match(app, /function overlayStartFocus/);
   assert.match(app, /root\.id === "create-overlay"/);
   assert.match(app, /createMode === "batch"/);
