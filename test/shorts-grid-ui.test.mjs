@@ -219,7 +219,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(app.includes("(job.topic || \"쇼츠\").slice(0, 2)"), false);
   assert.equal(app.includes("short-card-body"), false);
   assert.match(app, /aria-label="새 쇼츠"/);
-  assert.match(app, /aria-label="\$\{escapeHtml\(job\.topic \|\| "쇼츠"\)\}"/);
+  assert.match(app, /aria-label="\$\{escapeHtml\(displayTitle\(job\.topic, "쇼츠"\)\)\}"/);
   assert.match(app, /function sizeShortsGrid/);
   assert.match(app, /grid\.clientWidth/);
   assert.match(app, /Math\.max\(shortLandscape \? 3 : 1,\s*Math\.ceil\(\(width \+ gap\) \/ \(col \+ gap\)\)\)/);
