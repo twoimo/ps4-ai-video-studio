@@ -795,6 +795,7 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
   assert.match(css, /\.watch-sound\[hidden\]/);
   assert.equal(feed.includes("letterbox"), false);
   assert.match(app, /syncWatchFeed\(watchFeed, state\.view,\s*\(\) => mountWatchFeed/);
@@ -1026,6 +1027,20 @@ test("watch-open beats the #watch-feed.watch-feed hide rule", async () => {
   assert.match(css, /body\.watch-open #watch-feed\.watch-feed/);
   assert.match(css, /body\.watch-open \.watch-feed\s*\{[^}]*display:\s*block/);
   assert.match(css, /#watch-feed\.watch-feed[\s\S]*display:\s*none/);
+});
+
+test("first paint #watch hides the grid before JS", async () => {
+  const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
+  const app = await readFile(join(process.cwd(), "public/app.js"), "utf8");
+  const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
+  assert.equal(html.includes('class="watch-open"'), false);
+  assert.match(boot, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
+  assert.match(boot, /classList\.add\("watch-open"\)/);
+  assert.match(boot, /getElementById\("shorts"\)/);
+  assert.match(boot, /library\.hidden = true/);
+  assert.match(boot, /getElementById\("watch-feed"\)/);
+  assert.match(boot, /feed\.hidden = false/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash && location\.hash !== "#shorts"\) history\.replaceState\(null, "", "#shorts"\)/);
 });
 
 test("wheel stays on the watch feed root", () => {

@@ -1297,6 +1297,15 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
 /* Studio extra: library titles keep written case */
 .wrap:not(#app) .lib-body h3 { text-transform: none; }
 
+/* Studio extra: library long-press does not call out; board rail stays visible. */
+.lib-card,
+.lib-card img {
+  -webkit-touch-callout: none;
+}
+.wrap#app .rail {
+  overflow-x: auto;
+}
+
 /* Studio extra: 44px theme toggle and modal close */
 .theme-toggle,
 .modal-close {

@@ -135,6 +135,10 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(js, /title\.textContent = "템플릿을 불러오지 못했습니다"/);
   assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
   assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
+  assert.match(js, /title\.hidden = true/);
+  assert.match(page, /class="template-back"[^>]*aria-label="닫기"/);
+  assert.match(js, /raw === "watch" \|\| raw\.startsWith\("watch\/"\)/);
+  assert.match(js, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
   assert.match(specJs, /<h2>잠긴 프롬프트<\/h2>/);
   assert.match(specJs, /<h3>잠금<\/h3>/);
   assert.equal(specJs.includes("<h3>FACTORY_LOCKS</h3>"), false);
@@ -169,7 +173,10 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(page.includes("watch-inspect"), false);
   assert.equal(js.includes("watch-inspect"), false);
   assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
-  assert.match(css, /\.template-studio\s*\{[^}]*padding:\s*0 0 48px/);
+  assert.match(css, /\.template-studio\s*\{[^}]*padding:\s*0 0 max\(48px,\s*env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(css, /\.template-back\s*\{[^}]*width:\s*44px/);
+  assert.match(css, /\.template-back\s*\{[^}]*height:\s*44px/);
+  assert.match(css, /#template-title\[hidden\]\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(css, /\.template-studio\s*\{[^}]*padding:\s*16px/);
   assert.match(css, /\.template-studio \.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
   assert.match(css, /\.template-root\s*\{[^}]*max-width:\s*none/);
@@ -245,4 +252,20 @@ test("locked spec API payload has the 288 corpus and every factory lock", () => 
   assert.match(spec.documents.spec, /mature_explainer 253/);
   assert.match(spec.documents.template, /FORBIDDEN/);
   assert.equal(JSON.stringify(spec).includes("쇼츠 공장"), false);
+});
+
+test("template Back is 44px, hides the locked title, and bounces #watch", async () => {
+  const page = await readFile(join(process.cwd(), "public", "template", "index.html"), "utf8");
+  const js = await readFile(join(process.cwd(), "public", "template", "template.js"), "utf8");
+  const css = await readFile(join(process.cwd(), "public", "styles.css"), "utf8");
+  const satelliteBoot = await readFile(join(process.cwd(), "public", "satellite-boot.js"), "utf8");
+  assert.match(page, /<h2 id="template-title">잠긴 프롬프트<\/h2>/);
+  assert.match(page, /class="template-back"[^>]*href="\/"[^>]*aria-label="닫기">×</);
+  assert.match(js, /title\.textContent = "잠긴 프롬프트"/);
+  assert.match(js, /title\.hidden = true/);
+  assert.match(js, /raw === "watch" \|\| raw\.startsWith\("watch\/"\)/);
+  assert.match(js, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
+  assert.match(css, /\.template-back\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/);
+  assert.match(css, /\.template-studio\s*\{[^}]*var\(--vv-bottom,\s*0px\)/);
+  assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
 });

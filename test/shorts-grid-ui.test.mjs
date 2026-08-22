@@ -132,6 +132,10 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(displayTitle({}), "");
   assert.equal(displayTitle("[object Object]", "보드"), "보드");
   assert.equal(displayTitle({ topic: { title: "중첩" } }), "중첩");
+  assert.equal(displayTitle("/workspace/jobs/foo", "보드"), "보드");
+  assert.equal(displayTitle("workspace/jobs/foo/master.mp4", "보드"), "보드");
+  assert.equal(displayTitle("file:///tmp/clip.mp4", "보드"), "보드");
+  assert.equal(displayTitle("/workspace/jobs/foo"), "");
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "draft", topic: "abcd" }), true);
   assert.equal(shortCardUnchanged({ id: "a", status: "draft", topic: "abcd" }, { id: "a", status: "running", topic: "abcd" }), false);
   assert.equal(settingsSaveFailMessage("ECONNREFUSED"), "설정을 저장하지 못했습니다.");
@@ -470,7 +474,7 @@ test("library and overlays fill the viewport instead of a phone column", async (
   assert.equal(/\.watch-feed\s*\{[^}]*--watch-h:/.test(css), false);
   assert.equal(/\.watch-feed\s*\{[^}]*height:\s*100svh/.test(css), false);
   assert.match(css, /\.studio-overlay\s*\{[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/);
-  assert.match(css, /\.studio-overlay\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+env\(safe-area-inset-bottom\)\s+env\(safe-area-inset-left\)/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)\s+env\(safe-area-inset-left\)/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*place-items:\s*center/);
   assert.match(css, /width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
   assert.match(css, /max-width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
@@ -713,6 +717,9 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /requested\?\.id \|\| playable\[0\]\.id/);
   assert.match(app, /createSeq/);
   assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
+  assert.match(app, /async function refreshCreatePreview\(expectedSeq = state\.createSeq\)/);
+  assert.match(app, /await refreshCreatePreview\(seq\)/);
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash && location\.hash !== "#shorts"\) history\.replaceState\(null, "", "#shorts"\)/);
   assert.match(app, /#batch-topics"\)\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(app, /hash === "short"/);
   assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
@@ -820,6 +827,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?right:\s*0/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound[\s\S]*?left:\s*auto/);
   assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
+  assert.match(css, /\.watch-meta h2\s*\{[^}]*padding-right:\s*52px/);
   assert.match(app, /M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z/);
   assert.equal(html.includes("watch-inspect"), false);
   assert.equal(html.includes("inspect-dismiss"), false);
@@ -893,6 +901,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   const materials = await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8");
   const board = await readFile(join(publicDir, "backlot/board.html"), "utf8");
   const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
+  const chromeCss = await readFile(join(publicDir, "studio-chrome.css"), "utf8");
   assert.match(board, /content="width=device-width, initial-scale=1, interactive-widget=resizes-content"/);
   assert.doesNotMatch(board, /viewport-fit/);
   const css = await readFile(join(publicDir, "styles.css"), "utf8");
@@ -1104,6 +1113,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   const boot = html.slice(html.indexOf("hash === \"create\" || hash === \"batch\""), html.indexOf('src="/app.js"'));
   assert.match(boot, /hash === "machine" \|\| hash.indexOf\("machine\/"\) === 0/);
   assert.match(boot, /show\("machine-overlay"\)/);
+  assert.match(boot, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
+  assert.match(boot, /classList\.add\("watch-open"\)/);
+  assert.match(boot, /library\.hidden = true/);
+  assert.match(boot, /feed\.hidden = false/);
   assert.match(boot, /if \(hash === "batch"\)/);
   assert.match(boot, /title\.textContent = "양산"/);
   assert.match(boot, /single\.hidden = true/);
@@ -1128,7 +1141,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.doesNotMatch(css, /#watch-feed[\s\S]{0,180}bottom:\s*var\(--vv-bottom/);
   assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
   assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);
-  assert.doesNotMatch(css, /\.studio-overlay\s*\{[^}]*--vv-bottom/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)/);
   assert.match(css, /input,\s*textarea,\s*select\s*\{[^}]*font-size:\s*16px/);
   assert.match(css, /#delete-confirm\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /#delete-confirm\s*\{[^}]*min-width:\s*44px/);
@@ -1151,6 +1165,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /calc\(var\(--vv-height,\s*100dvh\) - 360px\)/);
   assert.doesNotMatch(boardCss, /\.rail\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(boardCss, /\.filmstrip\s*\{[^}]*display:\s*none/);
+  assert.match(boardCss, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
   assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
   assert.match(app, /function bindEvents\(\) \{\s*bindStudioPipe\(document, openMachine\);/);
   assert.ok(app.indexOf("bindEvents();") < app.indexOf("void warnIfFactoryToolsMissing()"), "chips bind before health");
@@ -1473,4 +1488,30 @@ test("public studio copy rejects leftover overlay, credit 402, tap-to-play, and 
   assert.equal((await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8")).includes("402"), false);
   assert.match(app, /location\.replace\("\/backlot"\)/);
   assert.match(app, /hash === "short"[\s\S]*openMaterials\(jobId\)/);
+});
+
+test("displayTitle drops workspace paths and falls back to 보드", () => {
+  assert.equal(displayTitle("/workspace/jobs/foo", "보드"), "보드");
+  assert.equal(displayTitle("workspace/jobs/foo/master.mp4", "보드"), "보드");
+  assert.equal(displayTitle("file:///tmp/clip.mp4", "보드"), "보드");
+  assert.equal(displayTitle("/workspace/jobs/foo"), "");
+  assert.equal(displayTitle("한강 갑문", "보드"), "한강 갑문");
+});
+
+test("leftover watch with no clips replaces #shorts", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  const html = await readFile(join(publicDir, "index.html"), "utf8");
+  assert.match(app, /if \(!playable\.length\) \{\s*setView\("grid", \{ skipHash: true \}\);\s*if \(location\.hash && location\.hash !== "#shorts"\) history\.replaceState\(null, "", "#shorts"\)/);
+  assert.equal(html.includes('class="watch-open"'), false);
+  assert.match(html, /hash === "watch" \|\| hash.indexOf\("watch\/"\) === 0/);
+  assert.match(html, /classList\.add\("watch-open"\)/);
+});
+
+test("hydrateCreateSlots keeps createSeq so cancel cannot refill", async () => {
+  const app = await readFile(join(publicDir, "app.js"), "utf8");
+  assert.match(app, /async function refreshCreatePreview\(expectedSeq = state\.createSeq\)/);
+  assert.match(app, /const seq = expectedSeq/);
+  assert.match(app, /async function hydrateCreateSlots\(\) \{\s*const seq = state\.createSeq/);
+  assert.match(app, /if \(seq !== state\.createSeq\) return;\s*await refreshCreatePreview\(seq\)/);
+  assert.match(app, /state\.view === "create"\) state\.createSeq \+= 1/);
 });

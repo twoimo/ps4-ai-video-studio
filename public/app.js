@@ -332,6 +332,7 @@ function applyHash() {
     const playable = watchableJobs();
     if (!playable.length) {
       setView("grid", { skipHash: true });
+      if (location.hash && location.hash !== "#shorts") history.replaceState(null, "", "#shorts");
       return;
     }
     const requested = jobId && playable.find((job) => job.id === jobId);
@@ -1107,8 +1108,8 @@ function collectWorldSlots() {
   return slots;
 }
 
-async function refreshCreatePreview() {
-  const seq = state.createSeq;
+async function refreshCreatePreview(expectedSeq = state.createSeq) {
+  const seq = expectedSeq;
   if ($("#provider")?.value !== "grok-imagine") {
     const preview = $("#create-prompt-preview");
     if (preview) preview.innerHTML = "";
@@ -1159,7 +1160,7 @@ async function hydrateCreateSlots() {
       }));
     }
     if (seq !== state.createSeq) return;
-    await refreshCreatePreview();
+    await refreshCreatePreview(seq);
   } catch (error) {
     if (seq !== state.createSeq) return;
     const mount = $("#create-world-slots");

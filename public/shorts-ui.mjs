@@ -81,7 +81,11 @@ function titleFromValue(value, depth = 0) {
 export function displayTitle(...values) {
   for (const value of values) {
     const text = titleFromValue(value);
-    if (text) return text;
+    if (!text) continue;
+    const cleaned = stripUiPaths(text);
+    if (!cleaned) continue;
+    if (cleaned !== text && /(?:[\\/]|file:)/i.test(text)) continue;
+    return cleaned;
   }
   return "";
 }

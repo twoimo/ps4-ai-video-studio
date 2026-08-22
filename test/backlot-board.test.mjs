@@ -209,6 +209,16 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /\.wrap:not\(#app\) \.lib-body h3\s*\{[^}]*text-transform:\s*none/);
   assert.match(libraryJs, /el\("h3", \{\}, displayTitle\(p\.title, p\.project_id, "보드"\)\)/);
   assert.doesNotMatch(libraryJs, /\(p\.title \|\| p\.project_id\)\.toUpperCase\(\)/);
+  assert.match(libraryJs, /script:\s*"대본"/);
+  assert.match(libraryJs, /"hook-lock":\s*"첫 장면"/);
+  assert.match(libraryJs, /"image-edit":\s*"그림 고치기"/);
+  assert.match(libraryJs, /animate:\s*"움직이기"/);
+  assert.match(libraryJs, /compose:\s*"편집"/);
+  assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
+  assert.match(libraryJs, /addEventListener\("contextmenu"/);
+  assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
+  assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
   assert.match(css, /Studio extra: slim board slate always, no OM wordmark\/clapper/);
   assert.match(css, /\.wrap#app \.slate/);
   assert.match(css, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
@@ -313,6 +323,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings" \|\| hash === "machine"/);
   assert.match(satelliteBoot, /raw === "machine" \|\| raw\.indexOf\("machine\/"\) === 0/);
   assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
+  assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
+  assert.match(satelliteBoot, /location\.replace\("\/#" \+ \(raw \|\| "watch"\)\)/);
   const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
   assert.match(satellite, /export function resetSatelliteMenu/);
   assert.match(satellite, /classList\?\.toggle\("overlay-open"/);
@@ -545,6 +557,25 @@ test("satellite import abort does not paint the result sheet", async () => {
   assert.equal(actions.hidden, false);
   assert.equal(result.hidden, true);
   assert.equal(summary.textContent, "");
+});
+
+test("library long-press blocks contextmenu and the board rail stays visible", async () => {
+  const root = process.cwd();
+  const libraryJs = await readFile(join(root, "public/backlot/ui/library.js"), "utf8");
+  const css = await readFile(join(root, "public/backlot/ui/board.css"), "utf8");
+  const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
+  assert.match(libraryJs, /addEventListener\("contextmenu"/);
+  assert.match(libraryJs, /closest\?\.\("\.lib-card"\)/);
+  assert.match(libraryJs, /event\.preventDefault\(\)/);
+  assert.match(libraryJs, /title: `\$\{name\}: \$\{status\}`/);
+  assert.match(libraryJs, /script:\s*"대본"/);
+  assert.match(libraryJs, /completed:\s*"완료"/);
+  assert.match(css, /\.lib-card,\s*\.lib-card img\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  assert.match(css, /\.wrap#app \.rail\s*\{[^}]*overflow-x:\s*auto/);
+  assert.doesNotMatch(css, /\.wrap#app\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.rail\s*\{[^}]*display:\s*none/);
+  assert.doesNotMatch(css, /\.filmstrip\s*\{[^}]*display:\s*none/);
+  assert.match(satelliteBoot, /hash === "watch" \|\| raw\.indexOf\("watch\/"\) === 0/);
 });
 
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {

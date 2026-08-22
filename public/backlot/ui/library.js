@@ -31,11 +31,34 @@ function initLibrary() {
   if (!app) return;
   applyTheme(currentTheme);
   document.getElementById("liveBadge")?.before(renderThemeToggle());
+  grid?.addEventListener("contextmenu", (event) => {
+    if (!event.target?.closest?.(".lib-card")) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
   render().catch(failLibrary);
   if (!new URLSearchParams(location.search).has("static")) {
     subscribe("/api/library/events", () => render().catch(failLibrary));
   }
 }
+
+const RAIL_LABELS = {
+  script: "대본",
+  "hook-lock": "첫 장면",
+  "image-edit": "그림 고치기",
+  animate: "움직이기",
+  compose: "편집",
+  scene_plan: "첫 장면",
+  assets: "그림 고치기",
+  edit: "편집"
+};
+
+const RAIL_STATUS = {
+  completed: "완료",
+  in_progress: "진행",
+  awaiting_human: "확인 필요",
+  failed: "실패"
+};
 
 function miniRail(states) {
   const rail = el("div", { class: "mini-rail" });
@@ -43,7 +66,9 @@ function miniRail(states) {
     const cls = s.status === "completed" ? "d"
       : s.status === "in_progress" ? "a"
       : s.status === "awaiting_human" ? "w" : "";
-    rail.append(el("i", { class: cls, title: `${s.name}: ${s.status}` }));
+    const name = RAIL_LABELS[s.name] || s.name;
+    const status = RAIL_STATUS[s.status] || s.status;
+    rail.append(el("i", { class: cls, title: `${name}: ${status}` }));
   }
   return rail;
 }

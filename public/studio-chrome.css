@@ -45,7 +45,7 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
   z-index: 20;
   display: grid;
   place-items: center;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) max(env(safe-area-inset-bottom), var(--vv-bottom, 0px)) env(safe-area-inset-left);
 }
 #satellite-menu .overlay-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
 #satellite-menu .overlay-panel {

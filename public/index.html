@@ -250,6 +250,12 @@
           show("settings-overlay");
         } else if (hash === "machine" || hash.indexOf("machine/") === 0) {
           show("machine-overlay");
+        } else if (hash === "watch" || hash.indexOf("watch/") === 0) {
+          document.body.classList.add("watch-open");
+          var library = document.getElementById("shorts");
+          if (library) library.hidden = true;
+          var feed = document.getElementById("watch-feed");
+          if (feed) feed.hidden = false;
         }
       })();
     </script>
