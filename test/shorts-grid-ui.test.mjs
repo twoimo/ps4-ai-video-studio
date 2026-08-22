@@ -922,6 +922,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   const app = await readFile(join(publicDir, "app.js"), "utf8");
   const pipe = await readFile(join(publicDir, "studio-pipe.mjs"), "utf8");
   const editor = await readFile(join(publicDir, "materials-editor.mjs"), "utf8");
+  const ui = await readFile(join(publicDir, "shorts-ui.mjs"), "utf8");
   const materials = await readFile(join(publicDir, "backlot/ui/materials.js"), "utf8");
   const board = await readFile(join(publicDir, "backlot/board.html"), "utf8");
   const boardCss = await readFile(join(publicDir, "backlot/ui/board.css"), "utf8");
@@ -979,7 +980,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(editor, /is-paused/);
   assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
   assert.match(editor, /frozenRemakeLabel\(frozen\)/);
-  assert.match(editor, /지금은 못 만들어요/);
+  assert.match(ui, /frozen \? "지금은 못 만들어요" : "다시 만들기"/);
   assert.doesNotMatch(editor, /다시 만들기 · 멈춤/);
   assert.match(editor, /지금은 그림을 안 만들어요/);
   assert.match(editor, /export function fallbackCaptionPrompts/);
