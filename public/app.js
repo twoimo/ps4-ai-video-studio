@@ -1,4 +1,4 @@
-import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripUiPaths } from "./shorts-ui.mjs";
+import { formatClock, friendlyJobError, importBroughtCopy, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -50,7 +50,7 @@ async function api(path, options = {}) {
   try {
     response = await fetch(path, options);
   } catch (error) {
-    throw new Error(friendlyJobError(error));
+    throw new Error(friendlyJobError(stripErrorPrefix(error)));
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -64,12 +64,38 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function showToast(message, type = "") {
+function enqueueToast(message, type = "") {
+  const text = stripUiPaths(type === "error" ? friendlyJobError(message) : stripErrorPrefix(message));
+  if (!text) return;
+  enqueueToast.queue ||= [];
+  const current = enqueueToast.current;
+  if (current && current.text === text && current.type === type) return;
+  if (enqueueToast.queue.some((item) => item.text === text && item.type === type)) return;
+  const item = { text, type };
+  if (current) {
+    enqueueToast.queue.push(item);
+    return;
+  }
+  revealToast(item);
+}
+
+function revealToast(item) {
   const toast = $("#toast");
-  toast.textContent = stripUiPaths(type === "error" ? friendlyJobError(message) : message);
-  toast.className = `toast visible ${type}`;
-  window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => { toast.className = "toast"; }, 4200);
+  if (!toast) return;
+  enqueueToast.current = item;
+  toast.textContent = item.text;
+  toast.className = `toast visible ${item.type}`.trim();
+  window.clearTimeout(enqueueToast.timer);
+  enqueueToast.timer = window.setTimeout(() => {
+    toast.className = "toast";
+    enqueueToast.current = null;
+    const next = enqueueToast.queue.shift();
+    if (next) revealToast(next);
+  }, 4200);
+}
+
+function showToast(message, type = "") {
+  enqueueToast(message, type);
 }
 
 function watchableJobs() {
@@ -942,7 +968,7 @@ async function pollJobs() {
   try {
     await refreshJobs();
   } catch (error) {
-    showToast(`작업 상태 갱신 실패: ${error.message}`, "error");
+    enqueueToast(error, "error");
   }
 }
 

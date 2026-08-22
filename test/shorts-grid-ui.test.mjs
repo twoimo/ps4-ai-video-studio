@@ -18,6 +18,7 @@ import {
   shortStatusLabel,
   shortThumbnail,
   shortUploadPack,
+  stripErrorPrefix,
   stripUiPaths
 } from "../public/shorts-ui.mjs";
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "../public/materials-editor.mjs";
@@ -79,8 +80,13 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(friendlyJobError("404 /api/jobs/x"), "찾지 못했습니다.");
   assert.equal(friendlyJobError("영상 주제를 4자 이상 입력하세요."), "영상 주제를 4자 이상 입력하세요.");
   assert.equal(friendlyJobError("ECONNREFUSED"), "요청에 실패했습니다.");
+  assert.equal(stripErrorPrefix("Error: 연결하지 못했습니다."), "연결하지 못했습니다.");
+  assert.equal(stripErrorPrefix("TypeError: Failed to fetch"), "Failed to fetch");
   assert.equal(friendlyJobError("Failed to fetch"), "연결하지 못했습니다.");
-  assert.equal(friendlyJobError("unknown project: demo"), "프로젝트를 찾을 수 없습니다.");
+  assert.equal(friendlyJobError("Error: Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(friendlyJobError("TypeError: Failed to fetch"), "연결하지 못했습니다.");
+  assert.equal(friendlyJobError("unknown project: demo"), "작업을 찾지 못했습니다.");
+  assert.equal(friendlyJobError("Error: unknown project: demo"), "작업을 찾지 못했습니다.");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -1047,6 +1053,11 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /function batchTopicsOrFocus/);
   assert.match(app, /friendlyJobError/);
   assert.match(app, /stripUiPaths/);
+  assert.match(app, /stripErrorPrefix/);
+  assert.match(app, /function enqueueToast/);
+  assert.match(app, /enqueueToast\.current/);
+  assert.match(app, /enqueueToast\(error, "error"\)/);
+  assert.equal(app.includes("작업 상태 갱신 실패"), false);
   assert.equal(app.includes("Failed to fetch"), false);
   assert.equal(app.includes("요청 실패 (${response.status})"), false);
   assert.match(app, /\/run/);

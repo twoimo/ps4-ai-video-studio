@@ -211,6 +211,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /"section-title" \}, "완성 영상"/);
   assert.match(boardJs, /"section-title" \}, "가져온 클립"/);
   assert.match(libJs, /return "방금"/);
+  assert.match(libJs, /throw new Error\(friendlyJobError\(stripErrorPrefix\(error\)\)\)/);
   assert.match(libJs, /throw new Error\(friendlyJobError\("불러오지 못했습니다\."\)\)/);
   assert.equal(libJs.includes("${res.status} ${url}"), false);
   assert.equal(libJs.includes("404"), false);
@@ -222,6 +223,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.equal(boardJs.includes("st.error"), false);
   assert.equal(boardJs.includes("ENOENT"), false);
   assert.match(libJs, /friendlyJobError/);
+  assert.match(libJs, /stripErrorPrefix/);
   assert.equal(libJs.includes("Failed to fetch"), false);
   assert.match(libJs, /\$\{Math\.round\(diff \/ 60\)\}분 전/);
   assert.match(libraryJs, /"◈ 확인 필요"/);

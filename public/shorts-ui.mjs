@@ -49,12 +49,16 @@ export function stripUiPaths(value) {
   }).replace(/[ \t]{2,}/g, " ").replace(/\s+([.,!?])/g, "$1").trim();
 }
 
+export function stripErrorPrefix(value) {
+  return String(value ?? "").replace(/^(?:(?:type)?error:\s*)+/i, "").trim();
+}
+
 export function friendlyJobError(error) {
-  const original = String(error?.message || error || "");
+  const original = stripErrorPrefix(error?.message || error || "");
   const text = stripUiPaths(original);
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(original)) return "연결하지 못했습니다.";
   if (/ENOENT|ENOTDIR|no such file/i.test(original)) return "파일을 찾지 못했습니다.";
-  if (/unknown project|project not found/i.test(original)) return "프로젝트를 찾을 수 없습니다.";
+  if (/unknown project|project not found/i.test(original)) return "작업을 찾지 못했습니다.";
   if (/\b404\b/.test(original) || /not found/i.test(original)) return "찾지 못했습니다.";
   if (!text) return "요청에 실패했습니다.";
   if (/[가-힣]/.test(text)) return text;
