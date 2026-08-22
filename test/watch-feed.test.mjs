@@ -1121,7 +1121,7 @@ test("watch PiP leftover exits on pause and stop and kicks back on enter", async
   const feed = await readFile(join(process.cwd(), "public/watch-feed.mjs"), "utf8");
   const css = await readFile(join(process.cwd(), "public/styles.css"), "utf8");
   assert.match(feed, /function exitWatchPictureInPicture/);
-  assert.match(feed, /document\.exitPictureInPicture/);
+  assert.match(feed, /doc\.exitPictureInPicture/);
   assert.match(feed, /enterpictureinpicture/);
   assert.match(feed, /leavepictureinpicture/);
   assert.match(feed, /exitWatchPictureInPicture\(video\);\s*try \{ video\.pause\(\)/);
