@@ -180,8 +180,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /#studio-chrome[\s\S]*isolation:\s*isolate/);
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
   assert.equal(css.includes("family=Inter"), false);
-  assert.match(css, /height:\s*min\(36vh,\s*320px\)/);
-  assert.match(css, /aspect-ratio:\s*9\s*\/\s*16/);
+  const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
+  assert.match(heroExtra, /height:\s*min\(36vh,\s*320px\)/);
+  assert.match(heroExtra, /aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(heroExtra, /width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
+  assert.match(boardJs, /onchange: \(e\) => \{ setT\(e\.target\.value\); render\(\); \},\s*\}\),/);
   assert.match(boardJs, /script:\s*"대본"/);
   assert.match(boardJs, /"hook-lock":\s*"첫 장면"/);
   assert.match(boardJs, /"image-edit":\s*"그림 고치기"/);

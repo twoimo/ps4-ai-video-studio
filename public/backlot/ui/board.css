@@ -1230,7 +1230,7 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
 .render-hero {
   height: min(36vh, 320px);
   aspect-ratio: 9 / 16;
-  width: auto;
+  width: min(100%, calc(min(36vh, 320px) * 9 / 16));
   max-width: 100%;
   margin-inline: auto;
 }

@@ -769,8 +769,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /IBM Plex Sans KR/);
   assert.match(boardCss, /#studio-chrome[\s\S]*font-family:\s*var\(--sans\)/);
   assert.equal(boardCss.includes("family=Inter"), false);
-  assert.match(boardCss, /height:\s*min\(36vh,\s*320px\)/);
-  assert.match(boardCss, /aspect-ratio:\s*9\s*\/\s*16/);
+  const heroExtra = boardCss.slice(boardCss.lastIndexOf("Studio extra: compact 9:16 render-hero"));
+  assert.match(heroExtra, /height:\s*min\(36vh,\s*320px\)/);
+  assert.match(heroExtra, /aspect-ratio:\s*9\s*\/\s*16/);
+  assert.match(heroExtra, /width:\s*min\(100%,\s*calc\(min\(36vh,\s*320px\) \* 9 \/ 16\)\)/);
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.doesNotMatch(boardCss, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
   assert.doesNotMatch(boardCss, /@media \(max-width: 720px\)/);
