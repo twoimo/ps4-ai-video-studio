@@ -158,8 +158,12 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.match(page, /id="satellite-import-result"/);
   assert.match(page, /id="satellite-import-summary"/);
   assert.match(page, /id="satellite-import-ok">확인</);
-  assert.match(specJs, /같은 현장/);
-  assert.match(specJs, /실제 크기/);
+  assert.match(page, /<h1>PS4_JUSTDOIT<\/h1>/);
+  assert.match(specJs, /specKv\("같은 현장"/);
+  assert.match(specJs, /specKv\("실제 크기"/);
+  assert.match(specJs, /specKv\("장난감"/);
+  assert.match(specJs, /specKv\("막대 없음"/);
+  assert.match(specJs, /specKv\("홀드 속 움직임"/);
   assert.equal(page.includes("aria-label=\"메뉴\""), false);
   assert.equal(css.includes("body.template-open"), false);
   assert.equal(html.includes("쇼츠 공장"), false);
