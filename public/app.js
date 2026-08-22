@@ -1454,7 +1454,8 @@ async function previewVoice(buttonId, audioId, providerId, voiceId) {
     const audio = $(audioId);
     if (audio) {
       audio.src = URL.createObjectURL(blob);
-      audio.hidden = false;
+      audio.hidden = true;
+      if (typeof audio.removeAttribute === "function") audio.removeAttribute("controls");
       await audio.play().catch(() => {});
     }
   } catch (error) {

@@ -67,7 +67,7 @@ h1, h2, h3, p { margin-top: 0; }
 .feed-sentinel { height: 1px; width: 100%; grid-column: 1 / -1; }
 .short-card { position: relative; display: block; width: 100%; text-align: left; color: var(--text); padding: 0; overflow: visible; }
 .short-card-open { display: block; width: 100%; text-align: left; color: inherit; padding: 0; }
-.short-card-detail { position: absolute; left: 6px; bottom: 6px; z-index: 2; margin: 0; padding: 0; color: var(--muted); font-size: 12px; }
+.short-card-detail { position: absolute; left: 6px; bottom: 6px; z-index: 2; margin: 0; padding: 0; min-width: 44px; min-height: 44px; color: var(--muted); font-size: 12px; }
 .short-card-detail:hover { color: var(--text); }
 .short-card-thumb { position: relative; aspect-ratio: 9 / 16; width: 100%; height: auto; background: #080a0f; overflow: hidden; border-radius: 0; border: 0; }
 .short-card.just-created .short-card-thumb { box-shadow: 0 0 0 3px rgba(183,243,107,.16); }
@@ -134,8 +134,8 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
 .studio-overlay.feed-card .menu-overlay-panel {
   position: relative;
   z-index: 1;
-  width: min(440px, calc(100vw - 32px));
-  max-width: min(440px, calc(100vw - 32px));
+  width: min(440px, calc(100% - 32px));
+  max-width: min(440px, calc(100% - 32px));
   height: auto;
   max-height: min(80dvh, 720px);
   overflow: auto;

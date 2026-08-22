@@ -173,6 +173,11 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(html, /id="settings-overlay"/);
   assert.equal(html.includes("id=\"close-short\""), false);
   assert.match(html, /목소리 미리 듣기/);
+  assert.match(html, /id="voice-preview-audio" hidden>/);
+  assert.match(html, /id="settings-preview-audio" hidden>/);
+  assert.doesNotMatch(html, /id="voice-preview-audio"[^>]*controls/);
+  assert.doesNotMatch(html, /id="settings-preview-audio"[^>]*controls/);
+  assert.match(app, /removeAttribute\("controls"\)/);
   assert.equal(html.includes("완벽"), false);
   assert.match(html, /option value="grok-imagine" selected>Grok Imagine</);
   assert.equal(html.includes("Grok Imagine 공장"), false);
@@ -418,8 +423,9 @@ test("library and overlays fill the viewport instead of a phone column", async (
   assert.equal(/\.watch-feed\s*\{[^}]*height:\s*100svh/.test(css), false);
   assert.match(css, /\.studio-overlay\s*\{[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*place-items:\s*center/);
-  assert.match(css, /width:\s*min\(440px,\s*calc\(100vw - 32px\)\)/);
-  assert.match(css, /max-width:\s*min\(440px,\s*calc\(100vw - 32px\)\)/);
+  assert.match(css, /width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
+  assert.match(css, /max-width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
+  assert.doesNotMatch(css, /\.overlay-panel[\s\S]{0,220}100vw/);
   assert.match(css, /max-height:\s*min\(80dvh,\s*720px\)/);
   assert.match(css, /border-radius:\s*16px/);
   assert.match(css, /padding:\s*20px 18px 22px/);
@@ -498,6 +504,8 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(home, /id="create-tile"/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*display:\s*grid/);
   assert.match(chromeCss, /\.studio-chrome\s*\{[^}]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(chromeCss, /#satellite-menu \.overlay-panel[\s\S]*width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
+  assert.doesNotMatch(chromeCss, /#satellite-menu \.overlay-panel[\s\S]{0,160}100vw/);
   assert.match(chromeCss, /\.studio-chips\s*\{[^}]*justify-self:\s*center/);
   assert.match(chromeCss, /\.studio-chrome-actions\s*\{[^}]*justify-self:\s*end/);
   assert.match(chromeCss, /\.studio-chip\s*\{[^}]*border:\s*0/);
@@ -768,6 +776,8 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /openJob/);
   assert.match(app, /function openDetail/);
   assert.match(app, /short-card-detail/);
+  assert.match(css, /\.short-card-detail\s*\{[^}]*min-width:\s*44px/);
+  assert.match(css, /\.short-card-detail\s*\{[^}]*min-height:\s*44px/);
   assert.match(app, />재료</);
   assert.equal(watchSlide.includes("watch-actions"), false);
   assert.equal(watchSlide.includes("watch-mute"), false);
@@ -1195,6 +1205,7 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(html, /id="menu-import-ok">확인</);
   assert.match(html, /id="menu-batch"[^>]*href="#batch"[^>]*>양산</);
   assert.match(html, /id="batch-topics"/);
+  assert.match(html, /id="batch-topics"[^>]*enterkeyhint="enter"/);
   assert.match(html, /id="batch-draft"[^>]*>[\s\S]*초안만 저장/);
   assert.match(html, /id="batch-queue"[^>]*>[\s\S]*대기열에 넣고 생성/);
   assert.equal(html.includes("id=\"batch-frozen\""), false);

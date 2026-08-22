@@ -48,7 +48,7 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
 #satellite-menu .overlay-panel {
   position: relative;
   z-index: 1;
-  width: min(440px, calc(100vw - 32px));
+  width: min(440px, calc(100% - 32px));
   padding: 20px 18px 22px;
   border-radius: 16px;
   background: var(--surface, #11151e);

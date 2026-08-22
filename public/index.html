@@ -101,7 +101,7 @@
           </div>
           <div id="batch-field" hidden>
             <label class="field-label" for="batch-topics">주제 (한 줄에 하나)</label>
-            <textarea id="batch-topics" rows="6" placeholder="오래된 도시 시설의 숨은 원리&#10;빗물이 모이는 놀이터"></textarea>
+            <textarea id="batch-topics" rows="6" enterkeyhint="enter" placeholder="오래된 도시 시설의 숨은 원리&#10;빗물이 모이는 놀이터"></textarea>
           </div>
           <div id="facts-field">
             <label class="field-label" for="facts">출처에 적힌 사실 <span class="muted">(줄바꿈으로 구분 · 없는 숫자는 만들지 않음)</span></label>
@@ -174,7 +174,7 @@
               </select>
             </div>
             <button class="ghost-button" id="preview-voice" type="button">목소리 미리 듣기</button>
-            <audio id="voice-preview-audio" hidden controls></audio>
+            <audio id="voice-preview-audio" hidden></audio>
           </details>
         </form>
       </div>
@@ -198,7 +198,7 @@
             <option value="ko-KR-HyunsuMultilingualNeural">현수 · 남성</option>
           </select>
           <button class="ghost-button" id="settings-preview-voice" type="button">목소리 미리 듣기</button>
-          <audio id="settings-preview-audio" hidden controls></audio>
+          <audio id="settings-preview-audio" hidden></audio>
           <label class="toggle-label settings-bgm"><input id="settings-bgm-enabled" type="checkbox" /><span class="toggle"></span><span>배경 음악 <b class="toggle-state" data-toggle-state="settings-bgm-enabled">꺼짐</b></span></label>
           <p id="settings-bgm-songs" class="form-footnote">곡을 불러오는 중</p>
           <label class="field-label" for="settings-bgm-volume">배경 음량</label>
