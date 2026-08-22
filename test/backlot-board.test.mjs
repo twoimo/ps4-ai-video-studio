@@ -211,7 +211,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /"section-title" \}, "완성 영상"/);
   assert.match(boardJs, /"section-title" \}, "가져온 클립"/);
   assert.match(libJs, /return "방금"/);
-  assert.match(libJs, /throw new Error\("불러오지 못했습니다\."\)/);
+  assert.match(libJs, /throw new Error\(friendlyJobError\("불러오지 못했습니다\."\)\)/);
   assert.equal(libJs.includes("${res.status} ${url}"), false);
   assert.equal(libJs.includes("404"), false);
   assert.match(boardJs, /if \(st\.status === "failed"\) return "실패"/);
@@ -325,7 +325,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(boardJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(materialsJs, /projectIdFromPath\(location\.pathname\)/);
   assert.match(libraryJs, /불러오지 못함/);
-  assert.match(libraryJs, /보드를 불러오지 못했습니다/);
+  assert.match(libraryJs, /empty\.textContent = friendlyJobError\(error\)/);
+  assert.equal(libraryJs.includes("보드를 불러오지 못했습니다"), false);
+  assert.match(libJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
+  assert.match(libraryJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
+  assert.match(materialsJs, /from "\.\.\/\.\.\/shorts-ui\.mjs"/);
   assert.doesNotMatch(libraryJs, /불러오는 중/);
 });
 

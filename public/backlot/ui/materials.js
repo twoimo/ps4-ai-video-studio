@@ -1,5 +1,5 @@
 import { collectInspectPayload, fallbackCaptionPrompts, renderMaterialsPanel } from "/materials-editor.mjs";
-import { friendlyJobError, stripUiPaths } from "/shorts-ui.mjs";
+import { friendlyJobError, stripUiPaths } from "../../shorts-ui.mjs";
 import { getJSON, projectIdFromPath } from "/backlot/ui/lib.js";
 
 const projectId = projectIdFromPath(location.pathname);

@@ -1,4 +1,4 @@
-import { friendlyJobError } from "/shorts-ui.mjs";
+import { friendlyJobError } from "../../shorts-ui.mjs";
 import { el, fmtAgo, getJSON, subscribe, thumbURL } from "/backlot/ui/lib.js";
 
 const grid = document.getElementById("grid");

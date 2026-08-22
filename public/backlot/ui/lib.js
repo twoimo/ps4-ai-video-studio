@@ -1,6 +1,6 @@
 // Shared helpers for the Backlot UI.
 
-import { friendlyJobError } from "/shorts-ui.mjs";
+import { friendlyJobError } from "../../shorts-ui.mjs";
 
 export function projectIdFromPath(pathname = "") {
   const match = String(pathname || "").match(/\/(?:backlot\/)?p\/([^/]+)\/?$/);
