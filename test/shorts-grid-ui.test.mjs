@@ -727,7 +727,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /\(items\[0\] \|\| overlayFocusables\(root\)\[0\]\)\?\.focus\(\)/);
   assert.match(html, /id="create-overlay"[\s\S]*class="draft-close"[\s\S]*id="topic"/);
   assert.match(html, /id="settings-overlay"[\s\S]*class="draft-close"[\s\S]*id="settings-tts-provider"/);
-  assert.match(app, /root\.id === "machine-overlay"/);
+  assert.match(app, /if \(root\.id === "machine-overlay"\) \{[\s\S]*?querySelector\("\.overlay-panel"\)[\s\S]*?panel\.focus\(\);[\s\S]*?return;/);
+  assert.match(html, /id="machine-overlay"[\s\S]*class="overlay-panel machine-overlay-panel"[^>]*tabindex="-1"/);
+  assert.match(app, /hash\.startsWith\("p\/"\) \|\| hash\.startsWith\("materials\/"\)/);
+  assert.match(app, /location\.replace\(`\/backlot\/p\/\$\{encodeURIComponent\(jobId\)\}`\)/);
   assert.match(app, /hash === "batch"/);
   assert.match(app, /createMode === "batch" \? "#batch" : "#create"/);
   assert.match(app, /visualViewport/);
