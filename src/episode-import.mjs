@@ -273,6 +273,16 @@ export async function ensureLibraryEpisodes({
   return { jobs, seeded, imported, catalog, roots };
 }
 
+export function importPublicView(result = {}) {
+  const imported = Array.isArray(result.imported) ? result.imported : [];
+  const seeded = Array.isArray(result.seeded) ? result.seeded : [];
+  return {
+    imported,
+    seeded,
+    count: new Set([...imported, ...seeded]).size
+  };
+}
+
 function isPlaceholderThumb(item = {}) {
   return item.placeholder === true || item.name === "thumbnail.png" && (item.width === 1 || item.bytes <= 90);
 }

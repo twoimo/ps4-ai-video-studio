@@ -212,6 +212,7 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; }
 .create-panel #facts-field { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
 .create-panel #facts { flex: 0 0 auto; min-height: 0; }
 .empty-note { margin: 0 0 8px; color: var(--dim); font-size: 14px; }
+.shorts-grid .empty-note { grid-column: 1 / -1; }
 .short-detail-layout { display: grid; gap: 12px; align-content: start; }
 .job-detail { display: grid; gap: 10px; }
 .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }

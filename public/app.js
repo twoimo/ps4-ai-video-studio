@@ -1,4 +1,4 @@
-import { formatClock, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
+import { formatClock, importBroughtCopy, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
 import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
@@ -335,6 +335,11 @@ function jobCardsMarkup() {
   return state.jobs.map(renderShortCard).join("");
 }
 
+function emptyGridNote() {
+  if (state.jobs.length) return "";
+  return `<p class="empty-note" id="grid-empty">쇼츠가 없습니다</p>`;
+}
+
 function bindFeedScroll() {
   const grid = $("#shorts-grid");
   state.feedObserver?.disconnect();
@@ -667,7 +672,7 @@ function patchGridCard(job) {
 function renderJobs() {
   const grid = $("#shorts-grid");
   if (grid && state.jobsLoaded) {
-    grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}<div class="feed-sentinel"></div>`;
+    grid.innerHTML = `${createTileMarkup()}${jobCardsMarkup()}${emptyGridNote()}<div class="feed-sentinel"></div>`;
     $("#create-tile")?.addEventListener("click", openCreate);
     $$(".short-card[data-job-id]").forEach(bindShortCard);
     bindFeedScroll();
@@ -1165,7 +1170,6 @@ function renderStudioChrome() {
   if (banner) {
     const reasons = [];
     if (state.jobsLoaded) {
-      if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
       if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
       if (!grok) reasons.push("대본을 쓸 수 없습니다");
     }
@@ -1389,10 +1393,7 @@ function showImportResult(payload) {
   const actions = $("#menu-actions");
   const result = $("#menu-import-result");
   const summary = $("#menu-import-summary");
-  const imported = payload.imported?.length || 0;
-  const seeded = payload.seeded?.length || 0;
-  const roots = payload.roots?.length || 0;
-  if (summary) summary.textContent = payload.error || `가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`;
+  if (summary) summary.textContent = importBroughtCopy(payload);
   if (actions) actions.hidden = true;
   if (result) result.hidden = false;
   trapOverlay("#menu-overlay");

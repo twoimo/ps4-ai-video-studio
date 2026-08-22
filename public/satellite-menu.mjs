@@ -1,3 +1,5 @@
+import { importBroughtCopy } from "./shorts-ui.mjs";
+
 function syncOverlayOpen(root = document) {
   const overlay = root.querySelector?.("#satellite-menu");
   const open = Boolean(overlay && !overlay.hidden);
@@ -19,11 +21,8 @@ function showSatelliteImportResult(root, payload = {}) {
   const actions = root.querySelector?.("#satellite-menu-actions");
   const result = root.querySelector?.("#satellite-import-result");
   const summary = root.querySelector?.("#satellite-import-summary");
-  const imported = payload.imported?.length || 0;
-  const seeded = payload.seeded?.length || 0;
-  const roots = payload.roots?.length || 0;
   if (title) title.textContent = "가져오기";
-  if (summary) summary.textContent = `가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`;
+  if (summary) summary.textContent = importBroughtCopy(payload);
   if (actions) actions.hidden = true;
   if (result) result.hidden = false;
   if (overlay) overlay.hidden = false;

@@ -29,7 +29,7 @@ import { backlotHealth, handleBacklot, handleBacklotApi } from "./backlot-server
 import { handleTemplatePage } from "./template-page.mjs";
 import { encodeSse, liveJobView, reduceFactoryStages, reduceLiveProofs, reduceLiveShots } from "./grok-imagine-live.mjs";
 import { createGrokFactoryQueue } from "./grok-factory-queue.mjs";
-import { compareLibraryJobs, ensureLibraryEpisodes } from "./episode-import.mjs";
+import { compareLibraryJobs, ensureLibraryEpisodes, importPublicView } from "./episode-import.mjs";
 import { studioDocsHtml, studioOpenApi } from "./openapi.mjs";
 import { draftScriptFromTopic } from "./studio-script.mjs";
 import { EDGE_VOICES, chirpConfigured, readStudioSettings, settingsPublicView, writeStudioSettings } from "./studio-settings.mjs";
@@ -664,7 +664,7 @@ function annotateFactoryQueue(jobs = []) {
         ...job,
         status: job.status === "queued" ? "queued" : job.status,
         queuePosition: waiting + 1,
-        message: job.message || `공장 대기열 ${waiting + 1}번 · 한 번에 하나만 실행합니다`
+        message: job.message || `대기 ${waiting + 1}번`
       };
     }
     return job;
@@ -737,7 +737,7 @@ async function health() {
   return {
     ok: true,
     service: "ps4-ai-video-studio",
-    browser,
+    browser: { connected: Boolean(browser.connected) },
     capabilities: {
       ffmpeg: command("ffmpeg"),
       ffprobe: command("ffprobe"),
@@ -745,7 +745,7 @@ async function health() {
       geminiApiKey: Boolean(process.env.GEMINI_API_KEY),
       localVideoGenerator: Boolean(String(process.env.PS4_LOCAL_VIDEO_GENERATOR || "").trim()),
       grokCli: Boolean(resolveGrokBinary()),
-      ytDlp
+      ytDlp: { installed: Boolean(ytDlp.installed) }
     },
     analysis: existsSync(ANALYSIS_PATH),
     rlmAnalysis: existsSync(join(ROOT, "data/rlm-benchmark-analysis.json")),
@@ -849,7 +849,7 @@ async function handleApi(request, url) {
   if (path === "/api/library/import" && request.method === "POST") {
     const result = await ensureLibraryEpisodes();
     return json({
-      ...result,
+      ...importPublicView(result),
       jobs: annotateFactoryQueue(await recoverStaleJobs(await listJobs())).sort(compareLibraryJobs),
       factoryQueue: grokQueue.snapshot()
     });

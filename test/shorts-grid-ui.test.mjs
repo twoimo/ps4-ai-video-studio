@@ -6,6 +6,7 @@ import {
   channelOneLiner,
   DEFAULT_CREATE_PROVIDER,
   formatClock,
+  importBroughtCopy,
   inspectVideoDownloads,
   isPlaceholderThumbnail,
   isWatchableShort,
@@ -26,7 +27,7 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(DEFAULT_CREATE_PROVIDER, "grok-imagine");
   assert.equal(shortStatusLabel({ status: "queued", provider: "local" }), "초안");
   assert.equal(shortStatus({ status: "queued", provider: "grok-imagine" }).label, "생성중");
-  assert.equal(shortStatus({ status: "queued", provider: "grok-imagine", queuePosition: 2 }).label, "대기 2");
+  assert.equal(shortStatus({ status: "queued", provider: "grok-imagine", queuePosition: 2 }).label, "대기 2번");
   assert.equal(shortStatus({ status: "running" }).label, "생성중");
   assert.equal(shortStatus({ status: "verifying" }).label, "생성중");
   assert.equal(shortStatus({ status: "completed" }).label, "완료");
@@ -66,6 +67,10 @@ test("short cards map status, hook still, and duration", () => {
   assert.equal(isWatchableShort(refuge), true);
   assert.match(shortPreview(playground).videoUrl, /\/artifacts\/(master|chat|final)\.mp4$/);
   assert.match(shortPreview(refuge).videoUrl, /\/artifacts\/(master|chat|final)\.mp4$/);
+  assert.equal(importBroughtCopy({ imported: ["a", "b"], seeded: ["b"] }), "가져왔어요 2편");
+  assert.equal(importBroughtCopy({ count: 13 }), "가져왔어요 13편");
+  assert.equal(importBroughtCopy({ error: "가져오지 못했습니다." }), "가져오지 못했습니다.");
+  assert.equal(importBroughtCopy({ imported: ["a"], seeded: [], roots: ["/secret"], catalog: { episodes: [] } }), "가져왔어요 1편");
   assert.equal(
     channelOneLiner({ facts: ["지붕은 평평해 보이지만 물은 안쪽으로 흐른다"] }, { titleFormula: "unused" }),
     "지붕은 평평해 보이지만 물은 안쪽으로 흐른다"
@@ -223,6 +228,16 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(css, /#watch-feed \.watch-column \.watch-sound svg[\s\S]*?filter:\s*drop-shadow\(0 1px 6px rgba\(0,0,0,\.75\)\)/);
   assert.match(app, /names\.join\(" · "\)/);
   assert.equal(app.includes("곡 ${count}개"), false);
+  assert.match(app, /function emptyGridNote/);
+  assert.match(app, /id="grid-empty">쇼츠가 없습니다/);
+  assert.match(app, /\$\{emptyGridNote\(\)\}/);
+  assert.match(css, /\.shorts-grid \.empty-note\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
+  assert.match(app, /importBroughtCopy\(payload\)/);
+  assert.equal(app.includes("가져옴 ${imported}"), false);
+  assert.equal(app.includes("시드 ${seeded}"), false);
+  assert.equal(app.includes("경로 ${roots}"), false);
+  assert.equal(app.includes("payload.roots"), false);
+  assert.equal(app.includes("payload.catalog"), false);
   assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
   assert.match(app, /health\?\.imagine\?\.frozen/);
@@ -276,6 +291,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(server, /PS4_IMAGINE_FROZEN !== "0"/);
   assert.match(server, /songs: await listBgmPublicNames\(\)/);
   assert.equal(server.includes("songs: await listBgmFiles()"), false);
+  assert.match(server, /browser: \{ connected: Boolean\(browser\.connected\) \}/);
+  assert.match(server, /ytDlp: \{ installed: Boolean\(ytDlp\.installed\) \}/);
+  assert.match(server, /\.\.\.importPublicView\(result\)/);
+  assert.equal(server.includes("...result,"), false);
   assert.match(server, /"\.webm": "video\/webm"/);
   assert.match(server, /"\.mov": "video\/quicktime"/);
   assert.match(server, /"\.m4v": "video\/x-m4v"/);

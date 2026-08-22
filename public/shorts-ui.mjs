@@ -15,7 +15,7 @@ export function shortStatus(job = {}) {
       ? { key: "frozen", label: "실패·프리즈" }
       : { key: "completed", label: "완료" };
   }
-  if (Number(job.queuePosition) > 0) return { key: "queued", label: `대기 ${job.queuePosition}` };
+  if (Number(job.queuePosition) > 0) return { key: "queued", label: `대기 ${job.queuePosition}번` };
   if (["running", "verifying"].includes(job.status)) return { key: "running", label: "생성중" };
   if (job.status === "queued" && (job.provider === "grok-imagine" || job.provider === "gemini-browser")) {
     return { key: "running", label: "생성중" };
@@ -25,6 +25,14 @@ export function shortStatus(job = {}) {
 
 export function shortStatusLabel(job) {
   return shortStatus(job).label;
+}
+
+export function importBroughtCopy(payload = {}) {
+  if (payload.error) return String(payload.error);
+  const imported = Array.isArray(payload.imported) ? payload.imported : [];
+  const seeded = Array.isArray(payload.seeded) ? payload.seeded : [];
+  const count = Number.isFinite(Number(payload.count)) ? Number(payload.count) : new Set([...imported, ...seeded]).size;
+  return `가져왔어요 ${count}편`;
 }
 
 export function isPlaceholderThumbnail(artifact = {}) {

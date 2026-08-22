@@ -236,7 +236,10 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(satellite, /method: "POST"/);
   assert.match(satellite, /resetSatelliteMenu\(root\)/);
   assert.match(satellite, /function showSatelliteImportResult/);
-  assert.match(satellite, /가져옴 \$\{imported\}/);
+  assert.match(satellite, /importBroughtCopy\(payload\)/);
+  assert.equal(satellite.includes("가져옴 ${imported}"), false);
+  assert.equal(satellite.includes("시드 ${seeded}"), false);
+  assert.equal(satellite.includes("경로 ${roots}"), false);
   assert.match(satellite, /await request\("\/api\/library\/import", \{ method: "POST" \}[\s\S]*resetSatelliteMenu\(root\);\s*showSatelliteImportResult/);
   assert.match(library, /id="satellite-import-result"/);
   assert.match(board, /id="satellite-import-result"/);
@@ -388,7 +391,7 @@ test("satellite import resets the menu then paints the result card", async () =>
   assert.equal(overlay.hidden, false);
   assert.equal(actions.hidden, true);
   assert.equal(result.hidden, false);
-  assert.match(summary.textContent, /가져옴 1/);
+  assert.equal(summary.textContent, "가져왔어요 1편");
 });
 
 test("template spec JSON still carries N=288, slots, locks, and live_action do-not-clone", () => {
