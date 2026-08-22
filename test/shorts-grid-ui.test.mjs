@@ -1094,7 +1094,9 @@ test("양산 batch and upload pack stay draft-only unless unfrozen", async () =>
   assert.match(app, /enqueueToast\.current/);
   assert.match(app, /enqueueToast\(error, "error"\)/);
   assert.match(app, /parseJsonText\(text\)/);
-  assert.equal(app.includes("const payload = await response.json().catch(() => ({}))"), false);
+  const apiFn = app.slice(app.indexOf("async function api"), app.indexOf("function enqueueToast"));
+  assert.match(apiFn, /parseJsonText\(text\)/);
+  assert.equal(apiFn.includes(".json().catch(() => ({}))"), false);
   assert.match(app, /source\.onerror = \(\) => \{/);
   assert.doesNotMatch(app, /source\.onerror = \(\) => \{\s*source\.close\(\)/);
   assert.match(app, /jobsFromListPayload\(payload\)/);
