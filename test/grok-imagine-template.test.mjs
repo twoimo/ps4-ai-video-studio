@@ -140,8 +140,15 @@ test("studio HTML exposes a prompt template surface", async () => {
   assert.equal(page.includes("watch-inspect"), false);
   assert.equal(js.includes("watch-inspect"), false);
   assert.match(css, /\.template-studio\s*\{[^}]*min-height:\s*100dvh/);
+  assert.match(css, /\.template-studio\s*\{[^}]*padding:\s*0 0 48px/);
+  assert.match(css, /\.template-studio \.studio-chrome\s*\{[^}]*margin:\s*0 10px 8px/);
   assert.match(css, /\.template-root\s*\{[^}]*max-width:\s*none/);
   assert.doesNotMatch(css, /max-width:\s*min\(1120px/);
+  assert.equal(page.includes("그림 · 멈춤"), false);
+  assert.match(page, />대본</);
+  assert.match(page, />보드</);
+  assert.match(page, />템플릿</);
+  assert.match(page, /aria-label="메뉴"/);
   assert.equal(css.includes("body.template-open"), false);
   assert.equal(html.includes("쇼츠 공장"), false);
   assert.equal(page.includes("쇼츠 공장"), false);

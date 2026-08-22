@@ -49,5 +49,6 @@ export async function hydrateStudioChrome(root = document, { fetchHealth, openMa
 }
 
 if (typeof document !== "undefined" && document.documentElement?.dataset?.studioChrome === "auto") {
+  bindStudioPipe(document);
   void hydrateStudioChrome(document);
 }

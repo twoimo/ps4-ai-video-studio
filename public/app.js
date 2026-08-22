@@ -1,7 +1,7 @@
 import { formatClock, isWatchableShort, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { machineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
-import { paintStudioPipe } from "./studio-chrome.mjs";
+import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -1036,7 +1036,6 @@ function renderStudioChrome() {
   const health = state.health || {};
   const grok = Boolean(health.capabilities?.grokCli);
   const ffmpeg = Boolean(health.capabilities?.ffmpeg);
-  const frozen = health.imagine?.frozen !== false;
   const chips = $("#studio-chips");
   if (chips) {
     paintStudioPipe(document, health, openMachine);
@@ -1044,10 +1043,11 @@ function renderStudioChrome() {
   const banner = $("#feed-banner");
   if (banner) {
     const reasons = [];
-    if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
-    if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
-    if (!grok) reasons.push("대본을 쓸 수 없습니다");
-    if (frozen) reasons.push("지금은 그림을 안 만들어요");
+    if (state.jobsLoaded) {
+      if (!state.jobs.length) reasons.push("쇼츠가 없습니다");
+      if (!ffmpeg) reasons.push("편집을 할 수 없습니다");
+      if (!grok) reasons.push("대본을 쓸 수 없습니다");
+    }
     banner.hidden = reasons.length === 0;
     banner.textContent = reasons.join(" · ");
   }
@@ -1297,6 +1297,7 @@ async function refreshQuietly() {
 }
 
 function bindEvents() {
+  bindStudioPipe(document, openMachine);
   window.addEventListener("resize", sizeShortsGrid);
   window.addEventListener("orientationchange", () => {
     if (state.view !== "watch") return;

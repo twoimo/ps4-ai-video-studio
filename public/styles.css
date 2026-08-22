@@ -253,11 +253,11 @@ body.template-page { display: block; overflow: auto; }
   min-height: 100dvh;
   overflow: auto;
   background: var(--bg);
-  padding: 16px 20px 48px;
+  padding: 0 0 48px;
 }
-.template-studio .studio-chrome { margin: 0 0 16px; }
-#template-title { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
-.template-root { display: grid; gap: 22px; max-width: none; width: 100%; margin: 0; }
+.template-studio .studio-chrome { margin: 0 10px 8px; }
+#template-title { margin: 8px 10px 16px; color: var(--muted); font-size: 13px; }
+.template-root { display: grid; gap: 22px; max-width: none; width: 100%; margin: 0; padding: 0 10px; }
 .template-root h2 { margin: 0 0 8px; font-size: 22px; }
 .template-root h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: -.02em; }
 .template-root > p, .spec-lede { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }

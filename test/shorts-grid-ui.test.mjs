@@ -203,7 +203,7 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.equal(app.includes(">ffmpeg</button>"), false);
   assert.equal(app.includes(">402</button>"), false);
   assert.match(app, /#feed-banner/);
-  assert.match(app, /health\.imagine\?\.frozen/);
+  assert.match(app, /health\?\.imagine\?\.frozen/);
   assert.equal(app.includes("Math.abs(dy) > 50"), false);
   assert.equal(app.includes("closeOpenWatchInspect"), false);
   assert.match(app, /pagehide/);
@@ -676,7 +676,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(pipe, /지금은 그림을 안 만들어요/);
   assert.match(pipe, /대본을 쓸 수 없습니다/);
   assert.match(pipe, /편집을 할 수 없습니다/);
-  assert.match(app, /if \(frozen\) reasons\.push\("지금은 그림을 안 만들어요"\)/);
+  assert.match(app, /if \(state\.jobsLoaded\)/);
+  assert.equal(app.includes("그림 · 멈춤"), false);
+  assert.equal(/reasons\.push\("그림 · 멈춤"\)/.test(app), false);
+  assert.equal(/if \(frozen\) reasons\.push/.test(app), false);
   assert.match(app, /machineSheetHtml\(state\.health/);
   assert.match(pipe, /stage\.ready \? "준비" : stage\.title/);
   assert.equal(pipe.includes("없음"), false);
@@ -710,6 +713,9 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /\.wrap\s*\{\s*max-width:\s*1440px/);
   assert.match(boardCss, /Studio extra: full-width wrap/);
   assert.match(boardCss, /\.wrap,\s*\.wrap#app,\s*\.materials\s*\{[^}]*max-width:\s*none/);
+  assert.match(boardCss, /#studio-chrome/);
+  assert.match(boardCss, /z-index:\s*100/);
+  assert.match(boardCss, /body:has\(#studio-chrome\) \.slate \.wordmark/);
   assert.doesNotMatch(boardCss, /\.wrap\.work/);
   assert.doesNotMatch(boardCss, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(280px, 360px\)/);
   assert.doesNotMatch(boardCss, /@media \(max-width: 720px\)/);
