@@ -131,11 +131,13 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(html, /class="lib-grid"/);
   assert.doesNotMatch(html, /id="backlot-overlay"/);
   assert.doesNotMatch(html, /role="dialog"/);
+  assert.doesNotMatch(html, /\/backlot\/backlot\//);
 
   const boardPage = await handleBacklotPage(new Request("http://backlot.local/backlot/p/demo"), new URL("http://backlot.local/backlot/p/demo"));
   const boardHtml = await boardPage.text();
   assert.match(boardHtml, /id="app"/);
-  assert.match(boardHtml, /src="\/backlot\/ui\/board\.js/);
+  assert.match(boardHtml, /src="\/backlot\/ui\/board\.js\?v=/);
+  assert.doesNotMatch(boardHtml, /\/backlot\/backlot\//);
   assert.doesNotMatch(boardHtml, /id="backlot-overlay"/);
   assert.doesNotMatch(boardHtml, /role="dialog"/);
 

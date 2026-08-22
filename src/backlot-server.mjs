@@ -166,8 +166,12 @@ async function uiHtml(name, assets) {
     const file = existsSync(path) ? path : join(UI_DIR, asset);
     if (existsSync(file)) {
       const version = String(Math.floor(statSync(file).mtimeMs / 1000));
-      html = html.replace(`/backlot/ui/${asset}`, `/backlot/ui/${asset}?v=${version}`);
-      html = html.replace(`/ui/${asset}`, `/backlot/ui/${asset}?v=${version}`);
+      const cacheBust = `/backlot/ui/${asset}?v=${version}`;
+      if (html.includes(`/backlot/ui/${asset}`)) {
+        html = html.replaceAll(`/backlot/ui/${asset}`, cacheBust);
+      } else {
+        html = html.replaceAll(`/ui/${asset}`, cacheBust);
+      }
     }
   }
   return new Response(html, {
