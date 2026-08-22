@@ -424,6 +424,7 @@ test("library and overlays fill the viewport instead of a phone column", async (
   assert.equal(/\.watch-feed\s*\{[^}]*--watch-h:/.test(css), false);
   assert.equal(/\.watch-feed\s*\{[^}]*height:\s*100svh/.test(css), false);
   assert.match(css, /\.studio-overlay\s*\{[^}]*inset:\s*0[^}]*width:\s*100%[^}]*height:\s*100%/);
+  assert.match(css, /\.studio-overlay\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+env\(safe-area-inset-bottom\)\s+env\(safe-area-inset-left\)/);
   assert.match(css, /\.studio-overlay\s*\{[^}]*place-items:\s*center/);
   assert.match(css, /width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
   assert.match(css, /max-width:\s*min\(440px,\s*calc\(100% - 32px\)\)/);
@@ -538,6 +539,9 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*text-overflow:\s*ellipsis/);
   assert.match(chromeCss, /\.library-brand h1\s*\{[^}]*white-space:\s*nowrap/);
   assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*#open-board[\s\S]*#open-template[\s\S]*display:\s*none/);
+  assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*\.studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
+  assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*\.library-brand h1\s*\{[^}]*display:\s*none/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+env\(safe-area-inset-bottom\)\s+env\(safe-area-inset-left\)/);
   assert.equal(home.includes('width="13.6"'), false);
   assert.equal(home.includes('height="19.6"'), false);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
@@ -1057,7 +1061,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(css, /--vv-height:\s*100dvh/);
   assert.match(css, /\.toast\s*\{[^}]*max-width:\s*min\(360px,\s*calc\(100% - 32px\)\)/);
   assert.match(css, /\.toast\s*\{[^}]*overflow-wrap:\s*anywhere/);
-  assert.match(css, /textarea\s*\{[^}]*max-height:\s*36dvh/);
+  assert.match(css, /textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.form-row\s*\{[^}]*grid-template-columns:\s*1fr/);
   assert.match(css, /#create-submit\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /input,\s*select\s*\{[^}]*min-height:\s*44px/);
@@ -1072,6 +1076,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /\.materials\s*\{[^}]*var\(--vv-bottom/);
   assert.match(boardCss, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
   assert.match(boardCss, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
+  assert.match(boardCss, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome h1\s*\{[^}]*display:\s*none/);
   assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
   assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
   assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);

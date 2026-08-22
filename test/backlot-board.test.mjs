@@ -220,6 +220,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /Isolate shared chrome/);
   assert.match(css, /#studio-chrome[\s\S]*isolation:\s*isolate/);
   assert.match(css, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#studio-chrome h1\s*\{[^}]*display:\s*none/);
   assert.match(css, /#studio-chrome \.studio-chips\s*\{[^}]*flex-wrap:\s*nowrap/);
   assert.match(css, /#studio-chrome \.studio-pipe\s*\{[^}]*flex-wrap:\s*nowrap/);
   assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*display:\s*inline/);
@@ -229,7 +231,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*0/);
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-width:\s*44px/);
   assert.doesNotMatch(css, /#studio-chrome \.studio-chip\s*\{[^}]*min-height:\s*44px/);
-  assert.match(css, /\.materials textarea\s*\{[^}]*max-height:\s*36dvh/);
+  assert.match(css, /\.materials textarea\s*\{[^}]*max-height:\s*calc\(var\(--vv-height,\s*100dvh\) \* 0\.36\)/);
   assert.match(css, /\.materials\s*\{[^}]*var\(--vv-bottom/);
   assert.match(css, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
