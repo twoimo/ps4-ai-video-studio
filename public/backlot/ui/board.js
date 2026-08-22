@@ -18,6 +18,7 @@ let selectedStage = null;   // stage drawer open for this stage name
 let activeRender = 0;
 let replay = null;          // {t0, t1, t, playing} — replay mode when non-null
 let firstPaint = true;
+let boardLayer = "";
 
 function applyTheme(theme) {
   currentTheme = theme === "light" ? "light" : "dark";
@@ -553,6 +554,7 @@ function openScriptModal() {
       )),
   );
   modal.classList.add("open");
+  pushBoardLayer("modal");
 }
 
 function openNarrModal(card) {
@@ -570,11 +572,41 @@ function openNarrModal(card) {
       )),
   );
   modal.classList.add("open");
+  pushBoardLayer("modal");
 }
 
-function closeModal() { modal.classList.remove("open"); }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+function pushBoardLayer(layer) {
+  if (!layer || boardLayer === layer) return;
+  history.pushState({ studioLayer: layer }, "", location.href);
+  boardLayer = layer;
+}
+
+function closeModal(options = {}) {
+  if (options && typeof options.preventDefault === "function") options = {};
+  const fromPop = Boolean(options.fromPop || modal?.dataset?.fromPop);
+  if (modal?.dataset) delete modal.dataset.fromPop;
+  const wasOpen = modal?.classList.contains("open");
+  modal?.classList.remove("open");
+  if (wasOpen) pauseBoardVideos();
+  if (boardLayer !== "modal") return;
+  boardLayer = "";
+  if (!fromPop) history.back();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (boardLayer === "modal") {
+    history.back();
+    return;
+  }
+  closeModal();
+});
 modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+window.addEventListener("popstate", () => {
+  if (boardLayer !== "modal") return;
+  if (modal) modal.dataset.fromPop = "1";
+  closeModal();
+});
 
 // ---------------------------------------------------------------------------
 // right rail: decisions, activity
@@ -1168,8 +1200,8 @@ function initBoard() {
 initBoard();
 
 function pauseBoardVideos() {
-  document.querySelectorAll("video").forEach((video) => {
-    try { video.pause(); } catch { /* ignore leftover playback */ }
+  document.querySelectorAll("video, audio").forEach((media) => {
+    try { media.pause(); } catch { /* ignore leftover playback */ }
   });
 }
 

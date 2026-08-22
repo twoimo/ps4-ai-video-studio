@@ -368,6 +368,14 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(editor, /spellcheck="false"/);
   assert.match(editor, /data-inspect-regen\$\{frozen \? " inert" : ""\}/);
   assert.match(boardJs, /function pauseBoardVideos/);
+  assert.match(boardJs, /querySelectorAll\("video, audio"\)/);
+  assert.match(boardJs, /history\.pushState\(\{ studioLayer: layer \}/);
+  assert.match(boardJs, /pushBoardLayer\("modal"\)/);
+  assert.match(boardJs, /dataset\.fromPop/);
+  assert.match(boardJs, /addEventListener\("popstate"/);
+  assert.match(boardJs, /if \(wasOpen\) pauseBoardVideos\(\)/);
+  assert.match(css, /\.theme-toggle,\s*\.modal-close\s*\{[^}]*min-width:\s*44px/);
+  assert.match(css, /\.theme-toggle,\s*\.modal-close\s*\{[^}]*min-height:\s*44px/);
   assert.match(boardJs, /function exclusiveBoardMedia/);
   assert.match(boardJs, /addEventListener\("play"/);
   assert.match(boardJs, /visibilitychange/);

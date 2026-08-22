@@ -709,7 +709,9 @@ test("watch hash uses #watch/ and close is ×", async () => {
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*min-height:\s*100%/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*max-width:\s*calc\(100cqh \* 9 \/ 16\)/);
   assert.match(css, /#watch-feed \.watch-column\s*\{[^}]*margin-inline:\s*auto/);
-  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]*max-width:\s*100%/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]*max-width:\s*var\(--watch-col\)/);
+  assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-slide[\s\S]*max-width:\s*var\(--watch-col\)/);
+  assert.doesNotMatch(css, /@media \(max-width:\s*860px\)[\s\S]*#watch-feed \.watch-column[\s\S]{0,80}max-width:\s*100%/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-menu[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
   assert.match(css, /#watch-feed \.watch-menu/);
   assert.equal(css.includes("watch-inspect"), false);
@@ -757,6 +759,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
   assert.match(feed, /export function pauseWatchFeed\(root\)/);
   assert.match(feed, /export function stopWatchFeed\(root\)/);
+  assert.match(feed, /export function stopWatchFeed\(root\) \{[\s\S]*?pager\.swiping = false/);
+  assert.match(feed, /if \(!pager\.swiping\)/);
   assert.match(app, /function resumeWatchIfVisible/);
   assert.match(app, /visibilitychange[\s\S]*pauseWatchFeed[\s\S]*resumeWatchIfVisible/);
   assert.match(app, /addEventListener\("pageshow", resumeWatchIfVisible\)/);

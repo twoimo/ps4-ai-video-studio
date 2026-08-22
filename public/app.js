@@ -658,6 +658,7 @@ function openHome(event) {
   event?.preventDefault();
   stopWatchFeed($("#watch-feed"));
   closeMenu({ navigate: true });
+  if (studioLayerDismiss()) return;
   setView("grid");
   renderJobs();
   sizeShortsGrid();
@@ -739,13 +740,33 @@ function clearStudioLayer(options = {}) {
 }
 
 function studioLayerDismiss() {
-  if (!studioLayer) return false;
-  history.back();
-  return true;
+  if (studioLayer) {
+    history.back();
+    return true;
+  }
+  if (history.state?.studioView) {
+    history.back();
+    return true;
+  }
+  return false;
 }
 
 function dismissStudioLayer() {
   return studioLayerDismiss();
+}
+
+function handleStudioPopState() {
+  if (studioLayer === "confirm") {
+    markStudioLayerFromPop();
+    closeDeleteConfirm();
+    return;
+  }
+  if (studioLayer === "menu") {
+    markStudioLayerFromPop();
+    closeMenu();
+    return;
+  }
+  if (state.view === "watch") stopWatchFeed($("#watch-feed"));
 }
 
 function deleteClickSwallowed(event) {
@@ -773,6 +794,8 @@ function closeDeleteConfirm(options = {}) {
 }
 
 function askDeleteJob(job) {
+  const overlay = $("#delete-overlay");
+  if (studioLayer === "confirm" || (overlay && !overlay.hidden)) return;
   state.pendingDeleteId = job.id;
   const summary = $("#delete-summary");
   const topic = String(job.topic || "").trim();
@@ -780,7 +803,6 @@ function askDeleteJob(job) {
     summary.textContent = topic;
     summary.hidden = !topic;
   }
-  const overlay = $("#delete-overlay");
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
   deleteSwallowUntil = Date.now() + 420;
@@ -1885,17 +1907,7 @@ function bindEvents() {
   });
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
-  window.addEventListener("popstate", () => {
-    if (studioLayer === "confirm") {
-      markStudioLayerFromPop();
-      closeDeleteConfirm();
-      return;
-    }
-    if (studioLayer === "menu") {
-      markStudioLayerFromPop();
-      closeMenu();
-    }
-  });
+  window.addEventListener("popstate", handleStudioPopState);
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (studioLayerDismiss()) return;

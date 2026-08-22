@@ -214,6 +214,14 @@ export function pauseWatchFeed(root) {
 
 export function stopWatchFeed(root) {
   bumpWatchEpoch(root);
+  const pager = root ? pagerOf(root) : null;
+  if (pager) {
+    pager.swiping = false;
+    pager.dx = 0;
+    pager.dy = 0;
+    pager.velocity = 0;
+  }
+  if (root?.dataset) delete root.dataset.swiping;
   pauseLeftoverMedia(root);
   const videos = [];
   const held = root ? watchPlayers.get(root) : null;
