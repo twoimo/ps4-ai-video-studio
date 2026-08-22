@@ -314,8 +314,10 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /closeMenu\(null, \{ fromPop: true \}\)/);
   assert.match(app, /history\.back\(\)/);
   assert.match(app, /if \(!canDeleteJob\(state\.jobs\.find\(\(item\) => item\.id === jobId\)\)\) return/);
-  assert.match(app, /function bindCreateTile/);
-  assert.match(app, /#create-tile[\s\S]*contextmenu/);
+  assert.match(app, /shortStatus\(job\)\.key !== "running"/);
+  assert.match(app, /function dismissStudioLayer/);
+  assert.match(app, /if \(!studioLayer\) return false;\s*history\.back\(\)/);
+  assert.match(app, /function bindCreateTile[\s\S]*addEventListener\("contextmenu"/);
   assert.match(app, /function askDeleteJob/);
   assert.match(app, /function closeDeleteConfirm/);
   assert.match(app, /askDeleteJob[\s\S]*syncOverlayLock/);

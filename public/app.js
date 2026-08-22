@@ -692,7 +692,8 @@ function upsertJob(partial) {
 }
 
 function canDeleteJob(job) {
-  return job && ["draft", "failed", "queued"].includes(job.status);
+  if (!job || !["draft", "failed", "queued"].includes(job.status)) return false;
+  return shortStatus(job).key !== "running";
 }
 
 let studioLayer = "";
@@ -708,6 +709,12 @@ function clearStudioLayer(options = {}) {
   if (!studioLayer) return;
   studioLayer = "";
   if (!options.fromPop) history.back();
+}
+
+function dismissStudioLayer() {
+  if (!studioLayer) return false;
+  history.back();
+  return true;
 }
 
 function deleteClickSwallowed(event) {
@@ -1668,7 +1675,7 @@ function openMenu(event) {
   const overlay = $("#menu-overlay");
   if (!overlay) return;
   if (!overlay.hidden) {
-    closeMenu(event);
+    if (!dismissStudioLayer()) closeMenu(event);
     return;
   }
   rememberOpener(event);
@@ -1713,6 +1720,7 @@ async function importLibrary(event) {
 function closeOverlays(event) {
   event?.preventDefault();
   if (state.view === "create") state.createSeq += 1;
+  if (dismissStudioLayer()) return;
   if (closeDeleteConfirm()) return;
   if (closeMenu()) return;
   if (state.returnToWatch) {
@@ -1795,15 +1803,25 @@ function bindEvents() {
   $("#batch-draft")?.addEventListener("click", () => { void saveBatchDrafts(); });
   $("#batch-queue")?.addEventListener("click", () => { void queueBatchJobs(); });
   $("#library-more")?.addEventListener("click", openMenu);
-  $("#close-menu")?.addEventListener("click", closeMenu);
-  $("#menu-import-ok")?.addEventListener("click", closeMenu);
-  $$("[data-close-menu]").forEach((node) => node.addEventListener("click", closeMenu));
+  $("#close-menu")?.addEventListener("click", (event) => {
+    if (!dismissStudioLayer()) closeMenu(event);
+  });
+  $("#menu-import-ok")?.addEventListener("click", (event) => {
+    if (!dismissStudioLayer()) closeMenu(event);
+  });
+  $$("[data-close-menu]").forEach((node) => node.addEventListener("click", (event) => {
+    if (!dismissStudioLayer()) closeMenu(event);
+  }));
   $("#delete-overlay")?.addEventListener("click", (event) => {
     if (deleteClickSwallowed(event)) return;
   }, true);
-  $("#close-delete")?.addEventListener("click", closeDeleteConfirm);
+  $("#close-delete")?.addEventListener("click", (event) => {
+    if (!dismissStudioLayer()) closeDeleteConfirm(event);
+  });
   $("#delete-confirm")?.addEventListener("click", () => { void confirmDeleteJob(); });
-  $$("[data-close-delete]").forEach((node) => node.addEventListener("click", closeDeleteConfirm));
+  $$("[data-close-delete]").forEach((node) => node.addEventListener("click", (event) => {
+    if (!dismissStudioLayer()) closeDeleteConfirm(event);
+  }));
   $("#home-brand")?.addEventListener("click", openHome);
   bindWatchFeed($("#watch-feed"), openHome, (jobId) => notifyActive(jobId), (jobId) => {
     openMaterials(jobId || currentWatchSlide($("#watch-feed"))?.dataset?.jobId || state.selectedJobId);
@@ -1840,6 +1858,7 @@ function bindEvents() {
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (dismissStudioLayer()) return;
       if (closeDeleteConfirm()) return;
       if (closeMenu()) return;
       if (state.view === "watch") {
