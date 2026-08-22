@@ -218,6 +218,7 @@ function trapOverlay(selector) {
 
 function setView(view, options = {}) {
   const next = VIEWS.includes(view) ? view : "grid";
+  const prev = state.view;
   const createOverlay = $("#create-overlay");
   const settingsOverlay = $("#settings-overlay");
   const watchFeed = $("#watch-feed");
@@ -267,7 +268,10 @@ function setView(view, options = {}) {
   }
   if (!options.skipHash) {
     const nextHash = hashForView(state.view);
-    if (location.hash !== nextHash) history.replaceState(null, "", nextHash);
+    if (location.hash !== nextHash) {
+      if (prev === "grid" && next !== "grid") history.pushState({ studioView: next }, "", nextHash);
+      else history.replaceState(null, "", nextHash);
+    }
   }
   if (state.view === "create") {
     syncCreateMode();
@@ -1622,7 +1626,9 @@ function resetMenuCard() {
   if (result) result.hidden = true;
 }
 
-function closeMenu(event) {
+let menuPushed = false;
+
+function closeMenu(event, options = {}) {
   event?.preventDefault?.();
   const overlay = $("#menu-overlay");
   if (!overlay || overlay.hidden) return false;
@@ -1634,6 +1640,9 @@ function closeMenu(event) {
   }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
+  const shouldBack = menuPushed;
+  menuPushed = false;
+  if (shouldBack && !options.fromPop) history.back();
   return true;
 }
 
@@ -1649,6 +1658,10 @@ function openMenu(event) {
   resetMenuCard();
   overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  if (!menuPushed) {
+    history.pushState({ studioMenu: 1 }, "", location.href);
+    menuPushed = true;
+  }
   pinOverlaysToVisualViewport();
   syncOverlayLock();
   trapOverlay("#menu-overlay");
@@ -1803,8 +1816,14 @@ function bindEvents() {
   $$("[data-close-view]").forEach((node) => node.addEventListener("click", closeOverlays));
   window.addEventListener("hashchange", () => { applyHash(); renderJobs(); });
   window.addEventListener("popstate", () => {
-    if (!deletePushed) return;
-    closeDeleteConfirm({ fromPop: true });
+    if (deletePushed) {
+      closeDeleteConfirm({ fromPop: true });
+      return;
+    }
+    if (menuPushed) {
+      closeMenu(null, { fromPop: true });
+      return;
+    }
   });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {

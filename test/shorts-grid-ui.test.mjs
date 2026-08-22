@@ -303,8 +303,12 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /closest\?\.\("\.short-card-detail"\)/);
   assert.match(app, /\.short-card-detail"\)\?\.addEventListener\("contextmenu"/);
   assert.match(app, /history\.pushState\(\{ deleteConfirm: 1 \}/);
+  assert.match(app, /history\.pushState\(\{ studioView:/);
+  assert.match(app, /history\.pushState\(\{ studioMenu: 1 \}/);
+  assert.match(app, /prev === "grid" && next !== "grid"/);
   assert.match(app, /addEventListener\("popstate"/);
   assert.match(app, /closeDeleteConfirm\(\{ fromPop: true \}\)/);
+  assert.match(app, /closeMenu\(null, \{ fromPop: true \}\)/);
   assert.match(app, /history\.back\(\)/);
   assert.match(app, /function askDeleteJob/);
   assert.match(app, /function closeDeleteConfirm/);
