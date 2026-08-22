@@ -234,9 +234,9 @@ function playMutedThenUnmute(video) {
   return mutedPlay;
 }
 
-function playWithMuteFallback(video, jobId) {
+function playWithMuteFallback(video, jobId, { reveal = true } = {}) {
   if (jobId && video.dataset?.jobId && video.dataset.jobId !== jobId) return;
-  revealWatchVideo(video);
+  if (reveal) revealWatchVideo(video);
   video.muted = false;
   if (typeof video.removeAttribute === "function") video.removeAttribute("muted");
   let play;
@@ -252,7 +252,7 @@ function playWithMuteFallback(video, jobId) {
 }
 
 function revealAndPlay(video, jobId) {
-  return playWithMuteFallback(video, jobId);
+  return playWithMuteFallback(video, jobId, { reveal: true });
 }
 
 export function playWatchFeed(target) {
@@ -293,7 +293,7 @@ export function playWatchFeed(target) {
   if (src && video.getAttribute?.("src") !== src) video.src = src;
   if (video.dataset) video.dataset.jobId = jobId || "";
   if ((video.readyState || 0) >= 2) revealWatchVideo(video);
-  return playWithMuteFallback(video, jobId);
+  return playWithMuteFallback(video, jobId, { reveal: false });
 }
 
 export function clearWatchSize(root) {
