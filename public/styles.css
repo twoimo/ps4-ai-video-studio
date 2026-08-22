@@ -196,7 +196,7 @@ body.overlay-open { overflow: hidden; overscroll-behavior: none; touch-action: p
 .live-stage { display: grid; gap: 2px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
 .live-stage b { font-size: 12px; }
 .watch-menu svg { display: block; width: 22px; height: 22px; }
-#batch-actions { display: grid; gap: 8px; margin-top: 12px; }
+#batch-actions { display: grid; gap: 8px; margin-top: 12px; position: sticky; bottom: 0; z-index: 2; background: var(--surface); }
 #batch-actions[hidden], #batch-field[hidden], #single-topic-field[hidden] { display: none; }
 .machine-root { display: grid; gap: 10px; }
 .machine-root h2 { margin: 0 36px 0 0; font-size: 18px; }

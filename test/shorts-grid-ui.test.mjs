@@ -291,6 +291,14 @@ test("studio HTML is a shorts grid first with factory default create", async () 
   assert.match(app, /function deleteJob/);
   assert.match(app, /method: "DELETE"/);
   assert.match(app, /contextmenu/);
+  assert.match(app, /Math\.hypot\(dx, dy\) > 8/);
+  assert.match(app, /pointermove/);
+  assert.match(app, /pointercancel/);
+  assert.match(app, /if \(fired \|\| moved\) return/);
+  assert.match(app, /function askDeleteJob/);
+  assert.match(app, /function closeDeleteConfirm/);
+  assert.match(app, /askDeleteJob[\s\S]*syncOverlayLock/);
+  assert.match(app, /closeDeleteConfirm[\s\S]*syncOverlayLock/);
   assert.match(app, /#studio-chips/);
   assert.match(app, /function renderChips/);
   assert.match(app, /function renderMachineSheet/);
@@ -1058,6 +1066,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="single-topic-field"/);
   assert.match(html, /id="batch-field" hidden/);
   assert.match(html, /id="batch-actions" hidden/);
+  assert.match(css, /#batch-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(css, /#batch-actions\s*\{[^}]*bottom:\s*0/);
   assert.match(css, /--vv-bottom/);
   assert.match(css, /--vv-height:\s*100dvh/);
   assert.match(css, /\.toast\s*\{[^}]*max-width:\s*min\(360px,\s*calc\(100% - 32px\)\)/);

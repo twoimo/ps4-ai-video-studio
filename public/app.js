@@ -743,16 +743,46 @@ function bindShortCard(card) {
     openDetail(jobId);
   });
   let hold = 0;
-  const startHold = () => {
-    hold = window.setTimeout(() => deleteJob(jobId), 520);
+  let originX = 0;
+  let originY = 0;
+  let moved = false;
+  let fired = false;
+  const clearHold = () => {
+    if (hold) window.clearTimeout(hold);
+    hold = 0;
   };
-  const cancelHold = () => window.clearTimeout(hold);
-  card.addEventListener("pointerdown", startHold);
-  card.addEventListener("pointerup", cancelHold);
-  card.addEventListener("pointerleave", cancelHold);
-  card.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
+  const fireDelete = () => {
+    if (fired || moved) return;
+    fired = true;
+    clearHold();
     void deleteJob(jobId);
+  };
+  const startHold = (event) => {
+    if (event?.button != null && event.button !== 0) return;
+    fired = false;
+    moved = false;
+    clearHold();
+    originX = event?.clientX ?? 0;
+    originY = event?.clientY ?? 0;
+    hold = window.setTimeout(fireDelete, 520);
+  };
+  const moveHold = (event) => {
+    if (!hold) return;
+    const dx = (event?.clientX ?? 0) - originX;
+    const dy = (event?.clientY ?? 0) - originY;
+    if (Math.hypot(dx, dy) > 8) {
+      moved = true;
+      clearHold();
+    }
+  };
+  card.addEventListener("pointerdown", startHold);
+  card.addEventListener("pointermove", moveHold);
+  card.addEventListener("pointerup", clearHold);
+  card.addEventListener("pointercancel", clearHold);
+  card.addEventListener("pointerleave", clearHold);
+  card.addEventListener("contextmenu", (event) => {
+    event?.preventDefault?.();
+    fireDelete();
   });
 }
 
