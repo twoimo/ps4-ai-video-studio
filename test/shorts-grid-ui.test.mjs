@@ -591,7 +591,7 @@ test("home chrome drops dashboard dump and keeps a Shorts grid", async () => {
   assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*#open-board[\s\S]*#open-template[\s\S]*display:\s*none/);
   assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*\.studio-chrome\s*\{[^}]*grid-template-columns:\s*max-content 1fr max-content/);
   assert.match(chromeCss, /@media \(max-width:\s*860px\)[\s\S]*\.library-brand h1\s*\{[^}]*display:\s*none/);
-  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+env\(safe-area-inset-bottom\)\s+env\(safe-area-inset-left\)/);
+  assert.match(chromeCss, /#satellite-menu\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s+env\(safe-area-inset-right\)\s+max\(env\(safe-area-inset-bottom\),\s*var\(--vv-bottom,\s*0px\)\)\s+env\(safe-area-inset-left\)/);
   assert.equal(home.includes('width="13.6"'), false);
   assert.equal(home.includes('height="19.6"'), false);
   assert.match(app, /const APP_TITLE = "PS4_JUSTDOIT"/);
