@@ -1529,8 +1529,14 @@ function bindEvents() {
     }
   });
   document.addEventListener("visibilitychange", () => {
+    const feed = $("#watch-feed");
     if (document.hidden) {
-      pauseWatchFeed($("#watch-feed"));
+      pauseWatchFeed(feed);
+      return;
+    }
+    if (document.body.classList.contains("watch-open")) {
+      const play = playWatchFeed(feed);
+      if (play && typeof play.catch === "function") play.catch(() => {});
     }
   });
   window.addEventListener("pagehide", () => {

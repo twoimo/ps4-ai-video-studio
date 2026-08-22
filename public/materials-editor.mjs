@@ -46,12 +46,19 @@ function captionLine(value) {
 function captionLinesFromValue(value) {
   if (value == null || typeof value === "boolean" || typeof value === "number") return [];
   if (typeof value === "string") {
-    return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = value.split(/\r?\n/).map((line) => line.trim());
+    return lines.some(Boolean) ? lines : [];
   }
-  if (Array.isArray(value)) return value.map(captionLine).filter(Boolean);
+  if (Array.isArray(value)) {
+    const lines = value.map(captionLine);
+    return lines.length ? lines : [];
+  }
   if (typeof value === "object") {
     if (Array.isArray(value.lines)) return captionLinesFromValue(value.lines);
-    if (Array.isArray(value.segments)) return value.segments.map(captionLine).filter(Boolean);
+    if (Array.isArray(value.segments)) {
+      const lines = value.segments.map(captionLine);
+      return lines.length ? lines : [];
+    }
     if (typeof value.text === "string") return captionLinesFromValue(value.text);
     if (typeof value.scriptDraft === "string") return captionLinesFromValue(value.scriptDraft);
   }

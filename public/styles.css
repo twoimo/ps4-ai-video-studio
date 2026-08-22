@@ -322,7 +322,7 @@ body.watch-open .watch-feed { display: block; }
 #watch-feed .watch-player video,
 .watch-player video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; background: transparent; pointer-events: auto; }
 #watch-feed .watch-chrome,
-.watch-chrome { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.watch-chrome { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
 #watch-feed .watch-menu {
   position: absolute;
   top: 12px;
@@ -346,7 +346,7 @@ body.watch-open .watch-feed { display: block; }
 #watch-feed .watch-close,
 #watch-feed .watch-back,
 .watch-close,
-.watch-back { position: absolute; top: 12px; left: 12px; right: auto; z-index: 5; min-width: 44px; min-height: 44px; padding: 0; margin: 0; background: none; border: 0; border-radius: 0; color: #fff; font-size: 22px; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,.75); appearance: none; -webkit-appearance: none; pointer-events: auto; }
+.watch-back { position: absolute; top: 12px; left: 12px; right: auto; z-index: 9; min-width: 44px; min-height: 44px; padding: 0; margin: 0; background: none; border: 0; border-radius: 0; color: #fff; font-size: 22px; line-height: 1; text-shadow: 0 1px 6px rgba(0,0,0,.75); appearance: none; -webkit-appearance: none; pointer-events: auto; }
 #watch-feed .watch-close,
 .watch-close { background: none; border: 0; border-radius: 0; }
 #watch-feed .watch-close:focus-visible,

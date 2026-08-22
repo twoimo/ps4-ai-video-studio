@@ -747,6 +747,8 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boardCss, /isolation:\s*isolate/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.slate \.wordmark/);
   assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap:not\(#app\) \.slate h1/);
+  assert.match(boardCss, /Studio extra: slim board slate under chrome/);
+  assert.match(boardCss, /body:has\(#studio-chrome\) \.wrap#app \.slate/);
   assert.match(app, /if \(state\.jobsLoaded\) \{\s*if \(!state\.jobs\.length\)/);
   assert.match(app, /function overlayStartFocus/);
   assert.match(app, /root\.id === "create-overlay"/);
@@ -1002,6 +1004,7 @@ test("materials fallback captions follow job.lines then captions then script the
   assert.deepEqual(fallbackCaptionPrompts({ script: "대본 한 줄\n다음 줄" }).shots.map((shot) => shot.caption), ["대본 한 줄", "다음 줄"]);
   assert.deepEqual(fallbackCaptionPrompts({ scriptDraft: "초안 한 줄" }).shots.map((shot) => shot.caption), ["초안 한 줄"]);
   assert.deepEqual(fallbackCaptionPrompts({ captions: true, scriptDraft: "" }).shots, []);
+  assert.deepEqual(fallbackCaptionPrompts({ lines: ["갑문", "", "물길"] }).shots.map((shot) => shot.caption), ["갑문", "", "물길"]);
 });
 
 test("machine sheet uses the same frozen and missing copy as chips", () => {

@@ -716,7 +716,8 @@ test("watch-feed module and app wire the transform pager", async () => {
   const html = await readFile(join(process.cwd(), "public/index.html"), "utf8");
   assert.match(feed, /export function pauseWatchFeed\(root\)/);
   assert.match(feed, /export function stopWatchFeed\(root\)/);
-  assert.match(app, /visibilitychange[\s\S]*pauseWatchFeed/);
+  assert.match(app, /visibilitychange[\s\S]*pauseWatchFeed[\s\S]*playWatchFeed/);
+  assert.match(css, /#watch-feed \.watch-close[\s\S]*z-index:\s*9/);
   assert.match(feed, /bumpWatchEpoch\(root\)/);
   assert.match(feed, /isStaleWatch/);
   assert.match(feed, /video\.pause\(\)/);

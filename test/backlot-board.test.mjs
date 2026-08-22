@@ -218,7 +218,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(library, /src="\/satellite-boot\.js"/);
   assert.match(board, /src="\/satellite-boot\.js"/);
   const satelliteBoot = await readFile(join(root, "public/satellite-boot.js"), "utf8");
-  assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings"/);
+  assert.match(satelliteBoot, /hash === "create" \|\| hash === "batch" \|\| hash === "settings" \|\| hash === "machine"/);
   assert.match(satelliteBoot, /location\.replace\("\/#" \+ hash\)/);
   const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
   assert.match(satellite, /export function resetSatelliteMenu/);

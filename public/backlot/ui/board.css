@@ -1240,3 +1240,20 @@ body:has(#studio-chrome) .wrap:not(#app) .slate {
   max-height: none;
   object-fit: contain;
 }
+
+/* Studio extra: slim board slate under chrome, not a second header */
+body:has(#studio-chrome) .wrap#app .slate {
+  gap: 8px;
+  padding: 4px 0 8px;
+  min-height: 0;
+  border-bottom: 0;
+  background: none;
+}
+body:has(#studio-chrome) .wrap#app .slate .clapper,
+body:has(#studio-chrome) .wrap#app .slate .wordmark,
+body:has(#studio-chrome) .wrap#app .slate .theme-toggle { display: none; }
+body:has(#studio-chrome) .wrap#app .slate h1 {
+  font-size: calc(13px * var(--fs-scale));
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
