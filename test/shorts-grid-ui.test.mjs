@@ -423,13 +423,13 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.match(app, /#shorts/);
   assert.match(app, /setView\("watch"/);
   assert.match(app, /setView\("grid"\)/);
-  assert.match(app, /setView\("detail"\)/);
+  assert.equal(app.includes('setView("detail")'), false);
   assert.equal(/if \(view === "detail"\) return "#short"/.test(app), false);
   assert.match(app, /function hashForView[\s\S]*return "#shorts"/);
   assert.match(app, /!hash \|\| hash === "shorts"/);
   assert.match(app, /hash === "watch" \|\| hash\.startsWith\("watch\/"\)/);
   assert.match(app, /hash === "short"/);
-  assert.match(app, /hash === "short"[\s\S]*setView\("detail"/);
+  assert.match(app, /hash === "short"[\s\S]*\/backlot\/p\//);
   assert.match(app, /class="draft-facts"/);
   assert.match(app, /\.slice\(0,\s*4\)/);
   assert.match(app, /대본 없음/);
@@ -448,7 +448,7 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes('state.view === "watch" ? "라이브러리" : "보기"'), false);
   assert.match(app, /function openHome/);
   assert.match(app, /if \(state\.view === "watch"\) \{\s*if \(closeOpenWatchInspect\(\)\) return;\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
-  assert.match(app, /isWatchableShort\(job\)\) setView\("watch"/);
+  assert.match(app, /isWatchableShort\(job\)\) \{\s*setView\("watch"/);
   assert.match(app, /ArrowDown/);
   assert.match(app, /ArrowUp/);
   assert.match(app, /stepWatchFeed\(feed, 1/);
