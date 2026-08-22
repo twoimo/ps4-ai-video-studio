@@ -96,7 +96,7 @@ h1, h2, h3, p { margin-top: 0; }
 .secondary-button { color: var(--accent); border: 1px solid rgba(183,243,107,.35); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
 .form-footnote { color: var(--dim); font-size: 12px; line-height: 1.5; margin: 10px 0 0; }
 .field-label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 6px; }
-input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); outline: none; }
+input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); font-size: 16px; outline: none; }
 input:focus, textarea:focus, select:focus, button:focus-visible, a:focus-visible, summary:focus-visible { border-color: rgba(183,243,107,.55); box-shadow: 0 0 0 3px rgba(183,243,107,.12); outline: none; }
 input, select { padding: 12px; }
 textarea { resize: vertical; min-height: 72px; padding: 10px 12px; line-height: 1.5; }
@@ -113,7 +113,7 @@ textarea { resize: vertical; min-height: 72px; padding: 10px 12px; line-height: 
 .advanced-create summary:hover, .template-locks summary:hover { color: var(--text); }
 html:has(body.overlay-open),
 body.overlay-open { overflow: hidden; overscroll-behavior: none; }
-.studio-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; padding: 0; padding-bottom: var(--vv-bottom, 0px); }
+.studio-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; padding: 0; }
 .studio-overlay.feed-card { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; padding: 0; }
 .studio-overlay[hidden] { display: none; }
 .overlay-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
@@ -302,7 +302,7 @@ body.template-page { display: block; overflow: auto; }
 
 #watch-feed,
 #watch-feed.watch-feed,
-.watch-feed { display: none; position: fixed; inset: 0; bottom: var(--vv-bottom, 0px); z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
+.watch-feed { display: none; position: fixed; inset: 0; z-index: 4; overflow: hidden; height: 100%; width: 100%; min-height: 100%; background: #000; touch-action: none; container-type: size; }
 .watch-feed:not([hidden]) { display: block; }
 .watch-feed[hidden] { display: none; }
 body.watch-open #watch-feed,

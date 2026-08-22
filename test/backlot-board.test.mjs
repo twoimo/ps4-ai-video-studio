@@ -219,6 +219,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(css, /#studio-chrome[\s\S]*isolation:\s*isolate/);
   assert.match(css, /#studio-chrome[\s\S]*grid-template-columns:\s*1fr 1fr max-content/);
   assert.match(css, /\.materials\s*\{[^}]*var\(--vv-bottom/);
+  assert.match(css, /\.materials input,\s*\.materials textarea\s*\{[^}]*font-size:\s*16px/);
   assert.match(css, /#studio-chrome[\s\S]*z-index:\s*100/);
   assert.equal(css.includes("family=Inter"), false);
   const heroExtra = css.slice(css.lastIndexOf("Studio extra: compact 9:16 render-hero"));
@@ -288,6 +289,8 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   const satellite = await readFile(join(root, "public/satellite-menu.mjs"), "utf8");
   assert.match(satellite, /export function resetSatelliteMenu/);
   assert.match(satellite, /classList\?\.toggle\("overlay-open"/);
+  assert.match(satellite, /pinOverlaysToVisualViewport\(root\)/);
+  assert.equal(satellite.includes("scrollIntoView"), false);
   assert.match(satellite, /\/api\/library\/import/);
   assert.match(satellite, /method: "POST"/);
   assert.match(satellite, /resetSatelliteMenu\(root\)/);

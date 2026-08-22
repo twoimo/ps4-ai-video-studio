@@ -1,7 +1,7 @@
 import { displayTitle, formatClock, friendlyJobError, importBroughtCopy, isAbortError, isWatchableShort, jobsFromListPayload, parseJsonText, settingsSaveFailMessage, shortCardUnchanged, shortDurationSeconds, shortPreview, shortStatus, shortThumbnail, shortUploadPack, stripErrorPrefix, stripUiPaths, throwMappedFetchError } from "./shorts-ui.mjs";
 import { collectInspectPayload } from "./materials-editor.mjs";
 import { renderMachineSheetHtml, renderStudioPipe } from "./studio-pipe.mjs";
-import { bindStudioPipe, paintStudioPipe } from "./studio-chrome.mjs";
+import { bindFocusScroll, bindStudioPipe, paintStudioPipe, pinNodeToVisualViewport, pinOverlaysToVisualViewport, scrollFocusIntoPanel } from "./studio-chrome.mjs";
 import { renderWorldSlotFields } from "./template-spec.mjs";
 import { applyWatchTransform, bindWatchFeed, clearWatchSize, createWatchPlayer, currentWatchSlide, goWatchIndex, pauseWatchFeed, playWatchFeed, settleWatchIndex, sizeWatchFeed, stepWatchFeed, stopWatchFeed, syncWatchFeed, wrapWatchFeed } from "./watch-feed.mjs";
 
@@ -151,10 +151,12 @@ function bindFocusTrap(root) {
     const last = items[items.length - 1];
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
-      last.focus();
+      last.focus({ preventScroll: true });
+      scrollFocusIntoPanel(last);
     } else if (!event.shiftKey && document.activeElement === last) {
       event.preventDefault();
-      first.focus();
+      first.focus({ preventScroll: true });
+      scrollFocusIntoPanel(first);
     }
   });
 }
@@ -166,7 +168,10 @@ function rememberOpener(event) {
 function restoreOpener() {
   const opener = state.focusOpener;
   state.focusOpener = null;
-  if (opener && typeof opener.focus === "function") opener.focus();
+  if (opener && typeof opener.focus === "function") {
+    opener.focus({ preventScroll: true });
+    scrollFocusIntoPanel(opener);
+  }
 }
 
 function overlayStartFocus(root) {
@@ -175,7 +180,7 @@ function overlayStartFocus(root) {
     const panel = root.querySelector?.(".overlay-panel");
     if (panel && typeof panel.focus === "function") {
       if (!panel.hasAttribute("tabindex")) panel.tabIndex = -1;
-      panel.focus();
+      panel.focus({ preventScroll: true });
     }
     return;
   }
@@ -185,12 +190,14 @@ function overlayStartFocus(root) {
     const batch = state.createMode === "batch";
     const target = batch ? root.querySelector?.("#batch-topics") : root.querySelector?.("#topic");
     if (target && target.closest("[hidden]") == null && typeof target.focus === "function") {
-      target.focus();
+      target.focus({ preventScroll: true });
+      scrollFocusIntoPanel(target);
       return;
     }
   }
   const items = overlayFocusables(root).filter((node) => !node.classList?.contains("draft-close"));
-  (items[0] || overlayFocusables(root)[0])?.focus();
+  (items[0] || overlayFocusables(root)[0])?.focus({ preventScroll: true });
+  scrollFocusIntoPanel(items[0] || overlayFocusables(root)[0]);
 }
 
 function trapOverlay(selector) {
@@ -231,6 +238,7 @@ function setView(view, options = {}) {
     document.body.classList.remove("overlay-open");
   }
   pinWatchToVisualViewport();
+  pinOverlaysToVisualViewport();
   if (openingWatch) {
     sizeWatchFeed(watchFeed);
   }
@@ -571,6 +579,7 @@ function hideLeftoverOverlays() {
     if (node) node.hidden = true;
   });
   document.body.classList.remove("overlay-open");
+  pinOverlaysToVisualViewport();
 }
 
 function openMaterials(jobId) {
@@ -668,6 +677,7 @@ function closeDeleteConfirm() {
     document.body.classList.remove("overlay-open");
     restoreOpener();
   }
+  pinOverlaysToVisualViewport();
   return true;
 }
 
@@ -682,6 +692,7 @@ function askDeleteJob(job) {
   const overlay = $("#delete-overlay");
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  pinOverlaysToVisualViewport();
   trapOverlay("#delete-overlay");
 }
 
@@ -1212,13 +1223,15 @@ function batchTopicsOrFocus() {
     const topics = parseBatchTopics();
     if (!topics.length) {
       showToast("주제를 한 줄에 하나씩 4자 이상 입력하세요.", "error");
-      $("#batch-topics")?.focus();
+      $("#batch-topics")?.focus({ preventScroll: true });
+      scrollFocusIntoPanel($("#batch-topics"));
       return null;
     }
     return topics;
   } catch (error) {
     showToast(friendlyJobError(error), "error");
-    $("#batch-topics")?.focus();
+    $("#batch-topics")?.focus({ preventScroll: true });
+    scrollFocusIntoPanel($("#batch-topics"));
     return null;
   }
 }
@@ -1531,6 +1544,7 @@ function closeMenu(event) {
     document.body.classList.remove("overlay-open");
     restoreOpener();
   }
+  pinOverlaysToVisualViewport();
   return true;
 }
 
@@ -1546,6 +1560,7 @@ function openMenu(event) {
   resetMenuCard();
   overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  pinOverlaysToVisualViewport();
   trapOverlay("#menu-overlay");
 }
 
@@ -1553,6 +1568,7 @@ function showImportResult(payload) {
   const overlay = $("#menu-overlay");
   if (overlay) overlay.hidden = false;
   document.body.classList.add("overlay-open");
+  pinOverlaysToVisualViewport();
   const title = $("#menu-title");
   if (title) title.textContent = "가져오기";
   const actions = $("#menu-actions");
@@ -1603,21 +1619,7 @@ async function refreshQuietly() {
 }
 
 function pinWatchToVisualViewport() {
-  const root = $("#watch-feed");
-  if (!root) return;
-  const vv = window.visualViewport;
-  const open = document.body?.classList?.contains("watch-open");
-  if (!open || !vv) {
-    root.style.top = "";
-    root.style.left = "";
-    root.style.width = "";
-    root.style.height = "";
-    return;
-  }
-  root.style.top = `${Math.round(vv.offsetTop || 0)}px`;
-  root.style.left = `${Math.round(vv.offsetLeft || 0)}px`;
-  root.style.width = `${Math.round(vv.width)}px`;
-  root.style.height = `${Math.round(vv.height)}px`;
+  pinNodeToVisualViewport($("#watch-feed"), document.body?.classList?.contains("watch-open"));
 }
 
 function syncVisualViewportInset() {
@@ -1625,6 +1627,7 @@ function syncVisualViewportInset() {
   const bottom = vv ? Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
   document.documentElement.style.setProperty("--vv-bottom", `${Math.round(bottom)}px`);
   pinWatchToVisualViewport();
+  pinOverlaysToVisualViewport();
   if (document.body?.classList?.contains("watch-open")) {
     const root = $("#watch-feed");
     sizeWatchFeed(root);
@@ -1636,6 +1639,7 @@ function syncVisualViewportInset() {
 
 function bindEvents() {
   bindStudioPipe(document, openMachine);
+  bindFocusScroll(document);
   syncVisualViewportInset();
   window.visualViewport?.addEventListener("resize", syncVisualViewportInset);
   window.visualViewport?.addEventListener("scroll", syncVisualViewportInset);

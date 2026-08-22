@@ -828,7 +828,10 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.match(app, /function mountWatchFeed/);
   assert.match(app, /addEventListener\("resize", sizeShortsGrid\)/);
   assert.match(app, /function pinWatchToVisualViewport/);
+  assert.match(app, /pinOverlaysToVisualViewport/);
   assert.equal(feed.includes("pinWatchToVisualViewport"), false);
+  assert.equal(feed.includes("pinOverlaysToVisualViewport"), false);
+  assert.equal(feed.includes("scrollFocusIntoPanel"), false);
   assert.equal(feed.includes("visualViewport"), false);
   assert.equal(/addEventListener\("resize", \(\) => \{[\s\S]*sizeWatchFeed/.test(app), false);
   assert.match(feed, /setProperty\("--watch-h"/);
@@ -876,6 +879,9 @@ test("watch-feed module and app wire the transform pager", async () => {
   assert.ok(clickFn.indexOf("pager.swallowClick") < clickFn.indexOf("chromeHit(event)"));
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-slide-chrome[\s\S]*bottom:\s*max\(112px,\s*calc\(env\(safe-area-inset-bottom\) \+ 44px\)\)/);
   assert.match(css, /@media \(max-width:\s*860px\)[\s\S]*\.watch-sound[\s\S]*bottom:\s*max\(68px/);
+  assert.doesNotMatch(css, /\.watch-slide-chrome[\s\S]{0,180}--vv-bottom/);
+  assert.doesNotMatch(css, /\.watch-sound[\s\S]{0,180}--vv-bottom/);
+  assert.doesNotMatch(css, /#watch-feed[\s\S]{0,180}bottom:\s*var\(--vv-bottom/);
   assert.match(feed, /movement < 10/);
   assert.match(feed, /Math\.hypot/);
   const sizeFn = feed.slice(feed.indexOf("export function sizeWatchFeed"), feed.indexOf("export function wrapWatchFeed"));

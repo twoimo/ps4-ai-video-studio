@@ -1060,6 +1060,7 @@ body:not(.first) .approval-review { animation: none; }
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
+  font-size: 16px;
 }
 .materials textarea { min-height: 72px; resize: vertical; }
 .materials .inspect-caption { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: 8px; align-items: start; }
