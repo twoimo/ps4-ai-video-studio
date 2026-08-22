@@ -145,6 +145,7 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(library, /src="\/studio-chrome\.mjs"/);
   assert.match(board, /id="studio-chrome"/);
   assert.match(board, /id="studio-chips"/);
+  assert.match(board, /id="studio-chips"[\s\S]*data-open-machine[\s\S]*>대본</);
   assert.match(board, />대본</);
   assert.match(board, />보드</);
   assert.match(board, /href="\/#create">새 쇼츠</);
