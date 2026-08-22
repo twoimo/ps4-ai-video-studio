@@ -1159,9 +1159,10 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(boot, /classList\.add\("watch-open"\)/);
   assert.match(boot, /library\.hidden = true/);
   assert.match(boot, /feed\.hidden = false/);
+  assert.match(html, /leftoverBatch/);
+  assert.match(html, /studioCreateMode/);
   assert.match(boot, /leftoverBatch/);
   assert.match(boot, /hash === "batch"/);
-  assert.match(boot, /studioCreateMode/);
   assert.match(boot, /title\.textContent = "양산"/);
   assert.match(boot, /single\.hidden = true/);
   assert.match(boot, /batch\.hidden = false/);
