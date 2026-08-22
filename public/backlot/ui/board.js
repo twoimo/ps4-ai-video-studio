@@ -1149,3 +1149,13 @@ refresh().catch((err) => {
 if (!new URLSearchParams(location.search).has("static")) {
   subscribe(`/api/project/${encodeURIComponent(projectId)}/events`, () => refresh().catch(console.error));
 }
+
+function pauseBoardVideos() {
+  document.querySelectorAll("video").forEach((video) => {
+    try { video.pause(); } catch { /* ignore leftover playback */ }
+  });
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseBoardVideos();
+});
+window.addEventListener("pagehide", pauseBoardVideos);

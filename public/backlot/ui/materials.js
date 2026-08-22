@@ -44,6 +44,11 @@ function pausedActionError(error) {
 
 async function saveMaterials() {
   const body = collectInspectPayload(root);
+  if (String(body.topic || "").trim().length < 4) {
+    const error = new Error("영상 주제를 4자 이상 입력하세요.");
+    error.status = 400;
+    throw error;
+  }
   const payload = await fetch(`/api/jobs/${encodeURIComponent(projectId)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },

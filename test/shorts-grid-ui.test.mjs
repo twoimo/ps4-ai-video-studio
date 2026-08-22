@@ -506,6 +506,10 @@ test("watch feed pages 9:16 masters and leaves drafts on the grid", async () => 
   assert.equal(app.includes("toggleWatchSurface"), false);
   assert.equal(app.includes('state.view === "watch" ? "라이브러리" : "보기"'), false);
   assert.match(app, /function openHome/);
+  assert.match(app, /function openHome\(event\) \{\s*event\?\.preventDefault\(\);\s*stopWatchFeed\(\$\("#watch-feed"\)\);/);
+  assert.match(app, /영상 주제를 4자 이상 입력하세요/);
+  assert.match(app, /showImportResult\(\{ error:/);
+  assert.match(app, /state\.jobs = \[\];\s*state\.jobsLoaded = true;\s*renderJobs\(\);/);
   assert.match(app, /if \(state\.view === "watch"\) \{\s*stopWatchFeed\(\$\("#watch-feed"\)\);\s*openHome\(\);/);
   assert.match(app, /isWatchableShort\(job\)\) \{\s*setView\("watch"/);
   assert.match(app, /ArrowDown/);
@@ -739,7 +743,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(app, /--vv-bottom/);
   assert.equal(app.includes("event.submitter"), false);
   assert.match(app, /event\?\.target\?\.querySelector\?\.\("#create-submit"\)/);
-  assert.match(html, /<form class="create-panel" id="create-form" onsubmit="return false">/);
+  assert.match(html, /<form class="create-panel" id="create-form" novalidate onsubmit="return false">/);
   assert.match(html, /<form class="create-panel" id="settings-form" onsubmit="return false">/);
   assert.equal(/id="create-form"[^>]*(action=|method=)/i.test(html), false);
   assert.equal(/id="settings-form"[^>]*(action=|method=)/i.test(html), false);
@@ -761,7 +765,7 @@ test("watch inspector saves drafts and freezes regen", async () => {
   assert.match(html, /id="batch-field" hidden/);
   assert.match(html, /id="batch-actions" hidden/);
   assert.match(css, /--vv-bottom/);
-  assert.match(editor, /<form class="inspect-form" onsubmit="return false">/);
+  assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
   assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
   assert.match(materials, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
   assert.match(app, /function bindEvents\(\) \{\s*bindStudioPipe\(document, openMachine\);/);

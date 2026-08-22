@@ -511,6 +511,7 @@ async function saveInspectDraft(jobId, root) {
 
 function openHome(event) {
   event?.preventDefault();
+  stopWatchFeed($("#watch-feed"));
   closeMenu();
   setView("grid");
   renderJobs();
@@ -875,6 +876,11 @@ async function refreshJobs() {
 
 async function createProduction(event) {
   event.preventDefault();
+  const topic = ($("#topic")?.value || "").trim();
+  if (topic.length < 4) {
+    showToast("영상 주제를 4자 이상 입력하세요.", "error");
+    return;
+  }
   const provider = $("#provider").value;
   const sources = $("#sources").value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ title: url, url }));
   const facts = $("#facts")?.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) || [];
@@ -882,7 +888,7 @@ async function createProduction(event) {
   const scriptDraft = $("#script-draft")?.value.trim() || "";
   const ttsProvider = $("#create-tts-provider")?.value || "edge";
   const ttsVoice = $("#create-tts-voice")?.value || "";
-  const body = { topic: $("#topic").value, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked, draftOnly: true };
+  const body = { topic, format: $("#format").value, clipCount: Number($("#clip-count").value), provider, sources, facts, worldSlots, scriptDraft, ttsProvider, ttsVoice, captions: $("#captions").checked, voiceover: provider === "grok-imagine" ? false : $("#voiceover").checked, draftOnly: true };
   if (ttsVoice) {
     void api("/api/settings", {
       method: "PUT",
@@ -1297,7 +1303,7 @@ function showImportResult(payload) {
   const imported = payload.imported?.length || 0;
   const seeded = payload.seeded?.length || 0;
   const roots = payload.roots?.length || 0;
-  if (summary) summary.textContent = `가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`;
+  if (summary) summary.textContent = payload.error || `가져옴 ${imported} · 시드 ${seeded} · 경로 ${roots}`;
   if (actions) actions.hidden = true;
   if (result) result.hidden = false;
   trapOverlay("#menu-overlay");
@@ -1310,7 +1316,7 @@ async function importLibrary(event) {
     await refreshJobs();
     showImportResult(payload);
   } catch (error) {
-    showToast(error.message, "error");
+    showImportResult({ error: error.message || "가져오지 못했습니다." });
   }
 }
 
@@ -1462,6 +1468,7 @@ async function init() {
     applyHash();
     void warnIfFactoryToolsMissing();
   } catch (error) {
+    state.jobs = [];
     state.jobsLoaded = true;
     renderJobs();
     showToast(error.message, "error");

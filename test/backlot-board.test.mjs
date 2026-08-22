@@ -240,7 +240,11 @@ test("Backlot UI mounts the real library and board, not a 400 overlay", async ()
   assert.match(materialsJs, /method: "PATCH"/);
   assert.match(materialsJs, /\/run/);
   assert.match(materialsJs, /inspect-form[\s\S]*addEventListener\("submit", save\)/);
-  assert.match(editor, /<form class="inspect-form" onsubmit="return false">/);
+  assert.match(materialsJs, /영상 주제를 4자 이상 입력하세요/);
+  assert.match(boardJs, /function pauseBoardVideos/);
+  assert.match(boardJs, /visibilitychange/);
+  assert.match(boardJs, /pagehide/);
+  assert.match(editor, /<form class="inspect-form" novalidate onsubmit="return false">/);
   assert.match(editor, /type="submit"[^>]*data-inspect-save[^>]*>저장</);
 
   const page = await handleBacklotPage(new Request("http://backlot.local/backlot"), new URL("http://backlot.local/backlot"));
